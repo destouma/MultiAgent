@@ -30,8 +30,7 @@ export function ChatThread() {
   }, [messages, streamingContent, workspaceOps, orchestratorStatus]);
 
   const personaById = new Map(personas.map((persona) => [persona.id, persona]));
-  const bubblePersonaId =
-    streamingPersonaId ?? (isOrchestrator ? 'orchestrator' : activePersonaId);
+  const bubblePersonaId = streamingPersonaId ?? (isOrchestrator ? 'orchestrator' : activePersonaId);
   const streamingPersona = personaById.get(bubblePersonaId);
 
   const emptyTitle =
@@ -79,11 +78,7 @@ export function ChatThread() {
             <MessageBubble
               key={message.id}
               message={message}
-              persona={
-                message.personaId
-                  ? personaById.get(message.personaId)
-                  : undefined
-              }
+              persona={message.personaId ? personaById.get(message.personaId) : undefined}
             />
           ))}
           {isStreaming && workspaceOps.length ? (

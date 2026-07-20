@@ -1,9 +1,7 @@
 import type { ReactNode } from 'react';
 import { CodeBlock } from './CodeBlock';
 
-type Segment =
-  | { type: 'text'; value: string }
-  | { type: 'code'; language: string; value: string };
+type Segment = { type: 'text'; value: string } | { type: 'code'; language: string; value: string };
 
 function splitFencedCode(content: string): Segment[] {
   const segments: Segment[] = [];
@@ -70,11 +68,7 @@ export function MessageContent({ content, streaming }: Props) {
       {segments.map((segment, index) => {
         if (segment.type === 'code') {
           return (
-            <CodeBlock
-              key={`code-${index}`}
-              code={segment.value}
-              language={segment.language}
-            />
+            <CodeBlock key={`code-${index}`} code={segment.value} language={segment.language} />
           );
         }
         return (

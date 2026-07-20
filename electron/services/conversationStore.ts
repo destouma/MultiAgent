@@ -15,13 +15,7 @@ function wasmPath(): string {
   if (app.isPackaged) {
     return path.join(process.resourcesPath, 'sql-wasm.wasm');
   }
-  return path.join(
-    process.cwd(),
-    'node_modules',
-    'sql.js',
-    'dist',
-    'sql-wasm.wasm',
-  );
+  return path.join(process.cwd(), 'node_modules', 'sql.js', 'dist', 'sql-wasm.wasm');
 }
 
 export class ConversationStore {
@@ -41,7 +35,7 @@ export class ConversationStore {
     const loader =
       typeof initSqlJs === 'function'
         ? initSqlJs
-        : ((initSqlJs as unknown as { default: typeof initSqlJs }).default);
+        : (initSqlJs as unknown as { default: typeof initSqlJs }).default;
 
     this.SQL = await loader({
       locateFile: () => wasmPath(),
@@ -99,7 +93,11 @@ export class ConversationStore {
 
   private persist(): void {
     const data = this.db.export();
-    fs.writeFileSync(this.filePath, Buffer.from(data));
+    // Write-then-rename so a crash mid-write can't leave chats.db truncated
+    // or corrupted; rename is atomic on the same volume.
+    const tmpPath = `${this.filePath}.${process.pid}.tmp`;
+    fs.writeFileSync(tmpPath, Buffer.from(data));
+    fs.renameSync(tmpPath, this.filePath);
   }
 
   private mapConversation(row: {
@@ -111,11 +109,7 @@ export class ConversationStore {
     kind?: string | null;
   }): Conversation {
     const kind: ConversationKind =
-      row.kind === 'image'
-        ? 'image'
-        : row.kind === 'orchestrator'
-          ? 'orchestrator'
-          : 'chat';
+      row.kind === 'image' ? 'image' : row.kind === 'orchestrator' ? 'orchestrator' : 'chat';
     return {
       id: row.id,
       title: row.title,
@@ -148,11 +142,7 @@ export class ConversationStore {
   createConversation(input: CreateConversationRequest = {}): Conversation {
     const now = Date.now();
     const kind: ConversationKind =
-      input.kind === 'image'
-        ? 'image'
-        : input.kind === 'orchestrator'
-          ? 'orchestrator'
-          : 'chat';
+      input.kind === 'image' ? 'image' : input.kind === 'orchestrator' ? 'orchestrator' : 'chat';
     const conversation: Conversation = {
       id: randomUUID(),
       title:

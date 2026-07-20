@@ -20,16 +20,16 @@ MultiAgent is a Windows desktop app (Electron + React) for chatting with local m
 
 ## 1. Overview
 
-| Concern | Choice |
-|---------|--------|
-| Shell | Electron (main + preload + renderer) |
-| UI | React 19 + TypeScript + Vite |
-| State | Zustand (`chatStore`, `settingsStore`) |
+| Concern      | Choice                                                           |
+| ------------ | ---------------------------------------------------------------- |
+| Shell        | Electron (main + preload + renderer)                             |
+| UI           | React 19 + TypeScript + Vite                                     |
+| State        | Zustand (`chatStore`, `settingsStore`)                           |
 | LLM / images | OpenAI SDK + raw HTTP → Lemonade `http://localhost:13305/api/v1` |
-| Settings | `electron-store` → `%APPDATA%/MultiAgent/config.json` |
-| Chats | SQLite via **sql.js** → `%APPDATA%/MultiAgent/chats.db` |
-| Images cache | `%APPDATA%/MultiAgent/images/*.png` |
-| Packaging | `electron-builder` NSIS (Windows x64) |
+| Settings     | `electron-store` → `%APPDATA%/MultiAgent/config.json`            |
+| Chats        | SQLite via **sql.js** → `%APPDATA%/MultiAgent/chats.db`          |
+| Images cache | `%APPDATA%/MultiAgent/images/*.png`                              |
+| Packaging    | `electron-builder` NSIS (Windows x64)                            |
 
 **Security rule:** the renderer never calls Lemonade directly. All network I/O, file system access, and dialogs run in the Electron **main** process and are exposed through a typed `window.api` bridge (preload + `contextIsolation`).
 
@@ -146,13 +146,13 @@ MultiAgent/
 
 ### Settings (`electron-store`)
 
-| Key | Default | Purpose |
-|-----|---------|---------|
-| `baseUrl` | `http://localhost:13305/api/v1` | Lemonade API base |
-| `apiKey` | `lemonade` | Required by OpenAI client; unused by server |
-| `model` | `""` | Default chat model |
-| `imageModel` | `""` | Default image model |
-| `maxHistory` | `40` | Max messages sent as history |
+| Key          | Default                         | Purpose                                     |
+| ------------ | ------------------------------- | ------------------------------------------- |
+| `baseUrl`    | `http://localhost:13305/api/v1` | Lemonade API base                           |
+| `apiKey`     | `lemonade`                      | Required by OpenAI client; unused by server |
+| `model`      | `""`                            | Default chat model                          |
+| `imageModel` | `""`                            | Default image model                         |
+| `maxHistory` | `40`                            | Max messages sent as history                |
 
 Path: `%APPDATA%/MultiAgent/config.json`
 
@@ -175,22 +175,22 @@ Path: `%APPDATA%/MultiAgent/chats.db`
 
 ## 5. IPC contract
 
-| Channel | Direction | Purpose |
-|---------|-----------|---------|
-| `settings:get` / `settings:set` | invoke | Read/update app settings |
-| `models:list` | invoke | List Lemonade models |
-| `health:check` | invoke | Ping `/models` |
-| `personas:list` | invoke | Built-in personas |
-| `chat:send` / `chat:cancel` | invoke | Start / abort completion |
-| `chat:token` / `chat:done` / `chat:error` | event | Streaming lifecycle |
-| `conversations:*` | invoke | list/create/rename/delete/get |
-| `messages:list` | invoke | Load thread |
-| `dialog:pickFolder` | invoke | Native folder picker |
-| `workspace:op` | event | Tool progress (list/read/write/delete/generate_image) |
-| `images:generate` | invoke | Generate + persist message |
-| `images:getDataUrl` | invoke | Preview cached PNG |
-| `images:download` | invoke | Save-as dialog |
-| `images:saveToWorkspace` | invoke | Copy into bound folder |
+| Channel                                   | Direction | Purpose                                               |
+| ----------------------------------------- | --------- | ----------------------------------------------------- |
+| `settings:get` / `settings:set`           | invoke    | Read/update app settings                              |
+| `models:list`                             | invoke    | List Lemonade models                                  |
+| `health:check`                            | invoke    | Ping `/models`                                        |
+| `personas:list`                           | invoke    | Built-in personas                                     |
+| `chat:send` / `chat:cancel`               | invoke    | Start / abort completion                              |
+| `chat:token` / `chat:done` / `chat:error` | event     | Streaming lifecycle                                   |
+| `conversations:*`                         | invoke    | list/create/rename/delete/get                         |
+| `messages:list`                           | invoke    | Load thread                                           |
+| `dialog:pickFolder`                       | invoke    | Native folder picker                                  |
+| `workspace:op`                            | event     | Tool progress (list/read/write/delete/generate_image) |
+| `images:generate`                         | invoke    | Generate + persist message                            |
+| `images:getDataUrl`                       | invoke    | Preview cached PNG                                    |
+| `images:download`                         | invoke    | Save-as dialog                                        |
+| `images:saveToWorkspace`                  | invoke    | Copy into bound folder                                |
 
 ---
 
@@ -200,12 +200,12 @@ Path: `%APPDATA%/MultiAgent/chats.db`
 
 JSON profiles under `personas/`:
 
-| Id | Role |
-|----|------|
-| `general` | Concise all-purpose assistant |
-| `researcher` | Structured, evidence-oriented |
-| `coder` | Practical code-focused |
-| `critic` | Challenges assumptions |
+| Id             | Role                                                         |
+| -------------- | ------------------------------------------------------------ |
+| `general`      | Concise all-purpose assistant                                |
+| `researcher`   | Structured, evidence-oriented                                |
+| `coder`        | Practical code-focused                                       |
+| `critic`       | Challenges assumptions                                       |
 | `orchestrator` | Supervisor used in orchestrator sessions (plan + synthesize) |
 
 Switching persona mid-thread changes the **system prompt for the next reply only**. Past messages keep their `personaId` label/color. In orchestrator sessions the persona switcher is hidden; routing is automatic.
@@ -356,15 +356,15 @@ Installer options (see `package.json` → `build.nsis`):
 
 ## 9. Troubleshooting
 
-| Symptom | Likely cause | What to try |
-|---------|--------------|-------------|
-| Badge offline | Lemonade not running / wrong URL | Start Lemonade; check Settings base URL |
-| Empty model list | Server up but no models | `lemonade pull` / `lemonade run` a model |
-| Chat works, images fail | Chat model selected as image model | Load an image model; pick it in Image Generator |
-| Generate button disabled | No prompt or no image model | Enter prompt; select model |
-| Save to folder disabled | No workspace on this session | Create New image/chat **with folder** |
-| Tool / write errors | Path outside workspace or ignored | Stay under the bound folder; avoid `..` |
-| `node` not found | Node not on PATH | Install Node LTS or add it to user PATH |
+| Symptom                  | Likely cause                       | What to try                                     |
+| ------------------------ | ---------------------------------- | ----------------------------------------------- |
+| Badge offline            | Lemonade not running / wrong URL   | Start Lemonade; check Settings base URL         |
+| Empty model list         | Server up but no models            | `lemonade pull` / `lemonade run` a model        |
+| Chat works, images fail  | Chat model selected as image model | Load an image model; pick it in Image Generator |
+| Generate button disabled | No prompt or no image model        | Enter prompt; select model                      |
+| Save to folder disabled  | No workspace on this session       | Create New image/chat **with folder**           |
+| Tool / write errors      | Path outside workspace or ignored  | Stay under the bound folder; avoid `..`         |
+| `node` not found         | Node not on PATH                   | Install Node LTS or add it to user PATH         |
 
 ### Useful paths
 

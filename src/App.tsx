@@ -123,11 +123,7 @@ export default function App() {
           </div>
           <div className="topbar-right">
             <ConnectionBadge />
-            <button
-              type="button"
-              className="btn"
-              onClick={() => setSettingsOpen(true)}
-            >
+            <button type="button" className="btn" onClick={() => setSettingsOpen(true)}>
               Settings
             </button>
           </div>

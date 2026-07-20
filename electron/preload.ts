@@ -34,11 +34,9 @@ const api = {
     ipcRenderer.invoke('chat:send', request),
   cancelChat: (): Promise<boolean> => ipcRenderer.invoke('chat:cancel'),
 
-  listConversations: (): Promise<Conversation[]> =>
-    ipcRenderer.invoke('conversations:list'),
-  createConversation: (
-    request?: CreateConversationRequest | string,
-  ): Promise<Conversation> => ipcRenderer.invoke('conversations:create', request),
+  listConversations: (): Promise<Conversation[]> => ipcRenderer.invoke('conversations:list'),
+  createConversation: (request?: CreateConversationRequest | string): Promise<Conversation> =>
+    ipcRenderer.invoke('conversations:create', request),
   renameConversation: (id: string, title: string): Promise<Conversation | null> =>
     ipcRenderer.invoke('conversations:rename', id, title),
   deleteConversation: (id: string): Promise<boolean> =>

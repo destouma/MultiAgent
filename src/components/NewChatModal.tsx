@@ -21,11 +21,7 @@ export function NewChatModal() {
 
   const isImage = kind === 'image';
   const isOrchestrator = kind === 'orchestrator';
-  const titleLabel = isImage
-    ? 'New image'
-    : isOrchestrator
-      ? 'New orchestrator'
-      : 'New chat';
+  const titleLabel = isImage ? 'New image' : isOrchestrator ? 'New orchestrator' : 'New chat';
   const onlyLabel = isImage ? 'Image only' : isOrchestrator ? 'Orchestrator only' : 'Chat only';
 
   const pickFolder = async () => {
@@ -77,9 +73,7 @@ export function NewChatModal() {
         </div>
 
         <div className="workspace-picker">
-          <div className="workspace-path">
-            {folder ? folder : 'No folder selected'}
-          </div>
+          <div className="workspace-path">{folder ? folder : 'No folder selected'}</div>
           <button type="button" className="btn" onClick={() => void pickFolder()} disabled={busy}>
             Choose folder…
           </button>
@@ -104,12 +98,7 @@ export function NewChatModal() {
           >
             Cancel
           </button>
-          <button
-            type="button"
-            className="btn"
-            disabled={busy}
-            onClick={() => void create(false)}
-          >
+          <button type="button" className="btn" disabled={busy} onClick={() => void create(false)}>
             {onlyLabel}
           </button>
           <button

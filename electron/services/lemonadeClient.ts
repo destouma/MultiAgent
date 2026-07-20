@@ -267,8 +267,12 @@ export class LemonadeClient {
       const toolCalls =
         message?.tool_calls
           ?.filter(
-            (call): call is Extract<typeof call, { type?: 'function'; function: { name: string; arguments: string } }> =>
-              'function' in call && Boolean(call.function?.name),
+            (
+              call,
+            ): call is Extract<
+              typeof call,
+              { type?: 'function'; function: { name: string; arguments: string } }
+            > => 'function' in call && Boolean(call.function?.name),
           )
           .map((call) => ({
             id: call.id,

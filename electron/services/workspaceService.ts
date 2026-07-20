@@ -33,6 +33,29 @@ export class WorkspaceService {
     if (relative.startsWith('..') || path.isAbsolute(relative)) {
       throw new WorkspaceError('Path escapes the workspace folder');
     }
+
+    // path.resolve alone doesn't follow symlinks: a link inside the workspace
+    // that points outside it would otherwise pass the check above. Walk up to
+    // the nearest existing ancestor and compare real (symlink-resolved) paths.
+    let realRoot: string;
+    try {
+      realRoot = fs.realpathSync(root);
+    } catch {
+      throw new WorkspaceError('Workspace folder does not exist');
+    }
+
+    let existingAncestor = target;
+    while (!fs.existsSync(existingAncestor)) {
+      const parent = path.dirname(existingAncestor);
+      if (parent === existingAncestor) break;
+      existingAncestor = parent;
+    }
+    const realExistingAncestor = fs.realpathSync(existingAncestor);
+    const realRelative = path.relative(realRoot, realExistingAncestor);
+    if (realRelative.startsWith('..') || path.isAbsolute(realRelative)) {
+      throw new WorkspaceError('Path escapes the workspace folder');
+    }
+
     return target;
   }
 
@@ -141,22 +164,14 @@ export class WorkspaceService {
     return `Deleted ${relativePath.replace(/\\/g, '/')}`;
   }
 
-  executeTool(
-    workspaceRoot: string,
-    name: string,
-    args: Record<string, unknown>,
-  ): string {
+  executeTool(workspaceRoot: string, name: string, args: Record<string, unknown>): string {
     switch (name) {
       case 'list_dir':
         return this.listDir(workspaceRoot, String(args.path ?? '.'));
       case 'read_file':
         return this.readFile(workspaceRoot, String(args.path ?? ''));
       case 'write_file':
-        return this.writeFile(
-          workspaceRoot,
-          String(args.path ?? ''),
-          String(args.content ?? ''),
-        );
+        return this.writeFile(workspaceRoot, String(args.path ?? ''), String(args.content ?? ''));
       case 'delete_file':
         return this.deleteFile(workspaceRoot, String(args.path ?? ''));
       case 'generate_image':

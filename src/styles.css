@@ -30,8 +30,7 @@ body {
   color: var(--ink);
   background:
     radial-gradient(1200px 600px at 10% -10%, rgba(15, 118, 110, 0.12), transparent 55%),
-    radial-gradient(900px 500px at 100% 0%, rgba(180, 83, 9, 0.1), transparent 50%),
-    var(--bg);
+    radial-gradient(900px 500px at 100% 0%, rgba(180, 83, 9, 0.1), transparent 50%), var(--bg);
 }
 
 button,
@@ -398,7 +397,10 @@ button {
   background: var(--bg-elevated);
   border-radius: 999px;
   padding: 0.55rem 0.95rem;
-  transition: background 160ms ease, border-color 160ms ease, transform 120ms ease;
+  transition:
+    background 160ms ease,
+    border-color 160ms ease,
+    transform 120ms ease;
 }
 
 .btn:hover {

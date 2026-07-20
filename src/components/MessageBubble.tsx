@@ -22,14 +22,21 @@ export function MessageBubble({ message, persona, streaming }: Props) {
   useEffect(() => {
     if (!image) return;
     let cancelled = false;
-    void window.api.getImageDataUrl(image.fileName).then((url) => {
-      if (!cancelled) setDataUrl(url);
-    }).catch(() => {
-      if (!cancelled) setDataUrl(null);
-    });
+    void window.api
+      .getImageDataUrl(image.fileName)
+      .then((url) => {
+        if (!cancelled) setDataUrl(url);
+      })
+      .catch(() => {
+        if (!cancelled) setDataUrl(null);
+      });
     return () => {
       cancelled = true;
     };
+    // `image` is re-derived from message.content on every render, so it's a
+    // new object each time; depending on the primitive fileName instead
+    // avoids refetching on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [image?.fileName]);
 
   if (image) {
@@ -45,9 +52,7 @@ export function MessageBubble({ message, persona, streaming }: Props) {
           <p className="image-prompt">{image.prompt}</p>
           <p className="image-meta-line">
             {image.model} · {image.size}
-            {image.workspaceRelativePath
-              ? ` · saved as ${image.workspaceRelativePath}`
-              : ''}
+            {image.workspaceRelativePath ? ` · saved as ${image.workspaceRelativePath}` : ''}
           </p>
           {dataUrl ? (
             <img className="generated-image" src={dataUrl} alt={image.prompt} />
@@ -113,21 +118,14 @@ export function MessageBubble({ message, persona, streaming }: Props) {
       {!isUser && (
         <div className="message-meta">
           <span className="persona-chip">
-            <span
-              className="persona-dot"
-              style={{ background: persona?.color ?? '#0F766E' }}
-            />
+            <span className="persona-dot" style={{ background: persona?.color ?? '#0F766E' }} />
             {persona?.name ?? 'Assistant'}
           </span>
         </div>
       )}
       <div
         className="bubble"
-        style={
-          !isUser && persona
-            ? { borderLeft: `3px solid ${persona.color}` }
-            : undefined
-        }
+        style={!isUser && persona ? { borderLeft: `3px solid ${persona.color}` } : undefined}
       >
         <MessageContent content={message.content} streaming={streaming} />
       </div>

@@ -187,9 +187,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set((state) => ({
         streamingMessageId: result.assistantMessageId,
         messages: state.messages.map((message) =>
-          message.id === userMessage.id
-            ? { ...message, id: result.userMessageId }
-            : message,
+          message.id === userMessage.id ? { ...message, id: result.userMessageId } : message,
         ),
       }));
     } catch (error) {

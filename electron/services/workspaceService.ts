@@ -164,22 +164,14 @@ export class WorkspaceService {
     return `Deleted ${relativePath.replace(/\\/g, '/')}`;
   }
 
-  executeTool(
-    workspaceRoot: string,
-    name: string,
-    args: Record<string, unknown>,
-  ): string {
+  executeTool(workspaceRoot: string, name: string, args: Record<string, unknown>): string {
     switch (name) {
       case 'list_dir':
         return this.listDir(workspaceRoot, String(args.path ?? '.'));
       case 'read_file':
         return this.readFile(workspaceRoot, String(args.path ?? ''));
       case 'write_file':
-        return this.writeFile(
-          workspaceRoot,
-          String(args.path ?? ''),
-          String(args.content ?? ''),
-        );
+        return this.writeFile(workspaceRoot, String(args.path ?? ''), String(args.content ?? ''));
       case 'delete_file':
         return this.deleteFile(workspaceRoot, String(args.path ?? ''));
       case 'generate_image':

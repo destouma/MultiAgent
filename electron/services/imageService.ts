@@ -2,9 +2,10 @@ import { app, dialog, type BrowserWindow } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import type { GeneratedImageInfo, GenerateImageRequest, ModelStatusEvent } from '../../shared/types';
+import type { GeneratedImageInfo, GenerateImageRequest } from '../../shared/types';
 import { LemonadeClient, LemonadeError } from './lemonadeClient';
 import { WorkspaceError, WorkspaceService } from './workspaceService';
+import { emitModelStatus } from './modelStatus';
 
 export class ImageService {
   private workspace = new WorkspaceService();
@@ -26,17 +27,6 @@ export class ImageService {
     return path.join(this.imagesDir(), safe);
   }
 
-  private emitModelStatus(model: string, message: string): void {
-    const lower = message.toLowerCase();
-    const phase: ModelStatusEvent['phase'] = lower.includes('ready')
-      ? 'ready'
-      : lower.includes('loading') || lower.includes('waiting')
-        ? 'loading'
-        : 'checking';
-    const event: ModelStatusEvent = { model, phase, message };
-    this.getWindow()?.webContents.send('model:status', event);
-  }
-
   async generate(
     request: GenerateImageRequest,
     workspaceRoot: string | null,
@@ -50,7 +40,7 @@ export class ImageService {
     }
 
     await this.lemonade.ensureModelLoaded(model, {
-      onStatus: (message) => this.emitModelStatus(model, message),
+      onStatus: (message) => emitModelStatus(this.getWindow, model, message),
     });
 
     const size = request.size || '512x512';
@@ -70,9 +60,7 @@ export class ImageService {
 
     let workspaceRelativePath: string | null = null;
     if (workspaceRoot) {
-      const rel =
-        request.saveToWorkspacePath?.trim() ||
-        `images/${fileName}`;
+      const rel = request.saveToWorkspacePath?.trim() || `images/${fileName}`;
       this.workspace.writeBinary(workspaceRoot, rel, Buffer.from(b64, 'base64'));
       workspaceRelativePath = rel.replace(/\\/g, '/');
     }
@@ -122,11 +110,7 @@ export class ImageService {
     return result.filePath;
   }
 
-  saveToWorkspace(
-    fileName: string,
-    workspaceRoot: string,
-    relativePath?: string,
-  ): string {
+  saveToWorkspace(fileName: string, workspaceRoot: string, relativePath?: string): string {
     const absolute = this.absolutePath(fileName);
     if (!fs.existsSync(absolute)) {
       throw new LemonadeError('unknown', 'Image file not found');

@@ -10,26 +10,18 @@ import type {
   ChatErrorEvent,
   ChatSendRequest,
   ChatTokenEvent,
-  ModelStatusEvent,
   WorkspaceOpEvent,
 } from '../../shared/types';
 import { LemonadeClient, LemonadeError } from './lemonadeClient';
 import { ConversationStore } from './conversationStore';
 import { PersonaRegistry } from './personaRegistry';
-import {
-  WorkspaceError,
-  WorkspaceService,
-  workspaceTools,
-} from './workspaceService';
+import { WorkspaceError, WorkspaceService, workspaceTools } from './workspaceService';
 import { ImageService } from './imageService';
 import { OrchestratorService } from './orchestratorService';
+import { emitModelStatus } from './modelStatus';
+import { parseActionTags } from './actionTags';
 
 const MAX_TOOL_ROUNDS = 8;
-
-type ParsedAction = {
-  name: 'list_dir' | 'read_file' | 'write_file' | 'delete_file' | 'generate_image';
-  args: Record<string, unknown>;
-};
 
 export class ChatService {
   private abortController: AbortController | null = null;
@@ -45,16 +37,12 @@ export class ChatService {
     private getSettings: () => AppSettings,
     private getWindow: () => BrowserWindow | null,
   ) {
-    this.orchestrator = new OrchestratorService(
-      lemonade,
-      store,
-      personas,
-      getSettings,
-      getWindow,
-    );
+    this.orchestrator = new OrchestratorService(lemonade, store, personas, getSettings, getWindow);
   }
 
-  async send(request: ChatSendRequest): Promise<{ userMessageId: string; assistantMessageId: string }> {
+  async send(
+    request: ChatSendRequest,
+  ): Promise<{ userMessageId: string; assistantMessageId: string }> {
     const existing = this.store.getConversation(request.conversationId);
     if (existing?.kind === 'orchestrator') {
       if (this.abortController) {
@@ -100,7 +88,7 @@ export class ChatService {
 
     const systemParts = [persona.systemPrompt];
     if (workspacePath) {
-      let tree = '';
+      let tree: string;
       try {
         tree = this.workspace.buildTree(workspacePath);
       } catch (error) {
@@ -142,7 +130,7 @@ export class ChatService {
     try {
       await this.lemonade.ensureModelLoaded(model, {
         signal: myController.signal,
-        onStatus: (message) => this.emitModelStatus(model, message),
+        onStatus: (message) => emitModelStatus(this.getWindow, model, message),
       });
 
       if (workspacePath) {
@@ -284,7 +272,7 @@ export class ChatService {
         continue;
       }
 
-      const actions = this.parseActionTags(completion.content || '');
+      const actions = parseActionTags(completion.content || '');
       if (actions.length) {
         messages.push({
           role: 'assistant',
@@ -332,14 +320,16 @@ export class ChatService {
     name: string;
     rawArgs: string;
   }): Promise<string> {
-    let args: Record<string, unknown> = {};
+    let args: Record<string, unknown>;
     try {
       args = JSON.parse(input.rawArgs || '{}') as Record<string, unknown>;
     } catch {
       args = {};
     }
 
-    const relPath = String(args.path ?? (input.name === 'generate_image' ? 'images/generated.png' : '.'));
+    const relPath = String(
+      args.path ?? (input.name === 'generate_image' ? 'images/generated.png' : '.'),
+    );
     this.emitOp({
       conversationId: input.conversationId,
       messageId: input.messageId,
@@ -372,9 +362,7 @@ export class ChatService {
       return result;
     } catch (error) {
       const message =
-        error instanceof WorkspaceError || error instanceof Error
-          ? error.message
-          : String(error);
+        error instanceof WorkspaceError || error instanceof Error ? error.message : String(error);
       this.emitOp({
         conversationId: input.conversationId,
         messageId: input.messageId,
@@ -387,46 +375,6 @@ export class ChatService {
     }
   }
 
-  private parseActionTags(content: string): ParsedAction[] {
-    const actions: ParsedAction[] = [];
-
-    const selfClosing =
-      /<(list_dir|read_file|delete_file)\s+path="([^"]+)"\s*\/>/gi;
-    let match: RegExpExecArray | null;
-    while ((match = selfClosing.exec(content)) !== null) {
-      actions.push({
-        name: match[1] as ParsedAction['name'],
-        args: { path: match[2] },
-      });
-    }
-
-    const writeRe =
-      /<write_file\s+path="([^"]+)"\s*>([\s\S]*?)<\/write_file>/gi;
-    while ((match = writeRe.exec(content)) !== null) {
-      actions.push({
-        name: 'write_file',
-        args: { path: match[1], content: match[2] },
-      });
-    }
-
-    const imageRe =
-      /<generate_image\s+([^>]+?)\s*\/>/gi;
-    while ((match = imageRe.exec(content)) !== null) {
-      const attrs = match[1];
-      const prompt = /prompt="([^"]+)"/i.exec(attrs)?.[1] ?? '';
-      const pathAttr = /path="([^"]+)"/i.exec(attrs)?.[1] ?? 'images/generated.png';
-      const size = /size="([^"]+)"/i.exec(attrs)?.[1];
-      if (prompt) {
-        actions.push({
-          name: 'generate_image',
-          args: { prompt, path: pathAttr, ...(size ? { size } : {}) },
-        });
-      }
-    }
-
-    return actions;
-  }
-
   private emitToken(conversationId: string, messageId: string, delta: string): void {
     const tokenEvent: ChatTokenEvent = { conversationId, messageId, delta };
     this.getWindow()?.webContents.send('chat:token', tokenEvent);
@@ -434,17 +382,6 @@ export class ChatService {
 
   private emitOp(event: WorkspaceOpEvent): void {
     this.getWindow()?.webContents.send('workspace:op', event);
-  }
-
-  private emitModelStatus(model: string, message: string): void {
-    const lower = message.toLowerCase();
-    const phase: ModelStatusEvent['phase'] = lower.includes('ready')
-      ? 'ready'
-      : lower.includes('loading') || lower.includes('waiting')
-        ? 'loading'
-        : 'checking';
-    const event: ModelStatusEvent = { model, phase, message };
-    this.getWindow()?.webContents.send('model:status', event);
   }
 
   cancel(): boolean {

@@ -22,29 +22,16 @@ export type AppServices = {
   images: ImageService;
 };
 
-export async function createServices(
-  getWindow: () => BrowserWindow | null,
-): Promise<AppServices> {
+export async function createServices(getWindow: () => BrowserWindow | null): Promise<AppServices> {
   const settings = getSettings();
   const lemonade = new LemonadeClient(settings);
   const store = new ConversationStore();
   await store.ensureReady();
   const personas = new PersonaRegistry();
   personas.load();
-  const images = new ImageService(
-    lemonade,
-    () => getSettings().imageModel,
-    getWindow,
-  );
+  const images = new ImageService(lemonade, () => getSettings().imageModel, getWindow);
 
-  const chat = new ChatService(
-    lemonade,
-    store,
-    personas,
-    images,
-    () => getSettings(),
-    getWindow,
-  );
+  const chat = new ChatService(lemonade, store, personas, images, () => getSettings(), getWindow);
 
   return { lemonade, store, personas, chat, images };
 }
@@ -97,18 +84,15 @@ export function registerIpcHandlers(
     },
   );
 
-  ipcMain.handle(
-    IpcChannels.conversationsRename,
-    (_event, id: string, title: string) => store.renameConversation(id, title),
+  ipcMain.handle(IpcChannels.conversationsRename, (_event, id: string, title: string) =>
+    store.renameConversation(id, title),
   );
 
   ipcMain.handle(IpcChannels.conversationsDelete, (_event, id: string) =>
     store.deleteConversation(id),
   );
 
-  ipcMain.handle(IpcChannels.conversationsGet, (_event, id: string) =>
-    store.getConversation(id),
-  );
+  ipcMain.handle(IpcChannels.conversationsGet, (_event, id: string) => store.getConversation(id));
 
   ipcMain.handle(IpcChannels.messagesList, (_event, conversationId: string) =>
     store.getMessages(conversationId),
@@ -172,13 +156,16 @@ export function registerIpcHandlers(
     }
   });
 
-  ipcMain.handle(IpcChannels.imagesDownload, async (_event, fileName: string, defaultName?: string) => {
-    try {
-      return await images.download(fileName, defaultName);
-    } catch (error) {
-      throw serializeError(error);
-    }
-  });
+  ipcMain.handle(
+    IpcChannels.imagesDownload,
+    async (_event, fileName: string, defaultName?: string) => {
+      try {
+        return await images.download(fileName, defaultName);
+      } catch (error) {
+        throw serializeError(error);
+      }
+    },
+  );
 
   ipcMain.handle(
     IpcChannels.imagesSaveToWorkspace,
@@ -191,11 +178,7 @@ export function registerIpcHandlers(
             'This chat has no workspace folder. Create a new chat with a folder, or download the image instead.',
           );
         }
-        return images.saveToWorkspace(
-          fileName,
-          conversation.workspacePath,
-          relativePath,
-        );
+        return images.saveToWorkspace(fileName, conversation.workspacePath, relativePath);
       } catch (error) {
         throw serializeError(error);
       }

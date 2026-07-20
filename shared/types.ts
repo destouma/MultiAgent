@@ -149,7 +149,7 @@ export function isLikelyImageModel(modelId: string): boolean {
     id.includes('diffusion') ||
     id.includes('flux') ||
     id.includes('image') ||
-    id.includes('turbo') && (id.includes('sd') || id.includes('xl'))
+    (id.includes('turbo') && (id.includes('sd') || id.includes('xl')))
   );
 }
 

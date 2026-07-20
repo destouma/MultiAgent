@@ -8,20 +8,16 @@ import type {
   ChatMessagesUpdatedEvent,
   ChatSendRequest,
   ChatTokenEvent,
-  ModelStatusEvent,
   OrchestratorStepEvent,
   Persona,
 } from '../../shared/types';
 import { LemonadeClient, LemonadeError } from './lemonadeClient';
 import { ConversationStore } from './conversationStore';
 import { PersonaRegistry } from './personaRegistry';
+import { emitModelStatus } from './modelStatus';
+import { parsePlan, type PlanResult } from './planParser';
 
 const SPECIALIST_IDS = ['researcher', 'coder', 'critic'] as const;
-
-type PlanResult = {
-  specialists: string[];
-  rationale: string;
-};
 
 export class OrchestratorService {
   private abortController: AbortController | null = null;
@@ -35,7 +31,9 @@ export class OrchestratorService {
     private getWindow: () => BrowserWindow | null,
   ) {}
 
-  async send(request: ChatSendRequest): Promise<{ userMessageId: string; assistantMessageId: string }> {
+  async send(
+    request: ChatSendRequest,
+  ): Promise<{ userMessageId: string; assistantMessageId: string }> {
     if (this.abortController) {
       this.abortController.abort();
     }
@@ -75,7 +73,7 @@ export class OrchestratorService {
     try {
       await this.lemonade.ensureModelLoaded(model, {
         signal,
-        onStatus: (message) => this.emitModelStatus(model, message),
+        onStatus: (message) => emitModelStatus(this.getWindow, model, message),
       });
 
       this.emitStep({
@@ -264,41 +262,7 @@ export class OrchestratorService {
     const completion = await this.lemonade.completeChat(messages, input.model, {
       signal: input.signal,
     });
-    return this.parsePlan(completion.content || '');
-  }
-
-  private parsePlan(raw: string): PlanResult {
-    const fallback: PlanResult = {
-      specialists: ['researcher'],
-      rationale: 'Default plan',
-    };
-
-    const jsonMatch = raw.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) return fallback;
-
-    try {
-      const parsed = JSON.parse(jsonMatch[0]) as {
-        specialists?: unknown;
-        rationale?: unknown;
-      };
-      const ids = Array.isArray(parsed.specialists)
-        ? parsed.specialists
-            .map((item) => String(item))
-            .filter((id): id is (typeof SPECIALIST_IDS)[number] =>
-              (SPECIALIST_IDS as readonly string[]).includes(id),
-            )
-        : [];
-      const unique = [...new Set(ids)].slice(0, 3);
-      return {
-        specialists: unique,
-        rationale:
-          typeof parsed.rationale === 'string' && parsed.rationale.trim()
-            ? parsed.rationale.trim()
-            : 'Plan selected by orchestrator',
-      };
-    } catch {
-      return fallback;
-    }
+    return parsePlan(completion.content || '', SPECIALIST_IDS);
   }
 
   private async runSpecialist(input: {
@@ -335,7 +299,7 @@ export class OrchestratorService {
 
     await this.lemonade.ensureModelLoaded(specialistModel, {
       signal: input.signal,
-      onStatus: (message) => this.emitModelStatus(specialistModel, message),
+      onStatus: (message) => emitModelStatus(this.getWindow, specialistModel, message),
     });
 
     const completion = await this.lemonade.completeChat(messages, specialistModel, {
@@ -358,10 +322,7 @@ export class OrchestratorService {
     const notesBlock =
       input.specialistNotes.length > 0
         ? input.specialistNotes
-            .map(
-              (note) =>
-                `### ${note.persona.name}\n${note.content}`,
-            )
+            .map((note) => `### ${note.persona.name}\n${note.content}`)
             .join('\n\n')
         : '(No specialists were consulted.)';
 
@@ -379,12 +340,9 @@ export class OrchestratorService {
       },
       {
         role: 'user',
-        content: [
-          `User request:\n${input.userContent}`,
-          '',
-          'Specialist notes:',
-          notesBlock,
-        ].join('\n'),
+        content: [`User request:\n${input.userContent}`, '', 'Specialist notes:', notesBlock].join(
+          '\n',
+        ),
       },
     ];
 
@@ -408,17 +366,6 @@ export class OrchestratorService {
   private emitMessagesUpdated(conversationId: string): void {
     const event: ChatMessagesUpdatedEvent = { conversationId };
     this.getWindow()?.webContents.send('chat:messagesUpdated', event);
-  }
-
-  private emitModelStatus(model: string, message: string): void {
-    const lower = message.toLowerCase();
-    const phase: ModelStatusEvent['phase'] = lower.includes('ready')
-      ? 'ready'
-      : lower.includes('loading') || lower.includes('waiting')
-        ? 'loading'
-        : 'checking';
-    const event: ModelStatusEvent = { model, phase, message };
-    this.getWindow()?.webContents.send('model:status', event);
   }
 
   cancel(): boolean {

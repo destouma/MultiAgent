@@ -28,18 +28,10 @@ export function ConversationList() {
         >
           New chat
         </button>
-        <button
-          type="button"
-          className="btn"
-          onClick={() => setNewChatOpen(true, 'image')}
-        >
+        <button type="button" className="btn" onClick={() => setNewChatOpen(true, 'image')}>
           New image
         </button>
-        <button
-          type="button"
-          className="btn"
-          onClick={() => setNewChatOpen(true, 'orchestrator')}
-        >
+        <button type="button" className="btn" onClick={() => setNewChatOpen(true, 'orchestrator')}>
           New orchestrator
         </button>
       </div>

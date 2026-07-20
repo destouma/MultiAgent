@@ -42,8 +42,8 @@ export function SettingsModal() {
         <h2>Settings</h2>
         <p className="hint">
           Point the app at your local Lemonade Server. Default base URL is{' '}
-          <code>http://localhost:13305/api/v1</code>. The API key is required by the
-          OpenAI client but unused by Lemonade.
+          <code>http://localhost:13305/api/v1</code>. The API key is required by the OpenAI client
+          but unused by Lemonade.
         </p>
         <div className="modal-grid">
           <div className="field">
@@ -77,8 +77,8 @@ export function SettingsModal() {
             />
           </div>
           <p className="hint">
-            Chat model and image model are chosen in the top bar. Image models use
-            Lemonade <code>/images/generations</code>.
+            Chat model and image model are chosen in the top bar. Image models use Lemonade{' '}
+            <code>/images/generations</code>.
           </p>
         </div>
         <div className="modal-actions">

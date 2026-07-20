@@ -19,7 +19,10 @@ type SettingsState = {
   imageModels: () => ModelInfo[];
 };
 
-function pickDefaults(settings: AppSettings, models: ModelInfo[]): Promise<AppSettings> | AppSettings {
+function pickDefaults(
+  settings: AppSettings,
+  models: ModelInfo[],
+): Promise<AppSettings> | AppSettings {
   const chatModels = models.filter((model) => !isLikelyImageModel(model.id));
   const imageModels = models.filter((model) => isLikelyImageModel(model.id));
   const patch: Partial<AppSettings> = {};

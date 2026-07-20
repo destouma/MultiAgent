@@ -55,8 +55,7 @@ export function ImageStudio() {
       steps,
       cfgScale,
       seed,
-      saveToWorkspacePath:
-        saveToFolder && hasFolder ? relativePath.trim() || null : null,
+      saveToWorkspacePath: saveToFolder && hasFolder ? relativePath.trim() || null : null,
     });
     setPrompt('');
   };
@@ -97,7 +96,11 @@ export function ImageStudio() {
           <div className="image-param-grid">
             <label className="image-param">
               <span>Mode</span>
-              <select value={mode} onChange={(event) => setMode(event.target.value)} disabled={generatingImage}>
+              <select
+                value={mode}
+                onChange={(event) => setMode(event.target.value)}
+                disabled={generatingImage}
+              >
                 <option value="generate">Generate</option>
               </select>
             </label>
@@ -126,7 +129,11 @@ export function ImageStudio() {
             </label>
             <label className="image-param">
               <span>Width</span>
-              <select value={width} onChange={(event) => setWidth(event.target.value)} disabled={generatingImage}>
+              <select
+                value={width}
+                onChange={(event) => setWidth(event.target.value)}
+                disabled={generatingImage}
+              >
                 {SIZE_OPTIONS.map((value) => (
                   <option key={value} value={value}>
                     {value}
@@ -136,7 +143,11 @@ export function ImageStudio() {
             </label>
             <label className="image-param">
               <span>Height</span>
-              <select value={height} onChange={(event) => setHeight(event.target.value)} disabled={generatingImage}>
+              <select
+                value={height}
+                onChange={(event) => setHeight(event.target.value)}
+                disabled={generatingImage}
+              >
                 {SIZE_OPTIONS.map((value) => (
                   <option key={value} value={value}>
                     {value}
@@ -158,7 +169,11 @@ export function ImageStudio() {
           <div className="image-param-row-center">
             <label className="image-param">
               <span>Upscale</span>
-              <select value={upscale} onChange={(event) => setUpscale(event.target.value)} disabled={generatingImage}>
+              <select
+                value={upscale}
+                onChange={(event) => setUpscale(event.target.value)}
+                disabled={generatingImage}
+              >
                 <option value="off">Off</option>
               </select>
             </label>
@@ -220,9 +235,7 @@ export function ImageStudio() {
                           placeholder="images/generated.png"
                         />
                       ) : null}
-                      {hasFolder ? (
-                        <p className="hint">{active?.workspacePath}</p>
-                      ) : null}
+                      {hasFolder ? <p className="hint">{active?.workspacePath}</p> : null}
                     </div>
                   ) : null}
                 </div>

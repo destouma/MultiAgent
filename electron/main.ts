@@ -1,9 +1,17 @@
-import { app, BrowserWindow, shell } from 'electron';
+import { app, BrowserWindow, dialog, shell } from 'electron';
 import path from 'node:path';
 import { createServices, registerIpcHandlers, type AppServices } from './ipc/handlers';
 
 let mainWindow: BrowserWindow | null = null;
 let services: AppServices | null = null;
+
+process.on('uncaughtException', (error) => {
+  console.error('[main] Uncaught exception:', error);
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('[main] Unhandled rejection:', reason);
+});
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
@@ -24,6 +32,18 @@ function createWindow(): void {
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
     return { action: 'deny' };
+  });
+
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    console.error('[main] Renderer process gone:', details.reason);
+    if (details.reason !== 'clean-exit') {
+      dialog.showErrorBox(
+        'MultiAgent crashed',
+        `The app window stopped responding (${details.reason}) and needs to restart.`,
+      );
+      mainWindow = null;
+      createWindow();
+    }
   });
 
   if (process.env.VITE_DEV_SERVER_URL) {

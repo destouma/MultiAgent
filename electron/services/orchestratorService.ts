@@ -66,8 +66,9 @@ export class OrchestratorService {
 
     const assistantMessageId = randomUUID();
     this.activeMessageId = assistantMessageId;
-    this.abortController = new AbortController();
-    const signal = this.abortController.signal;
+    const myController = new AbortController();
+    this.abortController = myController;
+    const signal = myController.signal;
 
     let fullContent = '';
 
@@ -215,8 +216,12 @@ export class OrchestratorService {
 
       return { userMessageId: userMessage.id, assistantMessageId };
     } finally {
-      this.abortController = null;
-      this.activeMessageId = null;
+      if (this.abortController === myController) {
+        this.abortController = null;
+      }
+      if (this.activeMessageId === assistantMessageId) {
+        this.activeMessageId = null;
+      }
     }
   }
 

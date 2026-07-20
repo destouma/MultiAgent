@@ -99,7 +99,11 @@ export class ConversationStore {
 
   private persist(): void {
     const data = this.db.export();
-    fs.writeFileSync(this.filePath, Buffer.from(data));
+    // Write-then-rename so a crash mid-write can't leave chats.db truncated
+    // or corrupted; rename is atomic on the same volume.
+    const tmpPath = `${this.filePath}.${process.pid}.tmp`;
+    fs.writeFileSync(tmpPath, Buffer.from(data));
+    fs.renameSync(tmpPath, this.filePath);
   }
 
   private mapConversation(row: {

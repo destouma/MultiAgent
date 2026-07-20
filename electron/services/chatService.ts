@@ -135,12 +135,13 @@ export class ChatService {
     ];
 
     const win = this.getWindow();
-    this.abortController = new AbortController();
+    const myController = new AbortController();
+    this.abortController = myController;
     let fullContent = '';
 
     try {
       await this.lemonade.ensureModelLoaded(model, {
-        signal: this.abortController.signal,
+        signal: myController.signal,
         onStatus: (message) => this.emitModelStatus(model, message),
       });
 
@@ -151,13 +152,13 @@ export class ChatService {
           messages: openaiMessages,
           conversationId: request.conversationId,
           messageId: assistantMessageId,
-          signal: this.abortController.signal,
+          signal: myController.signal,
         });
       } else {
         for await (const delta of this.lemonade.streamChat(
           openaiMessages,
           model,
-          this.abortController.signal,
+          myController.signal,
         )) {
           fullContent += delta;
           this.emitToken(request.conversationId, assistantMessageId, delta);
@@ -211,8 +212,12 @@ export class ChatService {
 
       return { userMessageId: userMessage.id, assistantMessageId };
     } finally {
-      this.abortController = null;
-      this.activeMessageId = null;
+      if (this.abortController === myController) {
+        this.abortController = null;
+      }
+      if (this.activeMessageId === assistantMessageId) {
+        this.activeMessageId = null;
+      }
     }
   }
 

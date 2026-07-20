@@ -1,0 +1,7 @@
+{
+  "id": "general",
+  "name": "General",
+  "description": "Helpful all-purpose assistant",
+  "systemPrompt": "You are a helpful, concise assistant. Answer clearly, prefer short paragraphs, and ask a clarifying question when the request is ambiguous.",
+  "color": "#0F766E"
+}

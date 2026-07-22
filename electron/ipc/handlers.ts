@@ -98,19 +98,12 @@ export function registerIpcHandlers(
     store.getMessages(conversationId),
   );
 
-  ipcMain.handle(IpcChannels.dialogPickFolder, async () => {
-    const win = getWindow();
-    const result = win
-      ? await dialog.showOpenDialog(win, {
-          title: 'Choose workspace folder',
-          properties: ['openDirectory'],
-        })
-      : await dialog.showOpenDialog({
-          title: 'Choose workspace folder',
-          properties: ['openDirectory'],
-        });
-    if (result.canceled || !result.filePaths[0]) return null;
-    return result.filePaths[0];
+  ipcMain.handle(IpcChannels.foldersList, () => store.listFolders());
+
+  ipcMain.handle(IpcChannels.foldersOpen, async () => {
+    const selected = await pickFolderDialog(getWindow);
+    if (!selected) return null;
+    return store.addFolder(selected);
   });
 
   ipcMain.handle(IpcChannels.imagesGenerate, async (_event, request: GenerateImageRequest) => {
@@ -184,6 +177,21 @@ export function registerIpcHandlers(
       }
     },
   );
+}
+
+async function pickFolderDialog(getWindow: () => BrowserWindow | null): Promise<string | null> {
+  const win = getWindow();
+  const result = win
+    ? await dialog.showOpenDialog(win, {
+        title: 'Choose a folder',
+        properties: ['openDirectory'],
+      })
+    : await dialog.showOpenDialog({
+        title: 'Choose a folder',
+        properties: ['openDirectory'],
+      });
+  if (result.canceled || !result.filePaths[0]) return null;
+  return result.filePaths[0];
 }
 
 function serializeError(error: unknown): Error {

@@ -35,6 +35,11 @@ export type CreateConversationRequest = {
   kind?: ConversationKind;
 };
 
+export type FolderEntry = {
+  path: string;
+  addedAt: number;
+};
+
 export type AppSettings = {
   baseUrl: string;
   apiKey: string;

@@ -9,6 +9,7 @@ import type {
   Conversation,
   ChatMessage,
   CreateConversationRequest,
+  FolderEntry,
   GenerateImageRequest,
   GeneratedImageInfo,
   HealthStatus,
@@ -46,7 +47,8 @@ const api = {
   listMessages: (conversationId: string): Promise<ChatMessage[]> =>
     ipcRenderer.invoke('messages:list', conversationId),
 
-  pickFolder: (): Promise<string | null> => ipcRenderer.invoke('dialog:pickFolder'),
+  listFolders: (): Promise<FolderEntry[]> => ipcRenderer.invoke('folders:list'),
+  openFolder: (): Promise<FolderEntry | null> => ipcRenderer.invoke('folders:open'),
 
   generateImage: (
     request: GenerateImageRequest,

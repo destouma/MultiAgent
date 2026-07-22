@@ -8,6 +8,7 @@ import type {
   Conversation,
   ConversationKind,
   CreateConversationRequest,
+  FolderEntry,
   MessageRole,
 } from '../../shared/types';
 
@@ -89,6 +90,28 @@ export class ConversationStore {
     if (!columns.has('kind')) {
       this.db.run(`ALTER TABLE conversations ADD COLUMN kind TEXT DEFAULT 'chat'`);
     }
+
+    const foldersExisted = this.db.exec(
+      `SELECT name FROM sqlite_master WHERE type='table' AND name='folders'`,
+    )[0];
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS folders (
+        path TEXT PRIMARY KEY,
+        addedAt INTEGER NOT NULL
+      );
+    `);
+    if (!foldersExisted) {
+      // Folders used to be picked ad hoc per-conversation with no registry of
+      // their own; backfill from any conversation created that way so it
+      // still shows up as a folder group in the sidebar.
+      this.db.run(`
+        INSERT OR IGNORE INTO folders (path, addedAt)
+        SELECT workspacePath, MIN(createdAt)
+        FROM conversations
+        WHERE workspacePath IS NOT NULL
+        GROUP BY workspacePath
+      `);
+    }
   }
 
   private persist(): void {
@@ -137,6 +160,30 @@ export class ConversationStore {
         kind: row[5] == null ? 'chat' : String(row[5]),
       }),
     );
+  }
+
+  listFolders(): FolderEntry[] {
+    const result = this.db.exec(`SELECT path, addedAt FROM folders ORDER BY addedAt ASC`);
+    if (!result[0]) return [];
+    return result[0].values.map((row) => ({
+      path: String(row[0]),
+      addedAt: Number(row[1]),
+    }));
+  }
+
+  addFolder(folderPath: string): FolderEntry {
+    const addedAt = Date.now();
+    this.db.run(`INSERT OR IGNORE INTO folders (path, addedAt) VALUES (?, ?)`, [
+      folderPath,
+      addedAt,
+    ]);
+    this.persist();
+    const stmt = this.db.prepare(`SELECT path, addedAt FROM folders WHERE path = ?`);
+    stmt.bind([folderPath]);
+    stmt.step();
+    const row = stmt.getAsObject() as { path: string; addedAt: number };
+    stmt.free();
+    return { path: row.path, addedAt: row.addedAt };
   }
 
   createConversation(input: CreateConversationRequest = {}): Conversation {

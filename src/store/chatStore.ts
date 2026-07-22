@@ -3,12 +3,14 @@ import type {
   ChatMessage,
   Conversation,
   ConversationKind,
+  FolderEntry,
   OrchestratorStepEvent,
   WorkspaceOpEvent,
 } from '../../shared/types';
 
 type ChatState = {
   conversations: Conversation[];
+  folders: FolderEntry[];
   activeConversationId: string | null;
   messages: ChatMessage[];
   activePersonaId: string;
@@ -19,11 +21,14 @@ type ChatState = {
   error: string | null;
   newChatOpen: boolean;
   newChatKind: ConversationKind;
+  newChatFolder: string | null;
   workspaceOps: WorkspaceOpEvent[];
   generatingImage: boolean;
   modelStatus: string | null;
   orchestratorStatus: string | null;
   bootstrap: () => Promise<void>;
+  loadFolders: () => Promise<void>;
+  openFolder: () => Promise<void>;
   selectConversation: (id: string) => Promise<void>;
   createConversation: (
     workspacePath?: string | null,
@@ -32,7 +37,7 @@ type ChatState = {
   ) => Promise<void>;
   deleteConversation: (id: string) => Promise<void>;
   setActivePersona: (personaId: string) => void;
-  setNewChatOpen: (open: boolean, kind?: ConversationKind) => void;
+  setNewChatOpen: (open: boolean, kind?: ConversationKind, folderPath?: string | null) => void;
   sendMessage: (content: string) => Promise<void>;
   generateImage: (input: {
     prompt: string;
@@ -54,6 +59,7 @@ type ChatState = {
 
 export const useChatStore = create<ChatState>((set, get) => ({
   conversations: [],
+  folders: [],
   activeConversationId: null,
   messages: [],
   activePersonaId: 'general',
@@ -64,6 +70,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   error: null,
   newChatOpen: false,
   newChatKind: 'chat',
+  newChatFolder: null,
   workspaceOps: [],
   generatingImage: false,
   modelStatus: null,
@@ -75,16 +82,33 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const created = await window.api.createConversation({ kind: 'chat' });
       conversations = [created];
     }
+    const folders = await window.api.listFolders();
     const activeId = conversations[0].id;
     const messages = await window.api.listMessages(activeId);
     set({
       conversations,
+      folders,
       activeConversationId: activeId,
       messages,
       error: null,
       workspaceOps: [],
       orchestratorStatus: null,
     });
+  },
+
+  loadFolders: async () => {
+    const folders = await window.api.listFolders();
+    set({ folders });
+  },
+
+  openFolder: async () => {
+    const folder = await window.api.openFolder();
+    if (!folder) return;
+    set((state) => ({
+      folders: state.folders.some((item) => item.path === folder.path)
+        ? state.folders
+        : [...state.folders, folder],
+    }));
   },
 
   selectConversation: async (id) => {
@@ -143,7 +167,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   setActivePersona: (personaId) => set({ activePersonaId: personaId }),
-  setNewChatOpen: (open, kind = 'chat') => set({ newChatOpen: open, newChatKind: kind }),
+  setNewChatOpen: (open, kind = 'chat', folderPath = null) =>
+    set({ newChatOpen: open, newChatKind: kind, newChatFolder: open ? folderPath : null }),
 
   sendMessage: async (content) => {
     const trimmed = content.trim();

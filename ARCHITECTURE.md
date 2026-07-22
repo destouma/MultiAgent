@@ -161,8 +161,9 @@ Path: `%APPDATA%/MultiAgent/config.json`
 Tables:
 
 - `conversations(id, title, createdAt, updatedAt, workspacePath, kind)`
-  - `kind`: `'chat'` | `'image'`
+  - `kind`: `'chat'` | `'image'` | `'orchestrator'`
 - `messages(id, conversationId, role, content, personaId, createdAt)`
+- `folders(path, addedAt)` — folders opened via **Open folder**; also backfilled once from any pre-existing `conversations.workspacePath`
 
 Path: `%APPDATA%/MultiAgent/chats.db`
 
@@ -185,7 +186,8 @@ Path: `%APPDATA%/MultiAgent/chats.db`
 | `chat:token` / `chat:done` / `chat:error` | event     | Streaming lifecycle                                   |
 | `conversations:*`                         | invoke    | list/create/rename/delete/get                         |
 | `messages:list`                           | invoke    | Load thread                                           |
-| `dialog:pickFolder`                       | invoke    | Native folder picker                                  |
+| `folders:list`                            | invoke    | List opened folders                                   |
+| `folders:open`                            | invoke    | Native folder picker + register in `folders`          |
 | `workspace:op`                            | event     | Tool progress (list/read/write/delete/generate_image) |
 | `images:generate`                         | invoke    | Generate + persist message                            |
 | `images:getDataUrl`                       | invoke    | Preview cached PNG                                    |
@@ -210,9 +212,13 @@ JSON profiles under `personas/`:
 
 Switching persona mid-thread changes the **system prompt for the next reply only**. Past messages keep their `personaId` label/color. In orchestrator sessions the persona switcher is hidden; routing is automatic.
 
+### Folders
+
+Click **Open folder** (same row as New chat / New image / New orchestrator) to register a folder — it appears as a group in the sidebar. Right-click a folder's name to create a **New chat**, **New image**, or **New orchestrator** session bound to it; all sessions created that way are listed nested under that folder. The plain top-level New chat / New image / New orchestrator buttons always create folder-less sessions — there is no folder picker in the creation dialog. A conversation's folder binding is fixed at creation and can't be changed afterward.
+
 ### Workspace chats
 
-On **New chat**, optionally bind a folder. That path is stored on the conversation for the whole session.
+A chat created from a folder (right-click → New chat) has that path stored on the conversation for the whole session.
 
 When a workspace is set, `ChatService` may:
 
@@ -226,7 +232,7 @@ When a workspace is set, `ChatService` may:
 
 **New image** creates a conversation with `kind: 'image'`. The main pane shows **Image Generator** (steps, CFG, width/height, seed, prompt, model chip).
 
-- Results appear in the session gallery with **Download** and **Save to folder** (folder save disabled unless a workspace was bound).
+- Results appear in the session gallery with **Download** and **Save to folder** (folder save disabled unless the session was created from a folder — see [Folders](#folders)).
 - Chat models cannot generate images; load an image model in Lemonade (e.g. `SD-Turbo`, `Qwen-Image-GGUF`).
 
 ### Orchestrator sessions
@@ -237,7 +243,7 @@ When a workspace is set, `ChatService` may:
 2. **Specialists** — Each selected persona answers in turn; replies appear in the thread with their chip/color.
 3. **Synthesize** — Orchestrator streams a final answer from the specialist notes.
 
-Progress is shown in a status banner (`orchestrator:step` events). Folder binding is optional (workspace tools are not used in orchestrator mode yet).
+Progress is shown in a status banner (`orchestrator:step` events). An orchestrator session can be bound to a folder like any other (right-click → New orchestrator), but workspace tools are not used in orchestrator mode yet — the binding currently has no effect there.
 
 ### Optional title
 
@@ -268,27 +274,28 @@ npm run dev
 ### Chat
 
 1. Click **New chat**.
-2. Optionally set a **title** and/or **Choose folder…**.
+2. Optionally set a **title**.
 3. Pick a **persona** and **chat model** in the top bar.
 4. Type in the composer → Enter to send (Shift+Enter for newline). Use **Stop** to cancel streaming.
 
 ### Workspace-assisted chat
 
-1. Create a chat **with folder**.
-2. Ask the model to inspect or edit files (e.g. “list the project”, “add README notes”).
-3. Watch tool activity in the thread; files change on disk inside the bound folder only.
+1. Click **Open folder** in the sidebar (if not already opened).
+2. Right-click the folder's name → **New chat**.
+3. Ask the model to inspect or edit files (e.g. "list the project", "add README notes").
+4. Watch tool activity in the thread; files change on disk inside the bound folder only.
 
 ### Image generation
 
-1. Click **New image** (optional title / folder).
+1. Click **New image** (optional title), or right-click a folder → **New image** to bind it to that folder.
 2. Select an **image model** in the prompt toolbar.
 3. Adjust steps / CFG / size / seed as needed.
 4. Describe the image → **Generate** (or Enter).
-5. Use **Download**, or **Save to folder** if a workspace is bound (⋯ menu / message actions).
+5. Use **Download**, or **Save to folder** if the session was created from a folder (⋯ menu / message actions).
 
 ### Orchestrator
 
-1. Click **New orchestrator** (optional title / folder).
+1. Click **New orchestrator** (optional title), or right-click a folder → **New orchestrator**.
 2. Ask a question in the composer.
 3. Watch the status banner while specialists run; each specialist reply appears in the thread.
 4. Read the final Orchestrator synthesis at the end.
@@ -299,6 +306,7 @@ npm run dev
 - Large folders: the tree is truncated; prefer asking for specific paths.
 - Writes are immediate — use git or a copy if you need a safety net.
 - Orchestrator runs several model calls per turn; expect longer latency than a normal chat.
+- A folder only shows up in the sidebar after **Open folder**; a session's folder binding is set once at creation and can't be changed later.
 
 ---
 
@@ -356,15 +364,15 @@ Installer options (see `package.json` → `build.nsis`):
 
 ## 9. Troubleshooting
 
-| Symptom                  | Likely cause                       | What to try                                     |
-| ------------------------ | ---------------------------------- | ----------------------------------------------- |
-| Badge offline            | Lemonade not running / wrong URL   | Start Lemonade; check Settings base URL         |
-| Empty model list         | Server up but no models            | `lemonade pull` / `lemonade run` a model        |
-| Chat works, images fail  | Chat model selected as image model | Load an image model; pick it in Image Generator |
-| Generate button disabled | No prompt or no image model        | Enter prompt; select model                      |
-| Save to folder disabled  | No workspace on this session       | Create New image/chat **with folder**           |
-| Tool / write errors      | Path outside workspace or ignored  | Stay under the bound folder; avoid `..`         |
-| `node` not found         | Node not on PATH                   | Install Node LTS or add it to user PATH         |
+| Symptom                  | Likely cause                         | What to try                                      |
+| ------------------------ | ------------------------------------ | ------------------------------------------------ |
+| Badge offline            | Lemonade not running / wrong URL     | Start Lemonade; check Settings base URL          |
+| Empty model list         | Server up but no models              | `lemonade pull` / `lemonade run` a model         |
+| Chat works, images fail  | Chat model selected as image model   | Load an image model; pick it in Image Generator  |
+| Generate button disabled | No prompt or no image model          | Enter prompt; select model                       |
+| Save to folder disabled  | Session wasn't created from a folder | Open the folder, right-click it → New image/chat |
+| Tool / write errors      | Path outside workspace or ignored    | Stay under the bound folder; avoid `..`          |
+| `node` not found         | Node not on PATH                     | Install Node LTS or add it to user PATH          |
 
 ### Useful paths
 

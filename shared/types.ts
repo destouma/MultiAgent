@@ -85,7 +85,7 @@ export type ChatDoneEvent = {
 export type ChatErrorEvent = {
   conversationId: string;
   messageId: string;
-  code: 'server_unreachable' | 'model_not_loaded' | 'cancelled' | 'unknown';
+  code: 'server_unreachable' | 'model_not_loaded' | 'context_exceeded' | 'cancelled' | 'unknown';
   message: string;
 };
 

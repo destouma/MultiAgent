@@ -407,6 +407,17 @@ export class LemonadeClient {
       );
     }
 
+    if (
+      (lower.includes('context size') || lower.includes('context length')) &&
+      (lower.includes('exceed') || lower.includes('too long') || lower.includes('too large'))
+    ) {
+      return new LemonadeError(
+        'context_exceeded',
+        `${message} In MultiAgent: lower "Max history messages" in Settings, ask about a smaller ` +
+          'part of a bound workspace folder, or load this model with a larger context window in Lemonade.',
+      );
+    }
+
     return new LemonadeError('unknown', message || 'Unexpected Lemonade error');
   }
 }

@@ -8,6 +8,16 @@ import type {
   WorkspaceOpEvent,
 } from '../../shared/types';
 
+// Electron prefixes errors thrown from ipcMain.handle with
+// "Error invoking remote method 'x': " before rejecting the invoke()
+// promise in the renderer. Strip it so error banners show the same
+// clean message regardless of whether they came from that rejection
+// or from a chat:error/workspace event.
+function cleanErrorMessage(error: unknown, fallback: string): string {
+  const message = error instanceof Error ? error.message : fallback;
+  return message.replace(/^Error invoking remote method '[^']*':\s*/, '');
+}
+
 type ChatState = {
   conversations: Conversation[];
   folders: FolderEntry[];
@@ -228,14 +238,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
         ),
       }));
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to send message';
       set({
         isStreaming: false,
         streamingMessageId: null,
         streamingContent: '',
         streamingPersonaId: null,
         orchestratorStatus: null,
-        error: message,
+        error: cleanErrorMessage(error, 'Failed to send message'),
       });
     }
   },
@@ -271,7 +280,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set({
         generatingImage: false,
         modelStatus: null,
-        error: error instanceof Error ? error.message : 'Image generation failed',
+        error: cleanErrorMessage(error, 'Image generation failed'),
       });
     }
   },

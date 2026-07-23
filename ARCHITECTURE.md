@@ -153,6 +153,7 @@ MultiAgent/
 | `model`      | `""`                            | Fallback chat/orchestrator model for conversations that haven't set their own |
 | `imageModel` | `""`                            | Fallback image model for image sessions that haven't set their own            |
 | `maxHistory` | `40`                            | Max messages sent as history                                                  |
+| `theme`      | `light`                         | UI theme (`light` \| `dark`), toggled in Settings                             |
 
 Path: `%APPDATA%/MultiAgent/config.json`
 

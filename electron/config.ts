@@ -7,6 +7,7 @@ const defaults: AppSettings = {
   model: '',
   imageModel: '',
   maxHistory: 40,
+  theme: 'light',
 };
 
 const store = new Store<AppSettings>({
@@ -21,6 +22,7 @@ export function getSettings(): AppSettings {
     model: store.get('model', defaults.model),
     imageModel: store.get('imageModel', defaults.imageModel),
     maxHistory: store.get('maxHistory', defaults.maxHistory),
+    theme: store.get('theme', defaults.theme),
   };
 }
 

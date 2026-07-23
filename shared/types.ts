@@ -41,12 +41,15 @@ export type FolderEntry = {
   addedAt: number;
 };
 
+export type ThemeMode = 'light' | 'dark';
+
 export type AppSettings = {
   baseUrl: string;
   apiKey: string;
   model: string;
   imageModel: string;
   maxHistory: number;
+  theme: ThemeMode;
 };
 
 export type HealthStatus = {

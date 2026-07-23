@@ -36,6 +36,7 @@ type ChatState = {
     title?: string | null,
   ) => Promise<void>;
   deleteConversation: (id: string) => Promise<void>;
+  setConversationModel: (model: string | null) => Promise<void>;
   setActivePersona: (personaId: string) => void;
   setNewChatOpen: (open: boolean, kind?: ConversationKind, folderPath?: string | null) => void;
   sendMessage: (content: string) => Promise<void>;
@@ -166,6 +167,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
     });
   },
 
+  setConversationModel: async (model) => {
+    const conversationId = get().activeConversationId;
+    if (!conversationId) return;
+    set((state) => ({
+      conversations: state.conversations.map((item) =>
+        item.id === conversationId ? { ...item, model } : item,
+      ),
+    }));
+    await window.api.setConversationModel(conversationId, model);
+  },
+
   setActivePersona: (personaId) => set({ activePersonaId: personaId }),
   setNewChatOpen: (open, kind = 'chat', folderPath = null) =>
     set({ newChatOpen: open, newChatKind: kind, newChatFolder: open ? folderPath : null }),
@@ -236,10 +248,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set({ generatingImage: true, error: null, modelStatus: null });
     try {
       const settings = await window.api.getSettings();
+      const conversation = get().conversations.find((item) => item.id === conversationId);
       await window.api.generateImage({
         conversationId,
         prompt: trimmed,
-        model: settings.imageModel || undefined,
+        model: conversation?.model || settings.imageModel || undefined,
         size,
         steps,
         cfgScale,

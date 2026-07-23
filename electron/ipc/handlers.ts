@@ -88,6 +88,10 @@ export function registerIpcHandlers(
     store.renameConversation(id, title),
   );
 
+  ipcMain.handle(IpcChannels.conversationsSetModel, (_event, id: string, model: string | null) =>
+    store.setConversationModel(id, model),
+  );
+
   ipcMain.handle(IpcChannels.conversationsDelete, (_event, id: string) =>
     store.deleteConversation(id),
   );
@@ -113,7 +117,10 @@ export function registerIpcHandlers(
         throw new LemonadeError('unknown', 'Conversation not found');
       }
 
-      const info = await images.generate(request, conversation.workspacePath);
+      const info = await images.generate(
+        { ...request, model: request.model || conversation.model || undefined },
+        conversation.workspacePath,
+      );
 
       store.addMessage({
         conversationId: request.conversationId,

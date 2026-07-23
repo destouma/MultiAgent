@@ -39,21 +39,21 @@ export class OrchestratorService {
     }
     this.abortController = null;
 
+    const conversation = this.store.getConversation(request.conversationId);
+    if (!conversation) {
+      throw new LemonadeError('unknown', 'Conversation not found');
+    }
+
     const settings = this.getSettings();
     const orchestrator =
       this.personas.get('orchestrator') ?? this.personas.get('general') ?? this.personas.list()[0];
-    const model = orchestrator.defaultModel || settings.model;
+    const model = orchestrator.defaultModel || conversation.model || settings.model;
 
     if (!model) {
       throw new LemonadeError(
         'model_not_loaded',
         'No model selected. Choose a model in the top bar or Settings.',
       );
-    }
-
-    const conversation = this.store.getConversation(request.conversationId);
-    if (!conversation) {
-      throw new LemonadeError('unknown', 'Conversation not found');
     }
 
     const userMessage = this.store.addMessage({

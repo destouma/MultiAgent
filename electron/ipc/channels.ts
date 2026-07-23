@@ -12,6 +12,7 @@ export const IpcChannels = {
   conversationsList: 'conversations:list',
   conversationsCreate: 'conversations:create',
   conversationsRename: 'conversations:rename',
+  conversationsSetModel: 'conversations:setModel',
   conversationsDelete: 'conversations:delete',
   conversationsGet: 'conversations:get',
   messagesList: 'messages:list',

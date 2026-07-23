@@ -27,6 +27,7 @@ export type Conversation = {
   updatedAt: number;
   workspacePath: string | null;
   kind: ConversationKind;
+  model: string | null;
 };
 
 export type CreateConversationRequest = {

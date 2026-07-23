@@ -141,3 +141,76 @@ describe('ConversationStore folders', () => {
     expect(store.listFolders().map((f) => f.path)).toEqual(['C:\\explicit']);
   });
 });
+
+describe('ConversationStore per-conversation model', () => {
+  let dbPath: string;
+  let store: InstanceType<typeof ConversationStore>;
+
+  beforeEach(() => {
+    dbPath = tmpDbPath();
+  });
+
+  afterEach(() => {
+    store?.close();
+    for (const candidate of [dbPath, `${dbPath}.${process.pid}.tmp`]) {
+      fs.rmSync(candidate, { force: true });
+    }
+  });
+
+  it('starts with no model set', async () => {
+    store = new ConversationStore(dbPath);
+    await store.ensureReady();
+
+    const conversation = store.createConversation({ kind: 'chat' });
+    expect(conversation.model).toBeNull();
+    expect(store.getConversation(conversation.id)?.model).toBeNull();
+  });
+
+  it('setConversationModel updates and persists the model', async () => {
+    store = new ConversationStore(dbPath);
+    await store.ensureReady();
+
+    const conversation = store.createConversation({ kind: 'chat' });
+    const updated = store.setConversationModel(conversation.id, 'llama-3-8b');
+
+    expect(updated?.model).toBe('llama-3-8b');
+    expect(store.getConversation(conversation.id)?.model).toBe('llama-3-8b');
+    expect(store.listConversations().find((c) => c.id === conversation.id)?.model).toBe(
+      'llama-3-8b',
+    );
+  });
+
+  it('can clear a conversation model back to null', async () => {
+    store = new ConversationStore(dbPath);
+    await store.ensureReady();
+
+    const conversation = store.createConversation({ kind: 'chat' });
+    store.setConversationModel(conversation.id, 'llama-3-8b');
+    const cleared = store.setConversationModel(conversation.id, null);
+
+    expect(cleared?.model).toBeNull();
+  });
+
+  it('keeps each conversation model independent, even across kinds', async () => {
+    store = new ConversationStore(dbPath);
+    await store.ensureReady();
+
+    const chat = store.createConversation({ kind: 'chat' });
+    const orchestrator = store.createConversation({ kind: 'orchestrator' });
+    const image = store.createConversation({ kind: 'image' });
+
+    store.setConversationModel(chat.id, 'chat-model');
+    store.setConversationModel(orchestrator.id, 'orchestrator-model');
+    store.setConversationModel(image.id, 'image-model');
+
+    expect(store.getConversation(chat.id)?.model).toBe('chat-model');
+    expect(store.getConversation(orchestrator.id)?.model).toBe('orchestrator-model');
+    expect(store.getConversation(image.id)?.model).toBe('image-model');
+
+    // Changing one must not affect the others.
+    store.setConversationModel(chat.id, 'chat-model-2');
+    expect(store.getConversation(chat.id)?.model).toBe('chat-model-2');
+    expect(store.getConversation(orchestrator.id)?.model).toBe('orchestrator-model');
+    expect(store.getConversation(image.id)?.model).toBe('image-model');
+  });
+});

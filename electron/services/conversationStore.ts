@@ -90,6 +90,9 @@ export class ConversationStore {
     if (!columns.has('kind')) {
       this.db.run(`ALTER TABLE conversations ADD COLUMN kind TEXT DEFAULT 'chat'`);
     }
+    if (!columns.has('model')) {
+      this.db.run(`ALTER TABLE conversations ADD COLUMN model TEXT`);
+    }
 
     const foldersExisted = this.db.exec(
       `SELECT name FROM sqlite_master WHERE type='table' AND name='folders'`,
@@ -130,6 +133,7 @@ export class ConversationStore {
     updatedAt: number;
     workspacePath?: string | null;
     kind?: string | null;
+    model?: string | null;
   }): Conversation {
     const kind: ConversationKind =
       row.kind === 'image' ? 'image' : row.kind === 'orchestrator' ? 'orchestrator' : 'chat';
@@ -140,12 +144,13 @@ export class ConversationStore {
       updatedAt: row.updatedAt,
       workspacePath: row.workspacePath ?? null,
       kind,
+      model: row.model ?? null,
     };
   }
 
   listConversations(): Conversation[] {
     const result = this.db.exec(
-      `SELECT id, title, createdAt, updatedAt, workspacePath, kind
+      `SELECT id, title, createdAt, updatedAt, workspacePath, kind, model
        FROM conversations
        ORDER BY updatedAt DESC`,
     );
@@ -158,6 +163,7 @@ export class ConversationStore {
         updatedAt: Number(row[3]),
         workspacePath: row[4] == null ? null : String(row[4]),
         kind: row[5] == null ? 'chat' : String(row[5]),
+        model: row[6] == null ? null : String(row[6]),
       }),
     );
   }
@@ -203,10 +209,11 @@ export class ConversationStore {
       updatedAt: now,
       workspacePath: input.workspacePath ?? null,
       kind,
+      model: null,
     };
     this.db.run(
-      `INSERT INTO conversations (id, title, createdAt, updatedAt, workspacePath, kind)
-       VALUES (?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO conversations (id, title, createdAt, updatedAt, workspacePath, kind, model)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [
         conversation.id,
         conversation.title,
@@ -214,6 +221,7 @@ export class ConversationStore {
         conversation.updatedAt,
         conversation.workspacePath,
         conversation.kind,
+        conversation.model,
       ],
     );
     this.persist();
@@ -231,6 +239,12 @@ export class ConversationStore {
     return this.getConversation(id);
   }
 
+  setConversationModel(id: string, model: string | null): Conversation | null {
+    this.db.run(`UPDATE conversations SET model = ? WHERE id = ?`, [model, id]);
+    this.persist();
+    return this.getConversation(id);
+  }
+
   deleteConversation(id: string): boolean {
     const before = this.getConversation(id);
     this.db.run(`DELETE FROM messages WHERE conversationId = ?`, [id]);
@@ -241,7 +255,7 @@ export class ConversationStore {
 
   getConversation(id: string): Conversation | null {
     const stmt = this.db.prepare(
-      `SELECT id, title, createdAt, updatedAt, workspacePath, kind FROM conversations WHERE id = ?`,
+      `SELECT id, title, createdAt, updatedAt, workspacePath, kind, model FROM conversations WHERE id = ?`,
     );
     stmt.bind([id]);
     if (!stmt.step()) {
@@ -255,6 +269,7 @@ export class ConversationStore {
       updatedAt: number;
       workspacePath: string | null;
       kind: string | null;
+      model: string | null;
     };
     stmt.free();
     return this.mapConversation(row);

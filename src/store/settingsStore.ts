@@ -14,8 +14,6 @@ type SettingsState = {
   refreshModels: () => Promise<void>;
   updateSettings: (partial: Partial<AppSettings>) => Promise<void>;
   setSettingsOpen: (open: boolean) => void;
-  setModel: (model: string) => Promise<void>;
-  setImageModel: (imageModel: string) => Promise<void>;
   imageModels: () => ModelInfo[];
 };
 
@@ -97,16 +95,6 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   },
 
   setSettingsOpen: (open) => set({ settingsOpen: open }),
-
-  setModel: async (model) => {
-    const settings = await window.api.setSettings({ model });
-    set({ settings });
-  },
-
-  setImageModel: async (imageModel) => {
-    const settings = await window.api.setSettings({ imageModel });
-    set({ settings });
-  },
 
   imageModels: () => get().models,
 }));

@@ -26,14 +26,15 @@ export function ImageStudio() {
   const modelStatus = useChatStore((state) => state.modelStatus);
   const conversations = useChatStore((state) => state.conversations);
   const activeConversationId = useChatStore((state) => state.activeConversationId);
+  const setConversationModel = useChatStore((state) => state.setConversationModel);
   const settings = useSettingsStore((state) => state.settings);
   const imageModels = useSettingsStore((state) => state.imageModels);
-  const setImageModel = useSettingsStore((state) => state.setImageModel);
 
   const active = conversations.find((item) => item.id === activeConversationId);
   const hasFolder = Boolean(active?.workspacePath);
   const models = imageModels();
-  const canGenerate = Boolean(prompt.trim() && (settings?.imageModel || models[0]));
+  const activeModel = active?.model ?? settings?.imageModel ?? '';
+  const canGenerate = Boolean(prompt.trim() && (activeModel || models[0]));
 
   const imageMessages = useMemo(
     () => messages.filter((message) => parseImageMessage(message.content)),
@@ -192,8 +193,8 @@ export function ImageStudio() {
             <div className="image-prompt-toolbar">
               <select
                 className="image-model-chip"
-                value={settings?.imageModel ?? ''}
-                onChange={(event) => void setImageModel(event.target.value)}
+                value={activeModel}
+                onChange={(event) => void setConversationModel(event.target.value)}
                 disabled={generatingImage || !models.length}
                 title="Image model"
               >

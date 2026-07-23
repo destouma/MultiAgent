@@ -146,13 +146,13 @@ MultiAgent/
 
 ### Settings (`electron-store`)
 
-| Key          | Default                         | Purpose                                     |
-| ------------ | ------------------------------- | ------------------------------------------- |
-| `baseUrl`    | `http://localhost:13305/api/v1` | Lemonade API base                           |
-| `apiKey`     | `lemonade`                      | Required by OpenAI client; unused by server |
-| `model`      | `""`                            | Default chat model                          |
-| `imageModel` | `""`                            | Default image model                         |
-| `maxHistory` | `40`                            | Max messages sent as history                |
+| Key          | Default                         | Purpose                                                                       |
+| ------------ | ------------------------------- | ----------------------------------------------------------------------------- |
+| `baseUrl`    | `http://localhost:13305/api/v1` | Lemonade API base                                                             |
+| `apiKey`     | `lemonade`                      | Required by OpenAI client; unused by server                                   |
+| `model`      | `""`                            | Fallback chat/orchestrator model for conversations that haven't set their own |
+| `imageModel` | `""`                            | Fallback image model for image sessions that haven't set their own            |
+| `maxHistory` | `40`                            | Max messages sent as history                                                  |
 
 Path: `%APPDATA%/MultiAgent/config.json`
 
@@ -160,8 +160,9 @@ Path: `%APPDATA%/MultiAgent/config.json`
 
 Tables:
 
-- `conversations(id, title, createdAt, updatedAt, workspacePath, kind)`
+- `conversations(id, title, createdAt, updatedAt, workspacePath, kind, model)`
   - `kind`: `'chat'` | `'image'` | `'orchestrator'`
+  - `model`: the model id used for this conversation specifically, or `null` to fall back to the global default (`AppSettings.model` / `imageModel`). Set independently per conversation via the top-bar/toolbar model picker — changing it in one chat never affects another chat, an orchestrator, or an image session, even within the same folder.
 - `messages(id, conversationId, role, content, personaId, createdAt)`
 - `folders(path, addedAt)` — folders opened via **Open folder**; also backfilled once from any pre-existing `conversations.workspacePath`
 
@@ -184,7 +185,7 @@ Path: `%APPDATA%/MultiAgent/chats.db`
 | `personas:list`                           | invoke    | Built-in personas                                     |
 | `chat:send` / `chat:cancel`               | invoke    | Start / abort completion                              |
 | `chat:token` / `chat:done` / `chat:error` | event     | Streaming lifecycle                                   |
-| `conversations:*`                         | invoke    | list/create/rename/delete/get                         |
+| `conversations:*`                         | invoke    | list/create/rename/setModel/delete/get                |
 | `messages:list`                           | invoke    | Load thread                                           |
 | `folders:list`                            | invoke    | List opened folders                                   |
 | `folders:open`                            | invoke    | Native folder picker + register in `folders`          |

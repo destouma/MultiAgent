@@ -40,6 +40,8 @@ const api = {
     ipcRenderer.invoke('conversations:create', request),
   renameConversation: (id: string, title: string): Promise<Conversation | null> =>
     ipcRenderer.invoke('conversations:rename', id, title),
+  setConversationModel: (id: string, model: string | null): Promise<Conversation | null> =>
+    ipcRenderer.invoke('conversations:setModel', id, model),
   deleteConversation: (id: string): Promise<boolean> =>
     ipcRenderer.invoke('conversations:delete', id),
   getConversation: (id: string): Promise<Conversation | null> =>

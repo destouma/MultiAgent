@@ -1,6 +1,9 @@
 import { app, BrowserWindow, dialog, shell } from 'electron';
 import path from 'node:path';
 import { createServices, registerIpcHandlers, type AppServices } from './ipc/handlers';
+import { getSettings } from './config';
+
+const THEME_BACKGROUND = { light: '#F3F0E8', dark: '#17150F' } as const;
 
 let mainWindow: BrowserWindow | null = null;
 let services: AppServices | null = null;
@@ -20,7 +23,7 @@ function createWindow(): void {
     minWidth: 960,
     minHeight: 640,
     title: 'MultiAgent',
-    backgroundColor: '#F3F0E8',
+    backgroundColor: THEME_BACKGROUND[getSettings().theme],
     icon: path.join(__dirname, '../build/icon.ico'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),

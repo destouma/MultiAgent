@@ -3,12 +3,24 @@ import type {
   ChatMessage,
   Conversation,
   ConversationKind,
+  FolderEntry,
   OrchestratorStepEvent,
   WorkspaceOpEvent,
 } from '../../shared/types';
 
+// Electron prefixes errors thrown from ipcMain.handle with
+// "Error invoking remote method 'x': " before rejecting the invoke()
+// promise in the renderer. Strip it so error banners show the same
+// clean message regardless of whether they came from that rejection
+// or from a chat:error/workspace event.
+function cleanErrorMessage(error: unknown, fallback: string): string {
+  const message = error instanceof Error ? error.message : fallback;
+  return message.replace(/^Error invoking remote method '[^']*':\s*/, '');
+}
+
 type ChatState = {
   conversations: Conversation[];
+  folders: FolderEntry[];
   activeConversationId: string | null;
   messages: ChatMessage[];
   activePersonaId: string;
@@ -19,11 +31,14 @@ type ChatState = {
   error: string | null;
   newChatOpen: boolean;
   newChatKind: ConversationKind;
+  newChatFolder: string | null;
   workspaceOps: WorkspaceOpEvent[];
   generatingImage: boolean;
   modelStatus: string | null;
   orchestratorStatus: string | null;
   bootstrap: () => Promise<void>;
+  loadFolders: () => Promise<void>;
+  openFolder: () => Promise<void>;
   selectConversation: (id: string) => Promise<void>;
   createConversation: (
     workspacePath?: string | null,
@@ -31,8 +46,9 @@ type ChatState = {
     title?: string | null,
   ) => Promise<void>;
   deleteConversation: (id: string) => Promise<void>;
+  setConversationModel: (model: string | null) => Promise<void>;
   setActivePersona: (personaId: string) => void;
-  setNewChatOpen: (open: boolean, kind?: ConversationKind) => void;
+  setNewChatOpen: (open: boolean, kind?: ConversationKind, folderPath?: string | null) => void;
   sendMessage: (content: string) => Promise<void>;
   generateImage: (input: {
     prompt: string;
@@ -54,6 +70,7 @@ type ChatState = {
 
 export const useChatStore = create<ChatState>((set, get) => ({
   conversations: [],
+  folders: [],
   activeConversationId: null,
   messages: [],
   activePersonaId: 'general',
@@ -64,6 +81,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   error: null,
   newChatOpen: false,
   newChatKind: 'chat',
+  newChatFolder: null,
   workspaceOps: [],
   generatingImage: false,
   modelStatus: null,
@@ -75,16 +93,33 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const created = await window.api.createConversation({ kind: 'chat' });
       conversations = [created];
     }
+    const folders = await window.api.listFolders();
     const activeId = conversations[0].id;
     const messages = await window.api.listMessages(activeId);
     set({
       conversations,
+      folders,
       activeConversationId: activeId,
       messages,
       error: null,
       workspaceOps: [],
       orchestratorStatus: null,
     });
+  },
+
+  loadFolders: async () => {
+    const folders = await window.api.listFolders();
+    set({ folders });
+  },
+
+  openFolder: async () => {
+    const folder = await window.api.openFolder();
+    if (!folder) return;
+    set((state) => ({
+      folders: state.folders.some((item) => item.path === folder.path)
+        ? state.folders
+        : [...state.folders, folder],
+    }));
   },
 
   selectConversation: async (id) => {
@@ -142,8 +177,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
     });
   },
 
+  setConversationModel: async (model) => {
+    const conversationId = get().activeConversationId;
+    if (!conversationId) return;
+    set((state) => ({
+      conversations: state.conversations.map((item) =>
+        item.id === conversationId ? { ...item, model } : item,
+      ),
+    }));
+    await window.api.setConversationModel(conversationId, model);
+  },
+
   setActivePersona: (personaId) => set({ activePersonaId: personaId }),
-  setNewChatOpen: (open, kind = 'chat') => set({ newChatOpen: open, newChatKind: kind }),
+  setNewChatOpen: (open, kind = 'chat', folderPath = null) =>
+    set({ newChatOpen: open, newChatKind: kind, newChatFolder: open ? folderPath : null }),
 
   sendMessage: async (content) => {
     const trimmed = content.trim();
@@ -191,14 +238,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
         ),
       }));
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to send message';
       set({
         isStreaming: false,
         streamingMessageId: null,
         streamingContent: '',
         streamingPersonaId: null,
         orchestratorStatus: null,
-        error: message,
+        error: cleanErrorMessage(error, 'Failed to send message'),
       });
     }
   },
@@ -211,10 +257,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set({ generatingImage: true, error: null, modelStatus: null });
     try {
       const settings = await window.api.getSettings();
+      const conversation = get().conversations.find((item) => item.id === conversationId);
       await window.api.generateImage({
         conversationId,
         prompt: trimmed,
-        model: settings.imageModel || undefined,
+        model: conversation?.model || settings.imageModel || undefined,
         size,
         steps,
         cfgScale,
@@ -233,7 +280,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set({
         generatingImage: false,
         modelStatus: null,
-        error: error instanceof Error ? error.message : 'Image generation failed',
+        error: cleanErrorMessage(error, 'Image generation failed'),
       });
     }
   },

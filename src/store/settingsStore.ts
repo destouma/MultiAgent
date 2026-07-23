@@ -1,6 +1,10 @@
 import { create } from 'zustand';
-import type { AppSettings, HealthStatus, ModelInfo, Persona } from '../../shared/types';
+import type { AppSettings, HealthStatus, ModelInfo, Persona, ThemeMode } from '../../shared/types';
 import { isLikelyImageModel } from '../../shared/types';
+
+function applyTheme(theme: ThemeMode): void {
+  document.documentElement.setAttribute('data-theme', theme);
+}
 
 type SettingsState = {
   settings: AppSettings | null;
@@ -13,9 +17,8 @@ type SettingsState = {
   refreshHealth: () => Promise<void>;
   refreshModels: () => Promise<void>;
   updateSettings: (partial: Partial<AppSettings>) => Promise<void>;
+  setTheme: (theme: ThemeMode) => Promise<void>;
   setSettingsOpen: (open: boolean) => void;
-  setModel: (model: string) => Promise<void>;
-  setImageModel: (imageModel: string) => Promise<void>;
   imageModels: () => ModelInfo[];
 };
 
@@ -65,6 +68,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       }
 
       const nextSettings = await pickDefaults(settings, models);
+      applyTheme(nextSettings.theme);
       set({ settings: nextSettings, personas, health, models, loading: false });
     } catch {
       set({ loading: false });
@@ -96,17 +100,13 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     await get().refreshHealth();
   },
 
+  setTheme: async (theme) => {
+    applyTheme(theme);
+    const settings = await window.api.setSettings({ theme });
+    set({ settings });
+  },
+
   setSettingsOpen: (open) => set({ settingsOpen: open }),
-
-  setModel: async (model) => {
-    const settings = await window.api.setSettings({ model });
-    set({ settings });
-  },
-
-  setImageModel: async (imageModel) => {
-    const settings = await window.api.setSettings({ imageModel });
-    set({ settings });
-  },
 
   imageModels: () => get().models,
 }));

@@ -57,20 +57,20 @@ export class ChatService {
       this.abortController = null;
     }
 
+    const conversation = existing;
+    if (!conversation) {
+      throw new LemonadeError('unknown', 'Conversation not found');
+    }
+
     const settings = this.getSettings();
     const persona = this.personas.get(request.personaId) ?? this.personas.list()[0];
-    const model = persona.defaultModel || settings.model;
+    const model = persona.defaultModel || conversation.model || settings.model;
 
     if (!model) {
       throw new LemonadeError(
         'model_not_loaded',
         'No model selected. Choose a model in the top bar or Settings.',
       );
-    }
-
-    const conversation = existing;
-    if (!conversation) {
-      throw new LemonadeError('unknown', 'Conversation not found');
     }
 
     const userMessage = this.store.addMessage({

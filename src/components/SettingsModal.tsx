@@ -6,6 +6,8 @@ export function SettingsModal() {
   const setSettingsOpen = useSettingsStore((state) => state.setSettingsOpen);
   const settings = useSettingsStore((state) => state.settings);
   const updateSettings = useSettingsStore((state) => state.updateSettings);
+  const theme = useSettingsStore((state) => state.settings?.theme ?? 'light');
+  const setTheme = useSettingsStore((state) => state.setTheme);
 
   const [baseUrl, setBaseUrl] = useState('');
   const [apiKey, setApiKey] = useState('');
@@ -75,6 +77,18 @@ export function SettingsModal() {
               value={maxHistory}
               onChange={(event) => setMaxHistory(Number(event.target.value))}
             />
+          </div>
+          <div className="field">
+            <label>Appearance</label>
+            <label className="theme-switch">
+              <input
+                type="checkbox"
+                checked={theme === 'dark'}
+                onChange={(event) => void setTheme(event.target.checked ? 'dark' : 'light')}
+              />
+              <span className="theme-switch-track" />
+              <span className="theme-switch-label">{theme === 'dark' ? 'Dark' : 'Light'}</span>
+            </label>
           </div>
           <p className="hint">
             Chat model and image model are chosen in the top bar. Image models use Lemonade{' '}

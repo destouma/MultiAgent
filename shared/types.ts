@@ -27,6 +27,7 @@ export type Conversation = {
   updatedAt: number;
   workspacePath: string | null;
   kind: ConversationKind;
+  model: string | null;
 };
 
 export type CreateConversationRequest = {
@@ -35,12 +36,20 @@ export type CreateConversationRequest = {
   kind?: ConversationKind;
 };
 
+export type FolderEntry = {
+  path: string;
+  addedAt: number;
+};
+
+export type ThemeMode = 'light' | 'dark';
+
 export type AppSettings = {
   baseUrl: string;
   apiKey: string;
   model: string;
   imageModel: string;
   maxHistory: number;
+  theme: ThemeMode;
 };
 
 export type HealthStatus = {
@@ -76,7 +85,7 @@ export type ChatDoneEvent = {
 export type ChatErrorEvent = {
   conversationId: string;
   messageId: string;
-  code: 'server_unreachable' | 'model_not_loaded' | 'cancelled' | 'unknown';
+  code: 'server_unreachable' | 'model_not_loaded' | 'context_exceeded' | 'cancelled' | 'unknown';
   message: string;
 };
 

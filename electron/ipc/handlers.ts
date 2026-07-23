@@ -88,6 +88,10 @@ export function registerIpcHandlers(
     store.renameConversation(id, title),
   );
 
+  ipcMain.handle(IpcChannels.conversationsSetModel, (_event, id: string, model: string | null) =>
+    store.setConversationModel(id, model),
+  );
+
   ipcMain.handle(IpcChannels.conversationsDelete, (_event, id: string) =>
     store.deleteConversation(id),
   );
@@ -98,19 +102,12 @@ export function registerIpcHandlers(
     store.getMessages(conversationId),
   );
 
-  ipcMain.handle(IpcChannels.dialogPickFolder, async () => {
-    const win = getWindow();
-    const result = win
-      ? await dialog.showOpenDialog(win, {
-          title: 'Choose workspace folder',
-          properties: ['openDirectory'],
-        })
-      : await dialog.showOpenDialog({
-          title: 'Choose workspace folder',
-          properties: ['openDirectory'],
-        });
-    if (result.canceled || !result.filePaths[0]) return null;
-    return result.filePaths[0];
+  ipcMain.handle(IpcChannels.foldersList, () => store.listFolders());
+
+  ipcMain.handle(IpcChannels.foldersOpen, async () => {
+    const selected = await pickFolderDialog(getWindow);
+    if (!selected) return null;
+    return store.addFolder(selected);
   });
 
   ipcMain.handle(IpcChannels.imagesGenerate, async (_event, request: GenerateImageRequest) => {
@@ -120,7 +117,10 @@ export function registerIpcHandlers(
         throw new LemonadeError('unknown', 'Conversation not found');
       }
 
-      const info = await images.generate(request, conversation.workspacePath);
+      const info = await images.generate(
+        { ...request, model: request.model || conversation.model || undefined },
+        conversation.workspacePath,
+      );
 
       store.addMessage({
         conversationId: request.conversationId,
@@ -184,6 +184,21 @@ export function registerIpcHandlers(
       }
     },
   );
+}
+
+async function pickFolderDialog(getWindow: () => BrowserWindow | null): Promise<string | null> {
+  const win = getWindow();
+  const result = win
+    ? await dialog.showOpenDialog(win, {
+        title: 'Choose a folder',
+        properties: ['openDirectory'],
+      })
+    : await dialog.showOpenDialog({
+        title: 'Choose a folder',
+        properties: ['openDirectory'],
+      });
+  if (result.canceled || !result.filePaths[0]) return null;
+  return result.filePaths[0];
 }
 
 function serializeError(error: unknown): Error {

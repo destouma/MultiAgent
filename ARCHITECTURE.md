@@ -244,7 +244,7 @@ When a workspace is set, `ChatService` may:
 2. **Specialists** — Each selected persona answers in turn; replies appear in the thread with their chip/color.
 3. **Synthesize** — Orchestrator streams a final answer from the specialist notes.
 
-Progress is shown in a status banner (`orchestrator:step` events). An orchestrator session can be bound to a folder like any other (right-click → New orchestrator), but workspace tools are not used in orchestrator mode yet — the binding currently has no effect there.
+Progress is shown in a status banner (`orchestrator:step` events). An orchestrator session can be bound to a folder like any other (right-click → New orchestrator): the planning, specialist, and synthesis steps all see the workspace tree, and specialists get read-only `list_dir`/`read_file` tools (no write/delete/generate — those stay exclusive to workspace chats) to inspect actual file contents before answering.
 
 ### Optional title
 
@@ -388,4 +388,5 @@ Installer options (see `package.json` → `build.nsis`):
 - Embedding Lemonade inside the installer
 - Cloud providers
 - Image edit / variations / upscale modes (UI placeholders only; generate is implemented)
-- Parallel specialist execution / workspace tools inside orchestrator sessions
+- Parallel specialist execution (specialists still run one at a time)
+- Write/delete/generate-image tools inside orchestrator sessions (specialists are read-only; only workspace chats can modify files)

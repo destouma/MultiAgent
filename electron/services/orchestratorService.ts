@@ -1,6 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import type { BrowserWindow } from 'electron';
-import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
+import type {
+  ChatCompletionMessageParam,
+  ChatCompletionTool,
+} from 'openai/resources/chat/completions';
 import type {
   AppSettings,
   ChatDoneEvent,
@@ -10,18 +13,29 @@ import type {
   ChatTokenEvent,
   OrchestratorStepEvent,
   Persona,
+  WorkspaceOpEvent,
 } from '../../shared/types';
 import { LemonadeClient, LemonadeError } from './lemonadeClient';
 import { ConversationStore } from './conversationStore';
 import { PersonaRegistry } from './personaRegistry';
 import { emitModelStatus } from './modelStatus';
 import { parsePlan, type PlanResult } from './planParser';
+import { WorkspaceError, WorkspaceService, workspaceTools } from './workspaceService';
 
 const SPECIALIST_IDS = ['researcher', 'coder', 'critic'] as const;
+const MAX_SPECIALIST_TOOL_ROUNDS = 4;
+
+// Specialists get read-only workspace access: they can look around and
+// consult files, but only a workspace chat can write/delete/generate.
+const READ_ONLY_TOOL_NAMES = new Set(['list_dir', 'read_file']);
+const readOnlyWorkspaceTools = workspaceTools.filter((tool) =>
+  READ_ONLY_TOOL_NAMES.has(tool.function.name),
+) as ChatCompletionTool[];
 
 export class OrchestratorService {
   private abortController: AbortController | null = null;
   private activeMessageId: string | null = null;
+  private workspace = new WorkspaceService();
 
   constructor(
     private lemonade: LemonadeClient,
@@ -76,6 +90,16 @@ export class OrchestratorService {
         onStatus: (message) => emitModelStatus(this.getWindow, model, message),
       });
 
+      const workspacePath = conversation.workspacePath;
+      let workspaceTree: string | null = null;
+      if (workspacePath) {
+        try {
+          workspaceTree = this.workspace.buildTree(workspacePath);
+        } catch (error) {
+          workspaceTree = error instanceof Error ? error.message : String(error);
+        }
+      }
+
       this.emitStep({
         conversationId: request.conversationId,
         phase: 'planning',
@@ -103,6 +127,8 @@ export class OrchestratorService {
         model,
         userContent: request.content,
         priorContext,
+        workspacePath,
+        workspaceTree,
         signal,
       });
 
@@ -129,6 +155,10 @@ export class OrchestratorService {
           userContent: request.content,
           priorContext,
           planRationale: plan.rationale,
+          workspacePath,
+          workspaceTree,
+          conversationId: request.conversationId,
+          messageId: assistantMessageId,
           signal,
         });
 
@@ -155,6 +185,8 @@ export class OrchestratorService {
         userContent: request.content,
         planRationale: plan.rationale,
         specialistNotes,
+        workspacePath,
+        workspaceTree,
         conversationId: request.conversationId,
         messageId: assistantMessageId,
         signal,
@@ -228,6 +260,8 @@ export class OrchestratorService {
     model: string;
     userContent: string;
     priorContext: string;
+    workspacePath: string | null;
+    workspaceTree: string | null;
     signal: AbortSignal;
   }): Promise<PlanResult> {
     const available = SPECIALIST_IDS.filter((id) => this.personas.get(id)).join(', ');
@@ -246,6 +280,15 @@ export class OrchestratorService {
           '- pick 1–3 specialists; omit any that are not useful',
           '- if the request is simple, pick one specialist or an empty array',
           '- do not answer the user yet',
+          ...(input.workspaceTree
+            ? [
+                '',
+                `A read-only workspace folder is bound to this conversation: ${input.workspacePath}`,
+                'Specialists you pick will be able to list and read files in it.',
+                'Workspace tree:',
+                input.workspaceTree,
+              ]
+            : []),
         ].join('\n'),
       },
       {
@@ -271,21 +314,33 @@ export class OrchestratorService {
     userContent: string;
     priorContext: string;
     planRationale: string;
+    workspacePath: string | null;
+    workspaceTree: string | null;
+    conversationId: string;
+    messageId: string;
     signal: AbortSignal;
   }): Promise<string> {
     const specialistModel = input.persona.defaultModel || input.model;
+    const systemParts = [
+      input.persona.systemPrompt,
+      '',
+      'You are contributing as a specialist inside a multi-agent workflow.',
+      'Focus on your specialty. Do not pretend to be the final answer for the user.',
+      'Be concrete and useful; the orchestrator will synthesize your notes.',
+      `Orchestrator rationale for involving you: ${input.planRationale}`,
+    ];
+    if (input.workspacePath && input.workspaceTree) {
+      systemParts.push(
+        '',
+        `You have read-only access to a workspace folder bound to this conversation: ${input.workspacePath}`,
+        'Use the list_dir and read_file tools to inspect actual files before answering — do not guess at contents from the tree alone.',
+        'Workspace tree:',
+        input.workspaceTree,
+      );
+    }
+
     const messages: ChatCompletionMessageParam[] = [
-      {
-        role: 'system',
-        content: [
-          input.persona.systemPrompt,
-          '',
-          'You are contributing as a specialist inside a multi-agent workflow.',
-          'Focus on your specialty. Do not pretend to be the final answer for the user.',
-          'Be concrete and useful; the orchestrator will synthesize your notes.',
-          `Orchestrator rationale for involving you: ${input.planRationale}`,
-        ].join('\n'),
-      },
+      { role: 'system', content: systemParts.join('\n') },
       {
         role: 'user',
         content: [
@@ -302,11 +357,153 @@ export class OrchestratorService {
       onStatus: (message) => emitModelStatus(this.getWindow, specialistModel, message),
     });
 
-    const completion = await this.lemonade.completeChat(messages, specialistModel, {
+    if (!input.workspacePath) {
+      const completion = await this.lemonade.completeChat(messages, specialistModel, {
+        signal: input.signal,
+      });
+      const content = (completion.content || '').trim();
+      return content || `(${input.persona.name} returned an empty response.)`;
+    }
+
+    return this.runSpecialistWithTools({
+      messages,
+      model: specialistModel,
+      workspacePath: input.workspacePath,
+      persona: input.persona,
+      conversationId: input.conversationId,
+      messageId: input.messageId,
       signal: input.signal,
     });
-    const content = (completion.content || '').trim();
-    return content || `(${input.persona.name} returned an empty response.)`;
+  }
+
+  private async runSpecialistWithTools(input: {
+    messages: ChatCompletionMessageParam[];
+    model: string;
+    workspacePath: string;
+    persona: Persona;
+    conversationId: string;
+    messageId: string;
+    signal: AbortSignal;
+  }): Promise<string> {
+    const messages = [...input.messages];
+    let toolsEnabled = true;
+
+    for (let round = 0; round < MAX_SPECIALIST_TOOL_ROUNDS; round += 1) {
+      if (input.signal.aborted) {
+        throw new LemonadeError('cancelled', 'Generation cancelled');
+      }
+
+      let completion;
+      try {
+        completion = await this.lemonade.completeChat(messages, input.model, {
+          tools: toolsEnabled ? readOnlyWorkspaceTools : undefined,
+          signal: input.signal,
+        });
+      } catch (error) {
+        if (toolsEnabled) {
+          toolsEnabled = false;
+          completion = await this.lemonade.completeChat(messages, input.model, {
+            signal: input.signal,
+          });
+        } else {
+          throw error;
+        }
+      }
+
+      if (!completion.toolCalls.length) {
+        const content = (completion.content || '').trim();
+        return content || `(${input.persona.name} returned an empty response.)`;
+      }
+
+      messages.push({
+        role: 'assistant',
+        content: completion.content || null,
+        tool_calls: completion.toolCalls.map((call) => ({
+          id: call.id,
+          type: 'function' as const,
+          function: { name: call.name, arguments: call.arguments },
+        })),
+      });
+
+      for (const call of completion.toolCalls) {
+        const result = this.executeSpecialistTool({
+          workspacePath: input.workspacePath,
+          conversationId: input.conversationId,
+          messageId: input.messageId,
+          name: call.name,
+          rawArgs: call.arguments,
+        });
+        messages.push({
+          role: 'tool',
+          tool_call_id: call.id,
+          content: result,
+        });
+      }
+    }
+
+    return `(${input.persona.name} stopped after exploring the workspace — try a more specific question.)`;
+  }
+
+  private executeSpecialistTool(input: {
+    workspacePath: string;
+    conversationId: string;
+    messageId: string;
+    name: string;
+    rawArgs: string;
+  }): string {
+    let args: Record<string, unknown>;
+    try {
+      args = JSON.parse(input.rawArgs || '{}') as Record<string, unknown>;
+    } catch {
+      args = {};
+    }
+
+    const relPath = String(args.path ?? '.');
+    this.emitOp({
+      conversationId: input.conversationId,
+      messageId: input.messageId,
+      op: input.name as WorkspaceOpEvent['op'],
+      path: relPath,
+      status: 'running',
+    });
+
+    if (!READ_ONLY_TOOL_NAMES.has(input.name)) {
+      const message = `Tool "${input.name}" is not available to specialists (read-only access).`;
+      this.emitOp({
+        conversationId: input.conversationId,
+        messageId: input.messageId,
+        op: input.name as WorkspaceOpEvent['op'],
+        path: relPath,
+        status: 'error',
+        detail: message,
+      });
+      return `Error: ${message}`;
+    }
+
+    try {
+      const result = this.workspace.executeTool(input.workspacePath, input.name, args);
+      this.emitOp({
+        conversationId: input.conversationId,
+        messageId: input.messageId,
+        op: input.name as WorkspaceOpEvent['op'],
+        path: relPath,
+        status: 'ok',
+        detail: result.slice(0, 240),
+      });
+      return result;
+    } catch (error) {
+      const message =
+        error instanceof WorkspaceError || error instanceof Error ? error.message : String(error);
+      this.emitOp({
+        conversationId: input.conversationId,
+        messageId: input.messageId,
+        op: input.name as WorkspaceOpEvent['op'],
+        path: relPath,
+        status: 'error',
+        detail: message,
+      });
+      return `Error: ${message}`;
+    }
   }
 
   private async synthesize(input: {
@@ -315,6 +512,8 @@ export class OrchestratorService {
     userContent: string;
     planRationale: string;
     specialistNotes: Array<{ persona: Persona; content: string }>;
+    workspacePath: string | null;
+    workspaceTree: string | null;
     conversationId: string;
     messageId: string;
     signal: AbortSignal;
@@ -336,6 +535,14 @@ export class OrchestratorService {
           'Lead with the answer, resolve disagreements, and keep it clear.',
           'Do not mention internal planning JSON or that you are an orchestrator unless useful.',
           `Plan rationale: ${input.planRationale}`,
+          ...(input.workspaceTree
+            ? [
+                '',
+                `Workspace folder bound to this conversation: ${input.workspacePath}`,
+                'Workspace tree (for reference; specialist notes already reflect its actual contents):',
+                input.workspaceTree,
+              ]
+            : []),
         ].join('\n'),
       },
       {
@@ -357,6 +564,10 @@ export class OrchestratorService {
   private emitToken(conversationId: string, messageId: string, delta: string): void {
     const tokenEvent: ChatTokenEvent = { conversationId, messageId, delta };
     this.getWindow()?.webContents.send('chat:token', tokenEvent);
+  }
+
+  private emitOp(event: WorkspaceOpEvent): void {
+    this.getWindow()?.webContents.send('workspace:op', event);
   }
 
   private emitStep(event: OrchestratorStepEvent): void {

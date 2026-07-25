@@ -1,0 +1,27 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "npm: watch - vscode-extension",
+      "type": "npm",
+      "script": "watch",
+      "path": "vscode-extension",
+      "isBackground": true,
+      "problemMatcher": {
+        "pattern": {
+          "regexp": "^\\[esbuild\\].*$",
+          "file": 1,
+          "line": 1
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "^\\[esbuild\\]",
+          "endsPattern": "^\\[esbuild\\] watching"
+        }
+      },
+      "presentation": {
+        "reveal": "never"
+      }
+    }
+  ]
+}

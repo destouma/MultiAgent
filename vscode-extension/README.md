@@ -28,11 +28,11 @@ Press **F5** ("Run MultiAgent Extension") to launch an Extension Development Hos
 Settings → search "MultiAgent":
 
 | Setting                 | Default                         |
-| ------------------------ | -------------------------------- |
-| `multiagent.baseUrl`     | `http://localhost:13305/api/v1`  |
-| `multiagent.apiKey`      | `lemonade`                       |
-| `multiagent.model`       | *(empty — must be set)*          |
-| `multiagent.maxHistory`  | `40`                             |
+| ----------------------- | ------------------------------- |
+| `multiagent.baseUrl`    | `http://localhost:13305/api/v1` |
+| `multiagent.apiKey`     | `lemonade`                      |
+| `multiagent.model`      | _(empty — must be set)_         |
+| `multiagent.maxHistory` | `40`                            |
 
 Requires [Lemonade Server](https://lemonade-server.ai/) running locally with a chat model loaded.
 

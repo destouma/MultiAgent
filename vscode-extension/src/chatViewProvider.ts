@@ -40,7 +40,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
     context.subscriptions.push(
       vscode.workspace.onDidChangeConfiguration((event) => {
-        if (event.affectsConfiguration('multiagent.baseUrl') || event.affectsConfiguration('multiagent.apiKey')) {
+        if (
+          event.affectsConfiguration('multiagent.baseUrl') ||
+          event.affectsConfiguration('multiagent.apiKey')
+        ) {
           this.lemonade.updateSettings(this.readConnectionSettings());
         }
         if (event.affectsConfiguration('multiagent.model')) {
@@ -137,7 +140,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     const trimmed = text.trim();
     if (!trimmed) return;
 
-    const persona = this.personas.find((candidate) => candidate.id === personaId) ?? this.personas[0];
+    const persona =
+      this.personas.find((candidate) => candidate.id === personaId) ?? this.personas[0];
     await this.context.workspaceState.update(PERSONA_KEY, persona.id);
 
     const config = vscode.workspace.getConfiguration('multiagent');
@@ -150,7 +154,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       this.post({
         type: 'error',
         messageId: assistantMessageId,
-        message: 'No model configured. Set "multiagent.model" in Settings to a model loaded in Lemonade.',
+        message:
+          'No model configured. Set "multiagent.model" in Settings to a model loaded in Lemonade.',
       });
       return;
     }
@@ -187,7 +192,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     try {
       await this.lemonade.ensureModelLoaded(model, { signal: controller.signal });
 
-      for await (const delta of this.lemonade.streamChat(openaiMessages, model, controller.signal)) {
+      for await (const delta of this.lemonade.streamChat(
+        openaiMessages,
+        model,
+        controller.signal,
+      )) {
         fullContent += delta;
         this.post({ type: 'token', messageId: assistantMessageId, delta });
       }

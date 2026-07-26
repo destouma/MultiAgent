@@ -1,5 +1,11 @@
 import { create } from 'zustand';
-import type { AppSettings, HealthStatus, ModelInfo, Persona, ThemeMode } from '../../../shared/types';
+import type {
+  AppSettings,
+  HealthStatus,
+  ModelInfo,
+  Persona,
+  ThemeMode,
+} from '../../../shared/types';
 import { isLikelyImageModel } from '../../../shared/types';
 
 function applyTheme(theme: ThemeMode): void {

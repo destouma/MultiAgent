@@ -1,0 +1,74 @@
+{
+  "name": "multiagent-vscode",
+  "displayName": "MultiAgent",
+  "description": "Multi-agent chat over a local Lemonade Server",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "multiagent",
+          "title": "MultiAgent",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "multiagent": [
+        {
+          "id": "multiagent.chat",
+          "name": "Chat",
+          "type": "webview"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "MultiAgent",
+      "properties": {
+        "multiagent.baseUrl": {
+          "type": "string",
+          "default": "http://localhost:13305/api/v1",
+          "description": "Lemonade Server API base URL."
+        },
+        "multiagent.apiKey": {
+          "type": "string",
+          "default": "lemonade",
+          "description": "API key sent to Lemonade (required by the OpenAI client; unused by the server)."
+        },
+        "multiagent.model": {
+          "type": "string",
+          "default": "",
+          "description": "Chat model id loaded in Lemonade."
+        },
+        "multiagent.maxHistory": {
+          "type": "number",
+          "default": 40,
+          "description": "Maximum number of past messages sent as context."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "node esbuild.js",
+    "watch": "node esbuild.js --watch",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "openai": "^5.8.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "esbuild": "^0.28.1",
+    "typescript": "^5.8.3"
+  }
+}

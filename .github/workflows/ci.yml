@@ -8,6 +8,9 @@ on:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: desktop
     steps:
       - uses: actions/checkout@v4
 
@@ -15,6 +18,7 @@ jobs:
         with:
           node-version: 20
           cache: npm
+          cache-dependency-path: desktop/package-lock.json
 
       - run: npm ci
 
@@ -40,7 +44,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: sbom
-          path: sbom.cdx.json
+          path: desktop/sbom.cdx.json
           retention-days: 90
 
   package-windows:
@@ -48,6 +52,9 @@ jobs:
     needs: verify
     if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: desktop
     steps:
       - uses: actions/checkout@v4
 
@@ -55,6 +62,7 @@ jobs:
         with:
           node-version: 20
           cache: npm
+          cache-dependency-path: desktop/package-lock.json
 
       - run: npm ci
 
@@ -65,5 +73,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: windows-installer
-          path: release/*.exe
+          path: desktop/release/*.exe
           retention-days: 90

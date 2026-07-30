@@ -26,6 +26,8 @@ const api = {
     ipcRenderer.invoke('settings:set', partial),
 
   listModels: (): Promise<ModelInfo[]> => ipcRenderer.invoke('models:list'),
+  listLoadedModels: (): Promise<string[]> => ipcRenderer.invoke('models:loaded'),
+  loadModel: (model: string): Promise<boolean> => ipcRenderer.invoke('models:load', model),
   checkHealth: (): Promise<HealthStatus> => ipcRenderer.invoke('health:check'),
   listPersonas: (): Promise<Persona[]> => ipcRenderer.invoke('personas:list'),
 
@@ -51,6 +53,8 @@ const api = {
 
   listFolders: (): Promise<FolderEntry[]> => ipcRenderer.invoke('folders:list'),
   openFolder: (): Promise<FolderEntry | null> => ipcRenderer.invoke('folders:open'),
+  removeFolder: (folderPath: string): Promise<boolean> =>
+    ipcRenderer.invoke('folders:remove', folderPath),
 
   generateImage: (
     request: GenerateImageRequest,

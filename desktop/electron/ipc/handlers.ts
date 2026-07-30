@@ -58,6 +58,34 @@ export function registerIpcHandlers(
     }
   });
 
+  ipcMain.handle(IpcChannels.modelsLoaded, async () => {
+    try {
+      return await lemonade.listLoadedModelNames();
+    } catch (error) {
+      throw serializeError(error);
+    }
+  });
+
+  ipcMain.handle(IpcChannels.modelsLoad, async (_event, model: string) => {
+    try {
+      const win = getWindow();
+      await lemonade.ensureModelLoaded(model, {
+        onStatus: (message) => {
+          const lower = message.toLowerCase();
+          const phase = lower.includes('ready')
+            ? 'ready'
+            : lower.includes('loading') || lower.includes('waiting')
+              ? 'loading'
+              : 'checking';
+          win?.webContents.send('model:status', { model, phase, message });
+        },
+      });
+      return true;
+    } catch (error) {
+      throw serializeError(error);
+    }
+  });
+
   ipcMain.handle(IpcChannels.healthCheck, async () => lemonade.checkHealth());
 
   ipcMain.handle(IpcChannels.personasList, () => personas.list());
@@ -109,6 +137,10 @@ export function registerIpcHandlers(
     if (!selected) return null;
     return store.addFolder(selected);
   });
+
+  ipcMain.handle(IpcChannels.foldersRemove, (_event, folderPath: string) =>
+    store.removeFolder(folderPath),
+  );
 
   ipcMain.handle(IpcChannels.imagesGenerate, async (_event, request: GenerateImageRequest) => {
     try {

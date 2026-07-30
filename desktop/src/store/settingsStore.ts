@@ -16,15 +16,21 @@ type SettingsState = {
   settings: AppSettings | null;
   health: HealthStatus | null;
   models: ModelInfo[];
+  loadedModels: string[];
   personas: Persona[];
   settingsOpen: boolean;
+  modelsOpen: boolean;
   loading: boolean;
+  loadingModelId: string | null;
   load: () => Promise<void>;
   refreshHealth: () => Promise<void>;
   refreshModels: () => Promise<void>;
+  refreshLoadedModels: () => Promise<void>;
+  loadModel: (modelId: string) => Promise<void>;
   updateSettings: (partial: Partial<AppSettings>) => Promise<void>;
   setTheme: (theme: ThemeMode) => Promise<void>;
   setSettingsOpen: (open: boolean) => void;
+  setModelsOpen: (open: boolean) => void;
   imageModels: () => ModelInfo[];
 };
 
@@ -51,9 +57,12 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   settings: null,
   health: null,
   models: [],
+  loadedModels: [],
   personas: [],
   settingsOpen: false,
+  modelsOpen: false,
   loading: false,
+  loadingModelId: null,
 
   load: async () => {
     set({ loading: true });
@@ -65,17 +74,30 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       ]);
 
       let models: ModelInfo[] = [];
+      let loadedModels: string[] = [];
       if (health.ok) {
         try {
           models = await window.api.listModels();
         } catch {
           models = [];
         }
+        try {
+          loadedModels = await window.api.listLoadedModels();
+        } catch {
+          loadedModels = [];
+        }
       }
 
       const nextSettings = await pickDefaults(settings, models);
       applyTheme(nextSettings.theme);
-      set({ settings: nextSettings, personas, health, models, loading: false });
+      set({
+        settings: nextSettings,
+        personas,
+        health,
+        models,
+        loadedModels,
+        loading: false,
+      });
     } catch {
       set({ loading: false });
     }
@@ -86,6 +108,9 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     set({ health });
     if (health.ok) {
       await get().refreshModels();
+      await get().refreshLoadedModels();
+    } else {
+      set({ loadedModels: [] });
     }
   },
 
@@ -97,6 +122,27 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       set({ models, ...(nextSettings ? { settings: nextSettings } : {}) });
     } catch {
       set({ models: [] });
+    }
+  },
+
+  refreshLoadedModels: async () => {
+    try {
+      const loadedModels = await window.api.listLoadedModels();
+      set({ loadedModels });
+    } catch {
+      set({ loadedModels: [] });
+    }
+  },
+
+  loadModel: async (modelId) => {
+    const trimmed = modelId.trim();
+    if (!trimmed || get().loadingModelId) return;
+    set({ loadingModelId: trimmed });
+    try {
+      await window.api.loadModel(trimmed);
+      await get().refreshLoadedModels();
+    } finally {
+      set({ loadingModelId: null });
     }
   },
 
@@ -113,6 +159,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   },
 
   setSettingsOpen: (open) => set({ settingsOpen: open }),
+  setModelsOpen: (open) => set({ modelsOpen: open }),
 
   imageModels: () => get().models,
 }));

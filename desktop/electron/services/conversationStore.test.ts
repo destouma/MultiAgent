@@ -140,6 +140,29 @@ describe('ConversationStore folders', () => {
     await store.ensureReady();
     expect(store.listFolders().map((f) => f.path)).toEqual(['C:\\explicit']);
   });
+
+  it('removes a folder and clears workspacePath on bound conversations', async () => {
+    store = new ConversationStore(dbPath);
+    await store.ensureReady();
+
+    store.addFolder('C:\\work\\project');
+    const bound = store.createConversation({
+      title: 'Bound chat',
+      workspacePath: 'C:\\work\\project',
+      kind: 'chat',
+    });
+    const other = store.createConversation({
+      title: 'Other',
+      workspacePath: 'C:\\other',
+      kind: 'chat',
+    });
+
+    expect(store.removeFolder('C:\\work\\project')).toBe(true);
+    expect(store.listFolders()).toEqual([]);
+    expect(store.getConversation(bound.id)?.workspacePath).toBeNull();
+    expect(store.getConversation(other.id)?.workspacePath).toBe('C:\\other');
+    expect(store.removeFolder('C:\\work\\project')).toBe(false);
+  });
 });
 
 describe('ConversationStore per-conversation model', () => {

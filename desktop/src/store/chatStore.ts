@@ -39,6 +39,7 @@ type ChatState = {
   bootstrap: () => Promise<void>;
   loadFolders: () => Promise<void>;
   openFolder: () => Promise<void>;
+  removeFolder: (folderPath: string) => Promise<void>;
   selectConversation: (id: string) => Promise<void>;
   createConversation: (
     workspacePath?: string | null,
@@ -120,6 +121,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
         ? state.folders
         : [...state.folders, folder],
     }));
+  },
+
+  removeFolder: async (folderPath) => {
+    await window.api.removeFolder(folderPath);
+    const [folders, conversations] = await Promise.all([
+      window.api.listFolders(),
+      window.api.listConversations(),
+    ]);
+    set({ folders, conversations });
   },
 
   selectConversation: async (id) => {

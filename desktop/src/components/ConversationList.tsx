@@ -59,6 +59,7 @@ export function ConversationList() {
   const folders = useChatStore((state) => state.folders);
   const setNewChatOpen = useChatStore((state) => state.setNewChatOpen);
   const openFolder = useChatStore((state) => state.openFolder);
+  const removeFolder = useChatStore((state) => state.removeFolder);
   const [contextMenu, setContextMenu] = useState<FolderContextMenu | null>(null);
 
   useEffect(() => {
@@ -88,6 +89,16 @@ export function ConversationList() {
   const createInFolder = (kind: ConversationKind) => {
     if (!contextMenu) return;
     setNewChatOpen(true, kind, contextMenu.folderPath);
+    setContextMenu(null);
+  };
+
+  const confirmRemoveFolder = (folderPath: string) => {
+    const label = folderLabel(folderPath);
+    const ok = window.confirm(
+      `Remove folder "${label}" from the sidebar?\n\nChats in this folder stay, but the workspace binding is cleared.`,
+    );
+    if (!ok) return;
+    void removeFolder(folderPath);
     setContextMenu(null);
   };
 
@@ -129,6 +140,17 @@ export function ConversationList() {
               >
                 <span className="folder-icon">📁</span>
                 <span className="folder-name">{folderLabel(folder.path)}</span>
+                <button
+                  type="button"
+                  className="folder-remove"
+                  title="Remove folder"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    confirmRemoveFolder(folder.path);
+                  }}
+                >
+                  ×
+                </button>
               </div>
               {items.length ? (
                 <div className="folder-items">
@@ -166,6 +188,13 @@ export function ConversationList() {
             </button>
             <button type="button" onClick={() => createInFolder('orchestrator')}>
               New orchestrator
+            </button>
+            <button
+              type="button"
+              className="context-menu-danger"
+              onClick={() => confirmRemoveFolder(contextMenu.folderPath)}
+            >
+              Remove folder
             </button>
           </div>
         </>

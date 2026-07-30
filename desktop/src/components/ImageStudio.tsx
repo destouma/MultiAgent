@@ -26,7 +26,6 @@ export function ImageStudio() {
   const modelStatus = useChatStore((state) => state.modelStatus);
   const conversations = useChatStore((state) => state.conversations);
   const activeConversationId = useChatStore((state) => state.activeConversationId);
-  const setConversationModel = useChatStore((state) => state.setConversationModel);
   const settings = useSettingsStore((state) => state.settings);
   const imageModels = useSettingsStore((state) => state.imageModels);
 
@@ -191,22 +190,7 @@ export function ImageStudio() {
               disabled={generatingImage}
             />
             <div className="image-prompt-toolbar">
-              <select
-                className="image-model-chip"
-                value={activeModel}
-                onChange={(event) => void setConversationModel(event.target.value)}
-                disabled={generatingImage || !models.length}
-                title="Image model"
-              >
-                {!models.length && <option value="">No models</option>}
-                {models.map((model) => (
-                  <option key={model.id} value={model.id}>
-                    {model.id}
-                  </option>
-                ))}
-              </select>
-
-              <div className="image-prompt-actions">
+              <div className="image-prompt-actions image-prompt-actions-end">
                 <div className="image-menu-wrap">
                   <button
                     type="button"

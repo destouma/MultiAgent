@@ -136,12 +136,18 @@ export class LemonadeClient {
     }
   }
 
-  async isModelLoaded(model: string, signal?: AbortSignal): Promise<boolean> {
+  async listLoadedModelNames(signal?: AbortSignal): Promise<string[]> {
     const health = await this.getServerHealth(signal);
+    const names = (health.all_models_loaded ?? [])
+      .map((entry) => (entry.model_name || '').trim())
+      .filter(Boolean);
+    return [...new Set(names)];
+  }
+
+  async isModelLoaded(model: string, signal?: AbortSignal): Promise<boolean> {
+    const loaded = await this.listLoadedModelNames(signal);
     const target = model.trim().toLowerCase();
-    return (health.all_models_loaded ?? []).some(
-      (entry) => (entry.model_name || '').trim().toLowerCase() === target,
-    );
+    return loaded.some((name) => name.toLowerCase() === target);
   }
 
   async loadModel(model: string, signal?: AbortSignal): Promise<void> {

@@ -50,8 +50,8 @@ export function ModelsModal() {
       <div className="modal models-modal" onClick={(event) => event.stopPropagation()}>
         <h2>Models</h2>
         <p className="hint">
-          Models available from Lemonade. Loaded models are ready for chat or image generation.
-          Load any model that is not yet in memory.
+          Models available from Lemonade. Loaded models are ready for chat or image generation. Load
+          any model that is not yet in memory.
         </p>
 
         <div className="models-modal-toolbar">

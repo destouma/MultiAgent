@@ -1,18 +1,15 @@
 import { useEffect, useState } from 'react';
 import { isLikelyImageModel } from '../../../shared/types';
+import { cleanErrorMessage } from '../lib/errors';
 import { useChatStore } from '../store/chatStore';
 import { useSettingsStore } from '../store/settingsStore';
-
-function cleanErrorMessage(error: unknown, fallback: string): string {
-  const message = error instanceof Error ? error.message : fallback;
-  return message.replace(/^Error invoking remote method '[^']*':\s*/, '');
-}
 
 export function ModelsModal() {
   const open = useSettingsStore((state) => state.modelsOpen);
   const setModelsOpen = useSettingsStore((state) => state.setModelsOpen);
   const models = useSettingsStore((state) => state.models);
   const loadedModels = useSettingsStore((state) => state.loadedModels);
+  const loadStatusSupported = useSettingsStore((state) => state.loadStatusSupported);
   const loadingModelId = useSettingsStore((state) => state.loadingModelId);
   const health = useSettingsStore((state) => state.health);
   const refreshModels = useSettingsStore((state) => state.refreshModels);
@@ -50,13 +47,17 @@ export function ModelsModal() {
       <div className="modal models-modal" onClick={(event) => event.stopPropagation()}>
         <h2>Models</h2>
         <p className="hint">
-          Models available from Lemonade. Loaded models are ready for chat or image generation. Load
-          any model that is not yet in memory.
+          Models available from your local LLM server. Loaded models are ready for chat or image
+          generation. Load any model that is not yet in memory.
         </p>
 
         <div className="models-modal-toolbar">
           <span className="models-modal-status">
-            {health?.ok ? `${sorted.length} available · ${loadedModels.length} loaded` : 'Offline'}
+            {health?.ok
+              ? loadStatusSupported
+                ? `${sorted.length} available · ${loadedModels.length} loaded`
+                : `${sorted.length} available · load status not reported by this server`
+              : 'Offline'}
             {modelStatus ? ` · ${modelStatus}` : ''}
           </span>
           <button
@@ -83,22 +84,37 @@ export function ModelsModal() {
           {!sorted.length ? (
             <p className="hint">
               {health?.ok
-                ? 'No models reported by Lemonade yet.'
-                : 'Connect to Lemonade to list models.'}
+                ? 'No models reported by the local LLM server yet.'
+                : 'Connect to your local LLM server to list models.'}
             </p>
           ) : (
             sorted.map((model) => {
               const loaded = loadedSet.has(model.id.toLowerCase());
               const isLoading = loadingModelId === model.id;
               const kind = isLikelyImageModel(model.id) ? 'image' : 'chat';
+              const statusText = loadStatusSupported
+                ? loaded
+                  ? 'loaded'
+                  : 'not loaded'
+                : 'status unknown';
               return (
-                <div key={model.id} className={`models-row ${loaded ? 'loaded' : ''}`}>
+                <div
+                  key={model.id}
+                  className={`models-row ${loadStatusSupported && loaded ? 'loaded' : ''}`}
+                >
                   <div className="models-row-meta">
                     <span className="models-row-name">{model.id}</span>
                     <span className="models-row-tags">
                       <span className="models-tag">{kind}</span>
-                      <span className={`models-tag ${loaded ? 'ok' : 'muted'}`}>
-                        {loaded ? 'loaded' : 'not loaded'}
+                      <span
+                        className={`models-tag ${loadStatusSupported ? (loaded ? 'ok' : 'muted') : 'muted'}`}
+                        title={
+                          loadStatusSupported
+                            ? undefined
+                            : 'This server does not report which models are loaded.'
+                        }
+                      >
+                        {statusText}
                       </span>
                     </span>
                   </div>

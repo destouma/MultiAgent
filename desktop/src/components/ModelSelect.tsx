@@ -7,6 +7,8 @@ type Props = {
   value: string;
   models: ModelInfo[];
   loadedModels: string[];
+  /** False when the server doesn't report load status at all (e.g. NoLlama); shows a neutral dot instead of implying "not loaded". */
+  loadStatusSupported?: boolean;
   disabled?: boolean;
   onChange: (modelId: string) => void;
   onOpen?: () => void;
@@ -19,6 +21,7 @@ export function ModelSelect({
   value,
   models,
   loadedModels,
+  loadStatusSupported = true,
   disabled = false,
   onChange,
   onOpen,
@@ -36,6 +39,15 @@ export function ModelSelect({
 
   const selected = models.find((model) => model.id === value) ?? null;
   const selectedLoaded = selected ? loadedSet.has(selected.id.toLowerCase()) : false;
+
+  const statusDotClass = (loaded: boolean) =>
+    loadStatusSupported ? (loaded ? 'loaded' : 'unloaded') : 'unknown';
+  const statusLabel = (loaded: boolean) =>
+    loadStatusSupported
+      ? loaded
+        ? 'Loaded'
+        : 'Not loaded'
+      : 'Load status not reported by this server';
 
   useEffect(() => {
     if (!open) return;
@@ -71,7 +83,8 @@ export function ModelSelect({
         {models.length ? (
           <>
             <span
-              className={`model-status-dot ${selectedLoaded ? 'loaded' : 'unloaded'}`}
+              className={`model-status-dot ${statusDotClass(selectedLoaded)}`}
+              title={statusLabel(selectedLoaded)}
               aria-hidden
             />
             <span className="model-select-value">{selected?.id || value || 'Select model'}</span>
@@ -102,9 +115,9 @@ export function ModelSelect({
                 }}
               >
                 <span
-                  className={`model-status-dot ${loaded ? 'loaded' : 'unloaded'}`}
-                  title={loaded ? 'Loaded' : 'Not loaded'}
-                  aria-label={loaded ? 'Loaded' : 'Not loaded'}
+                  className={`model-status-dot ${statusDotClass(loaded)}`}
+                  title={statusLabel(loaded)}
+                  aria-label={statusLabel(loaded)}
                 />
                 <span className="model-select-option-name">{model.id}</span>
               </button>

@@ -16,7 +16,7 @@ const PREFERRED_ORDER = ['general', 'researcher', 'coder', 'critic'];
 
 function personaDirs(extensionUri: vscode.Uri): string[] {
   return [
-    // Bundled alongside the extension (packaging copies personas/ in at build time; TODO)
+    // Bundled alongside the extension (esbuild.js copies repo-root personas/ here at build time)
     path.join(extensionUri.fsPath, 'personas'),
     // Dev (F5 from this repo checkout): repo root /personas, one level up from vscode-extension/
     path.join(extensionUri.fsPath, '..', 'personas'),

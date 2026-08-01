@@ -46,8 +46,8 @@ export function ChatThread() {
       : isOrchestrator
         ? 'Ask a question. The orchestrator will plan, consult specialists (Researcher, Coder, Critic), and synthesize a final answer.'
         : activeConversation?.workspacePath
-          ? 'This chat is bound to a folder. Ask Lemonade to inspect or edit files in that workspace.'
-          : 'Chat with local Lemonade models. Open a folder in the sidebar to give a chat read/write access to it.';
+          ? 'This chat is bound to a folder. Ask the assistant to inspect or edit files in that workspace.'
+          : 'Chat with local LLM models. Open a folder in the sidebar to give a chat read/write access to it.';
 
   const placeholderContent =
     streamingContent ||

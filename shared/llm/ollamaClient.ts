@@ -48,6 +48,8 @@ type OllamaTagsResponse = {
  */
 export class OllamaClient implements LlmClient {
   private settings: ProviderSettings;
+  // Optimistic until a probe proves this server doesn't implement /api/ps.
+  private loadStatusSupported = true;
 
   constructor(settings: ProviderSettings) {
     this.settings = settings;
@@ -122,12 +124,18 @@ export class OllamaClient implements LlmClient {
   async listLoadedModelNames(): Promise<string[]> {
     try {
       const data = await this.fetchJson<OllamaTagsResponse>('/api/ps');
+      this.loadStatusSupported = true;
       return (data.models ?? [])
         .map((entry) => entry.model || entry.name)
         .filter((id): id is string => Boolean(id));
     } catch {
+      this.loadStatusSupported = false;
       return [];
     }
+  }
+
+  supportsLoadStatus(): boolean {
+    return this.loadStatusSupported;
   }
 
   /**

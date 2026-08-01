@@ -13,6 +13,7 @@ import type {
   GenerateImageRequest,
   GeneratedImageInfo,
   HealthStatus,
+  LoadedModelsResult,
   ModelInfo,
   ModelStatusEvent,
   OrchestratorStepEvent,
@@ -26,7 +27,7 @@ const api = {
     ipcRenderer.invoke('settings:set', partial),
 
   listModels: (): Promise<ModelInfo[]> => ipcRenderer.invoke('models:list'),
-  listLoadedModels: (): Promise<string[]> => ipcRenderer.invoke('models:loaded'),
+  listLoadedModels: (): Promise<LoadedModelsResult> => ipcRenderer.invoke('models:loaded'),
   loadModel: (model: string): Promise<boolean> => ipcRenderer.invoke('models:load', model),
   checkHealth: (): Promise<HealthStatus> => ipcRenderer.invoke('health:check'),
   listPersonas: (): Promise<Persona[]> => ipcRenderer.invoke('personas:list'),

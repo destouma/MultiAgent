@@ -52,6 +52,14 @@ export interface LlmClient {
   /** Names of models the server currently has loaded/running, if it can report that. */
   listLoadedModelNames(signal?: AbortSignal): Promise<string[]>;
 
+  /**
+   * Whether the last listLoadedModelNames() call got a real signal from the
+   * server, as opposed to silently degrading to an empty list because the
+   * server doesn't expose load status at all. Callers should treat an empty
+   * list as "unknown" rather than "definitely not loaded" when this is false.
+   */
+  supportsLoadStatus(): boolean;
+
   ensureModelLoaded(
     model: string,
     options?: { signal?: AbortSignal; onStatus?: (message: string) => void },

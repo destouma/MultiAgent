@@ -106,7 +106,7 @@ export function ConversationList() {
     <aside className="sidebar">
       <div className="brand">
         <div className="brand-mark">MultiAgent</div>
-        <div className="brand-sub">Local Lemonade chat</div>
+        <div className="brand-sub">Local LLM chat</div>
       </div>
 
       <div className="sidebar-actions">

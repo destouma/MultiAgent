@@ -2,6 +2,10 @@ node_modules/
 dist/
 dist-electron/
 release/
+*.vsix
+# Copied from the repo-root personas/ by vscode-extension/esbuild.js at build
+# time; anchored so it doesn't match the real repo-root personas/ directory.
+/vscode-extension/personas/
 *.log
 .DS_Store
 Thumbs.db

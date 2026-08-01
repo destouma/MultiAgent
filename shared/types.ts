@@ -43,7 +43,16 @@ export type FolderEntry = {
 
 export type ThemeMode = 'light' | 'dark';
 
-export type ProviderType = 'openai' | 'ollama';
+export type ProviderType = 'openai' | 'lemonade' | 'ollama';
+
+export type ServerProfile = {
+  id: string;
+  name: string;
+  providerType: ProviderType;
+  baseUrl: string;
+  apiKey: string;
+  maxHistory: number;
+};
 
 export type AppSettings = {
   baseUrl: string;
@@ -53,6 +62,8 @@ export type AppSettings = {
   maxHistory: number;
   theme: ThemeMode;
   providerType: ProviderType;
+  servers: ServerProfile[];
+  activeServerId: string | null;
 };
 
 export type HealthStatus = {
@@ -64,6 +75,12 @@ export type HealthStatus = {
 export type ModelInfo = {
   id: string;
   ownedBy?: string;
+};
+
+export type LoadedModelsResult = {
+  names: string[];
+  /** False when the server doesn't expose any load-status signal at all, so an empty `names` here means "unknown," not "definitely not loaded." */
+  supported: boolean;
 };
 
 export type ChatSendRequest = {

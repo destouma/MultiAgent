@@ -1,10 +1,16 @@
 {
   "name": "multiagent-vscode",
   "displayName": "MultiAgent",
-  "description": "Multi-agent chat over a local Lemonade Server",
+  "description": "Multi-agent chat over a local LLM server",
   "version": "0.1.0",
+  "publisher": "multiagent-local",
   "private": true,
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/destouma/MultiAgent.git",
+    "directory": "vscode-extension"
+  },
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -37,14 +43,16 @@
         "multiagent.providerType": {
           "type": "string",
           "enum": [
+            "lemonade",
             "openai",
             "ollama"
           ],
           "enumDescriptions": [
-            "OpenAI-compatible server (Lemonade, NoLlama, LM Studio, vLLM, OpenAI, ...)",
+            "Lemonade Server (adds real load-status reporting and explicit model preloading)",
+            "Any other OpenAI-compatible server (NoLlama, LM Studio, vLLM, real OpenAI, ...)",
             "Native Ollama server"
           ],
-          "default": "openai",
+          "default": "lemonade",
           "description": "Which API protocol to speak to the local server."
         },
         "multiagent.baseUrl": {
@@ -54,13 +62,13 @@
         },
         "multiagent.apiKey": {
           "type": "string",
-          "default": "lemonade",
-          "description": "API key sent to the server (required by the OpenAI client; unused by Lemonade/Ollama)."
+          "default": "local-llm",
+          "description": "API key sent to the server (required by the OpenAI client; unused by most local servers)."
         },
         "multiagent.model": {
           "type": "string",
           "default": "",
-          "description": "Chat model id loaded in Lemonade."
+          "description": "Chat model id loaded on the local server."
         },
         "multiagent.maxHistory": {
           "type": "number",
@@ -73,7 +81,9 @@
   "scripts": {
     "build": "node esbuild.js",
     "watch": "node esbuild.js --watch",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "vscode:prepublish": "node esbuild.js",
+    "package": "vsce package --no-dependencies"
   },
   "dependencies": {
     "openai": "^5.8.2"
@@ -81,6 +91,7 @@
   "devDependencies": {
     "@types/node": "^20.0.0",
     "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.2.1",
     "esbuild": "^0.28.1",
     "typescript": "^5.8.3"
   }

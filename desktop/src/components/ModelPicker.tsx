@@ -9,7 +9,10 @@ type Props = {
 
 export function ModelPicker({ kind = 'chat' }: Props) {
   const models = useSettingsStore((state) => state.models);
+  const modelsError = useSettingsStore((state) => state.modelsError);
   const loadedModels = useSettingsStore((state) => state.loadedModels);
+  const loadStatusSupported = useSettingsStore((state) => state.loadStatusSupported);
+  const refreshModels = useSettingsStore((state) => state.refreshModels);
   const refreshLoadedModels = useSettingsStore((state) => state.refreshLoadedModels);
   const settings = useSettingsStore((state) => state.settings);
   const conversations = useChatStore((state) => state.conversations);
@@ -33,15 +36,30 @@ export function ModelPicker({ kind = 'chat' }: Props) {
     : (filtered[0]?.id ?? '');
 
   return (
-    <ModelSelect
-      id={kind === 'image' ? 'image-model' : 'model'}
-      label="Model"
-      value={resolvedValue}
-      models={filtered}
-      loadedModels={loadedModels}
-      disabled={!filtered.length}
-      onChange={(modelId) => void setConversationModel(modelId)}
-      onOpen={() => void refreshLoadedModels()}
-    />
+    <div className="model-picker">
+      <ModelSelect
+        id={kind === 'image' ? 'image-model' : 'model'}
+        label="Model"
+        value={resolvedValue}
+        models={filtered}
+        loadedModels={loadedModels}
+        loadStatusSupported={loadStatusSupported}
+        disabled={!filtered.length}
+        onChange={(modelId) => void setConversationModel(modelId)}
+        onOpen={() => void refreshLoadedModels()}
+      />
+      <button
+        type="button"
+        className="btn model-picker-refresh"
+        title={modelsError ? `Refresh models — ${modelsError}` : 'Refresh models'}
+        onClick={() => {
+          void refreshModels();
+          void refreshLoadedModels();
+        }}
+      >
+        {modelsError ? '⚠ Retry' : '⟳'}
+      </button>
+      {modelsError ? <span className="model-picker-error">{modelsError}</span> : null}
+    </div>
   );
 }

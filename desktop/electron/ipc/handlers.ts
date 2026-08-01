@@ -8,7 +8,7 @@ import type {
 import { encodeImageMessage } from '../../../shared/types';
 import { createLlmClient } from '../../../shared/llm/createLlmClient';
 import { ProviderError, type LlmClient } from '../../../shared/llm/types';
-import { getSettings, setSettings } from '../config';
+import { ensureDefaultServer, getSettings, setSettings } from '../config';
 import { ChatService } from '../services/chatService';
 import { ConversationStore } from '../services/conversationStore';
 import { ImageService } from '../services/imageService';
@@ -25,7 +25,7 @@ export type AppServices = {
 };
 
 export async function createServices(getWindow: () => BrowserWindow | null): Promise<AppServices> {
-  const settings = getSettings();
+  const settings = ensureDefaultServer();
   let client = createLlmClient(settings.providerType, settings);
   const getClient = () => client;
   const setClient = (next: LlmClient) => {
@@ -70,7 +70,8 @@ export function registerIpcHandlers(
 
   ipcMain.handle(IpcChannels.modelsLoaded, async () => {
     try {
-      return await getClient().listLoadedModelNames();
+      const names = await getClient().listLoadedModelNames();
+      return { names, supported: getClient().supportsLoadStatus() };
     } catch (error) {
       throw serializeError(error);
     }

@@ -250,7 +250,7 @@ export const workspaceTools = [
     function: {
       name: 'generate_image',
       description:
-        'Generate an image with Lemonade image models and save it into the workspace as a PNG.',
+        'Generate an image with the local image model and save it into the workspace as a PNG.',
       parameters: {
         type: 'object',
         properties: {

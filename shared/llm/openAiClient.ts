@@ -12,42 +12,14 @@ import {
   type ProviderSettings,
 } from './types';
 
-type LemonadeHealthResponse = {
-  status?: string;
-  all_models_loaded?: Array<{
-    model_name?: string;
-    type?: string;
-  }>;
-};
-
-const MODEL_LOAD_TIMEOUT_MS = 10 * 60 * 1000;
-const MODEL_POLL_INTERVAL_MS = 1500;
-
-function sleep(ms: number, signal?: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (signal?.aborted) {
-      reject(new ProviderError('cancelled', 'Generation cancelled'));
-      return;
-    }
-    const timer = setTimeout(() => {
-      signal?.removeEventListener('abort', onAbort);
-      resolve();
-    }, ms);
-    const onAbort = () => {
-      clearTimeout(timer);
-      reject(new ProviderError('cancelled', 'Generation cancelled'));
-    };
-    signal?.addEventListener('abort', onAbort, { once: true });
-  });
-}
-
 /**
- * Client for any OpenAI-compatible server: Lemonade, NoLlama (port 8000),
- * LM Studio, vLLM, real OpenAI, etc. Lemonade additionally exposes a
- * non-standard /health + /load extension for explicit model preloading;
- * that's used opportunistically when present, but every other part of this
- * client only relies on the standard /v1 surface so it works against any
- * of them.
+ * Client for any generic OpenAI-compatible server: NoLlama, LM Studio,
+ * vLLM, real OpenAI, etc. Only relies on the standard /v1 surface, so
+ * there's no way to know whether a model is actually loaded in memory -
+ * listLoadedModelNames()/supportsLoadStatus() reflect that honestly rather
+ * than guessing. For Lemonade specifically, which exposes a non-standard
+ * /health + /load extension for real load status and explicit preloading,
+ * see LemonadeClient, which adds that behavior on top of this one.
  */
 export class OpenAiClient implements LlmClient {
   private client: OpenAI;
@@ -75,11 +47,11 @@ export class OpenAiClient implements LlmClient {
     });
   }
 
-  private apiBase(): string {
+  protected apiBase(): string {
     return this.settings.baseUrl.replace(/\/$/, '');
   }
 
-  private authHeaders(): Record<string, string> {
+  protected authHeaders(): Record<string, string> {
     return {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${this.settings.apiKey || 'unused'}`,
@@ -116,57 +88,20 @@ export class OpenAiClient implements LlmClient {
     }
   }
 
-  /** Returns null if the server doesn't expose Lemonade's /health extension at all. */
-  private async tryGetServerHealth(signal?: AbortSignal): Promise<LemonadeHealthResponse | null> {
-    try {
-      const response = await fetch(`${this.apiBase()}/health`, {
-        method: 'GET',
-        headers: this.authHeaders(),
-        signal,
-      });
-      if (!response.ok) return null;
-      return (await response.json()) as LemonadeHealthResponse;
-    } catch {
-      return null;
-    }
+  /** Generic OpenAI-compatible servers don't expose any load-status signal. */
+  async listLoadedModelNames(): Promise<string[]> {
+    return [];
   }
 
-  async listLoadedModelNames(signal?: AbortSignal): Promise<string[]> {
-    const health = await this.tryGetServerHealth(signal);
-    if (!health?.all_models_loaded) return [];
-    const names = health.all_models_loaded
-      .map((entry) => (entry.model_name || '').trim())
-      .filter(Boolean);
-    return [...new Set(names)];
-  }
-
-  async loadModel(model: string, signal?: AbortSignal): Promise<void> {
-    try {
-      const response = await fetch(`${this.apiBase()}/load`, {
-        method: 'POST',
-        headers: this.authHeaders(),
-        body: JSON.stringify({ model_name: model }),
-        signal,
-      });
-      if (!response.ok) {
-        const text = await response.text();
-        throw new ProviderError(
-          'model_not_loaded',
-          `Failed to load model "${model}" (${response.status}): ${text || 'no details'}`,
-        );
-      }
-    } catch (error) {
-      throw this.mapError(error);
-    }
+  supportsLoadStatus(): boolean {
+    return false;
   }
 
   /**
-   * Ensure a model is loaded before inference. Lemonade needs an explicit
-   * /load call and polling; most other OpenAI-compatible servers (NoLlama,
-   * LM Studio, vLLM, real OpenAI...) manage loading themselves and don't
-   * expose that extension at all, in which case this is a no-op and the
-   * chat call itself will surface a clear error if the model truly isn't
-   * available.
+   * Generic OpenAI-compatible servers (NoLlama, LM Studio, vLLM, real
+   * OpenAI...) manage model loading themselves with no separate preload
+   * endpoint, so this is a no-op; the chat call itself will surface a clear
+   * error if the model truly isn't available.
    */
   async ensureModelLoaded(
     model: string,
@@ -179,49 +114,7 @@ export class OpenAiClient implements LlmClient {
     if (!name) {
       throw new ProviderError('model_not_loaded', 'No model selected.');
     }
-
-    const signal = options?.signal;
-    options?.onStatus?.(`Checking if ${name} is loaded…`);
-
-    const health = await this.tryGetServerHealth(signal);
-    if (!health?.all_models_loaded) {
-      options?.onStatus?.(`${name} ready`);
-      return;
-    }
-
-    const isLoaded = (names: string[]) =>
-      names.some((entry) => entry.toLowerCase() === name.toLowerCase());
-
-    if (isLoaded(await this.listLoadedModelNames(signal))) {
-      options?.onStatus?.(`${name} is ready`);
-      return;
-    }
-
-    options?.onStatus?.(`Loading ${name}…`);
-    await this.loadModel(name, signal);
-
-    if (isLoaded(await this.listLoadedModelNames(signal))) {
-      options?.onStatus?.(`${name} is ready`);
-      return;
-    }
-
-    const deadline = Date.now() + MODEL_LOAD_TIMEOUT_MS;
-    while (Date.now() < deadline) {
-      if (signal?.aborted) {
-        throw new ProviderError('cancelled', 'Generation cancelled');
-      }
-      options?.onStatus?.(`Waiting for ${name} to become available…`);
-      await sleep(MODEL_POLL_INTERVAL_MS, signal);
-      if (isLoaded(await this.listLoadedModelNames(signal))) {
-        options?.onStatus?.(`${name} is ready`);
-        return;
-      }
-    }
-
-    throw new ProviderError(
-      'model_not_loaded',
-      `Timed out waiting for model "${name}" to load. Check the server and try again.`,
-    );
+    options?.onStatus?.(`${name} ready`);
   }
 
   async *streamChat(
@@ -367,7 +260,7 @@ export class OpenAiClient implements LlmClient {
     return b64;
   }
 
-  private mapError(error: unknown): ProviderError {
+  protected mapError(error: unknown): ProviderError {
     if (error instanceof ProviderError) {
       return error;
     }

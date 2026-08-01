@@ -162,7 +162,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         type: 'error',
         messageId: assistantMessageId,
         message:
-          'No model configured. Set "multiagent.model" in Settings to a model loaded in Lemonade.',
+          'No model configured. Set "multiagent.model" in Settings to a model loaded on your local server.',
       });
       return;
     }
@@ -238,7 +238,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
   private readProviderType(): ProviderType {
     const config = vscode.workspace.getConfiguration('multiagent');
-    return config.get<ProviderType>('providerType', 'openai');
+    return config.get<ProviderType>('providerType', 'lemonade');
   }
 
   private readConnectionSettings(): ProviderSettings {
@@ -247,7 +247,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       this.readProviderType() === 'ollama' ? OLLAMA_DEFAULT_URL : OPENAI_DEFAULT_URL;
     return {
       baseUrl: config.get<string>('baseUrl', defaultUrl),
-      apiKey: config.get<string>('apiKey', 'lemonade'),
+      apiKey: config.get<string>('apiKey', 'local-llm'),
     };
   }
 

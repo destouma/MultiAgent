@@ -773,6 +773,35 @@ button {
   background: #dc2626;
 }
 
+.model-status-dot.unknown {
+  background: #9ca3af;
+}
+
+.model-picker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  position: relative;
+}
+
+.model-picker-refresh {
+  flex: 0 0 auto;
+  padding: 0.5rem 0.6rem;
+  line-height: 1;
+}
+
+.model-picker-error {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  max-width: 360px;
+  font-size: 0.75rem;
+  color: var(--danger);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .model-select-menu {
   position: absolute;
   top: calc(100% + 6px);
@@ -1448,6 +1477,92 @@ button {
   display: flex;
   flex-shrink: 0;
   gap: 6px;
+}
+
+.settings-modal {
+  width: min(640px, 94vw);
+}
+
+.server-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: min(40vh, 320px);
+  overflow: auto;
+  margin: 12px 0;
+  padding-right: 2px;
+}
+
+.server-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--bg);
+}
+
+.server-row.active {
+  border-color: rgba(15, 118, 110, 0.35);
+  background: rgba(15, 118, 110, 0.06);
+}
+
+.server-row-meta {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.server-row-name {
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.server-row-detail {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.server-row-url {
+  font-family: var(--mono, ui-monospace, Consolas, monospace);
+  font-size: 0.8rem;
+  color: var(--ink-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.server-row-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 6px;
+}
+
+.server-row-active-label {
+  font-size: 0.78rem;
+  color: #0f766e;
+  padding: 0 6px;
+}
+
+.server-form {
+  margin-bottom: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--bg);
+}
+
+.server-form-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 @media (max-width: 900px) {

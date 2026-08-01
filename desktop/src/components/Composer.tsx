@@ -33,7 +33,7 @@ export function Composer() {
           value={value}
           onChange={(event) => setValue(event.target.value)}
           onKeyDown={onKeyDown}
-          placeholder="Message Lemonade… (Enter to send, Shift+Enter for newline)"
+          placeholder="Message the local LLM… (Enter to send, Shift+Enter for newline)"
           disabled={isStreaming}
         />
         <div className="composer-actions">

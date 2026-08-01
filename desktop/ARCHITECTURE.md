@@ -1,6 +1,6 @@
 # MultiAgent — Architecture & User Guide
 
-MultiAgent is a Windows desktop app (Electron + React) for chatting with local models. It connects to either an **OpenAI-compatible server** (Lemonade, NoLlama, LM Studio, vLLM, real OpenAI, ...) or a **native Ollama server**, switchable per-install in Settings. It supports switchable agent personas, folder-bound workspace chats with read/write tools, dedicated image sessions, and **orchestrator** sessions that route work across specialists.
+MultiAgent is a Windows desktop app (Electron + React) for chatting with local models. It connects to **Lemonade**, any other **OpenAI-compatible server** (NoLlama, LM Studio, vLLM, real OpenAI, ...), or a **native Ollama server** — save multiple named connections in Settings and switch between them without restarting. It supports switchable agent personas, folder-bound workspace chats with read/write tools, dedicated image sessions, and **orchestrator** sessions that route work across specialists.
 
 ---
 
@@ -25,7 +25,7 @@ MultiAgent is a Windows desktop app (Electron + React) for chatting with local m
 | Shell        | Electron (main + preload + renderer)                                                                                               |
 | UI           | React 19 + TypeScript + Vite                                                                                                       |
 | State        | Zustand (`chatStore`, `settingsStore`)                                                                                             |
-| LLM / images | `shared/llm/` — `OpenAiClient` (OpenAI SDK + raw HTTP) or `OllamaClient` (native Ollama API), picked by `AppSettings.providerType` |
+| LLM / images | `shared/llm/` — `OpenAiClient` (generic OpenAI SDK + raw HTTP), `LemonadeClient` (extends it with Lemonade's load-status extension), or `OllamaClient` (native Ollama API), picked by `AppSettings.providerType` |
 | Settings     | `electron-store` → `%APPDATA%/MultiAgent/config.json`                                                                              |
 | Chats        | SQLite via **sql.js** → `%APPDATA%/MultiAgent/chats.db`                                                                            |
 | Images cache | `%APPDATA%/MultiAgent/images/*.png`                                                                                                |
@@ -37,8 +37,9 @@ MultiAgent is a Windows desktop app (Electron + React) for chatting with local m
 
 `shared/llm/types.ts` defines an `LlmClient` interface (`checkHealth`, `listModels`, `listLoadedModelNames`, `ensureModelLoaded`, `streamChat`, `completeChat`, `generateImage`, `supportsImageGeneration`) that both client implementations satisfy, so `ChatService`/`OrchestratorService`/`ImageService` are written once against whichever provider is active:
 
-- **`OpenAiClient`** (`shared/llm/openAiClient.ts`) — any OpenAI-compatible server. Uses the `openai` SDK for `/v1/chat/completions` and `/v1/models`. Lemonade also exposes a non-standard `/health` + `/load` extension for explicit model preloading; `ensureModelLoaded` uses it opportunistically when present (`/health` returns an `all_models_loaded` array) and is a no-op otherwise, since most other OpenAI-compatible servers (NoLlama, LM Studio, vLLM, real OpenAI) manage loading themselves and don't expose that extension — without this fallback, `ensureModelLoaded` would always conclude "not loaded" and call a `/load` endpoint that doesn't exist, hard-failing every request.
-- **`OllamaClient`** (`shared/llm/ollamaClient.ts`) — native Ollama protocol: `POST /api/chat` (NDJSON streaming, not SSE), `GET /api/tags` for model listing, `GET /api/ps` for currently-loaded models (best-effort — not every Ollama-compatible server implements it; falls back to an empty list), `POST /api/generate` with no prompt to trigger on-demand loading. Ollama assigns no id to tool calls and sends `arguments` as an object rather than a JSON string, so `completeChat` synthesizes an id and re-serializes arguments to match the shape `OpenAiClient` produces. **Has no image-generation endpoint** — `generateImage` always rejects with a `'unsupported'` `ProviderError`, and `ImageStudio` disables the Generate button with an explanation when this provider is active.
+- **`OpenAiClient`** (`shared/llm/openAiClient.ts`) — any generic OpenAI-compatible server (NoLlama, LM Studio, vLLM, real OpenAI, ...). Uses the `openai` SDK for `/v1/chat/completions` and `/v1/models`. Since the standard `/v1` surface has no load-status signal, `listLoadedModelNames()`/`supportsLoadStatus()` are honest about that (empty list, `false`) rather than guessing, and `ensureModelLoaded` is a no-op — these servers manage loading themselves, so a hard-coded assumption would either falsely report "not loaded" forever or call an endpoint that doesn't exist.
+- **`LemonadeClient`** (`shared/llm/lemonadeClient.ts`) — `extends OpenAiClient`, adding Lemonade's non-standard `/health` + `/load` extension on top of the inherited chat/completion behavior: `listLoadedModelNames()` parses `/health`'s `all_models_loaded` array, `supportsLoadStatus()` reflects whether that probe actually returned real data, and `ensureModelLoaded` explicitly calls `/load` then polls until the model shows as loaded (or times out).
+- **`OllamaClient`** (`shared/llm/ollamaClient.ts`) — native Ollama protocol: `POST /api/chat` (NDJSON streaming, not SSE), `GET /api/tags` for model listing, `GET /api/ps` for currently-loaded models (best-effort — not every Ollama-compatible server implements it; falls back to an empty list and `supportsLoadStatus() === false`), `POST /api/generate` with no prompt to trigger on-demand loading. Ollama assigns no id to tool calls and sends `arguments` as an object rather than a JSON string, so `completeChat` synthesizes an id and re-serializes arguments to match the shape `OpenAiClient` produces. **Has no image-generation endpoint** — `generateImage` always rejects with a `'unsupported'` `ProviderError`, and `ImageStudio` disables the Generate button with an explanation when this provider is active.
 
 `createLlmClient(providerType, settings)` (`shared/llm/createLlmClient.ts`) picks the implementation. `handlers.ts` holds the active client behind a `getClient()`/`setClient()` pair (mirroring the `getSettings`/`getWindow` getter pattern already used elsewhere) and rebuilds it on every `settings:set`, so switching provider type in Settings takes effect immediately without restarting the app.
 
@@ -161,15 +162,19 @@ MultiAgent/
 
 ### Settings (`electron-store`)
 
-| Key            | Default                         | Purpose                                                                       |
-| -------------- | ------------------------------- | ----------------------------------------------------------------------------- |
-| `providerType` | `openai`                        | `'openai'` (any OpenAI-compatible server) or `'ollama'` (native Ollama)       |
-| `baseUrl`      | `http://localhost:13305/api/v1` | Server API base (`http://localhost:11434` default for Ollama)                 |
-| `apiKey`       | `lemonade`                      | Required by the OpenAI client; unused by Lemonade/Ollama                      |
-| `model`        | `""`                            | Fallback chat/orchestrator model for conversations that haven't set their own |
-| `imageModel`   | `""`                            | Fallback image model for image sessions that haven't set their own            |
-| `maxHistory`   | `40`                            | Max messages sent as history                                                  |
-| `theme`        | `light`                         | UI theme (`light` \| `dark`), toggled in Settings                             |
+| Key             | Default                         | Purpose                                                                              |
+| --------------- | -------------------------------- | ------------------------------------------------------------------------------------ |
+| `providerType`  | `lemonade`                      | `'lemonade'`, `'openai'` (any other OpenAI-compatible server), or `'ollama'`          |
+| `baseUrl`       | `http://localhost:13305/api/v1` | Active connection's server API base (`http://localhost:11434` default for Ollama)    |
+| `apiKey`        | `local-llm`                     | Required by the OpenAI client; unused by Lemonade/Ollama                             |
+| `model`         | `""`                            | Fallback chat/orchestrator model for conversations that haven't set their own        |
+| `imageModel`    | `""`                            | Fallback image model for image sessions that haven't set their own                   |
+| `maxHistory`    | `40`                            | Max messages sent as history                                                         |
+| `theme`         | `light`                         | UI theme (`light` \| `dark`), toggled in Settings                                    |
+| `servers`       | `[]`                            | Saved `ServerProfile[]` (name, providerType, baseUrl, apiKey, maxHistory)             |
+| `activeServerId`| `null`                          | Id of the `servers` entry currently copied into the fields above                     |
+
+`providerType`/`baseUrl`/`apiKey`/`maxHistory` are the *active connection* — switching servers in Settings copies the selected profile's fields into these rather than every consumer reading `servers[activeServerId]` directly, so `getClient()`/`setClient()` keep working unchanged. `ensureDefaultServer()` (`electron/config.ts`) seeds one profile from these fields on first run if `servers` is empty, so existing configs aren't lost.
 
 Path: `%APPDATA%/MultiAgent/config.json`
 

@@ -8,6 +8,7 @@ const defaults: AppSettings = {
   imageModel: '',
   maxHistory: 40,
   theme: 'light',
+  providerType: 'openai',
 };
 
 const store = new Store<AppSettings>({
@@ -23,6 +24,7 @@ export function getSettings(): AppSettings {
     imageModel: store.get('imageModel', defaults.imageModel),
     maxHistory: store.get('maxHistory', defaults.maxHistory),
     theme: store.get('theme', defaults.theme),
+    providerType: store.get('providerType', defaults.providerType),
   };
 }
 

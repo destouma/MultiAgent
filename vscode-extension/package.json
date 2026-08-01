@@ -34,15 +34,28 @@
     "configuration": {
       "title": "MultiAgent",
       "properties": {
+        "multiagent.providerType": {
+          "type": "string",
+          "enum": [
+            "openai",
+            "ollama"
+          ],
+          "enumDescriptions": [
+            "OpenAI-compatible server (Lemonade, NoLlama, LM Studio, vLLM, OpenAI, ...)",
+            "Native Ollama server"
+          ],
+          "default": "openai",
+          "description": "Which API protocol to speak to the local server."
+        },
         "multiagent.baseUrl": {
           "type": "string",
           "default": "http://localhost:13305/api/v1",
-          "description": "Lemonade Server API base URL."
+          "description": "Server API base URL (default is Lemonade's; use http://localhost:11434 for Ollama)."
         },
         "multiagent.apiKey": {
           "type": "string",
           "default": "lemonade",
-          "description": "API key sent to Lemonade (required by the OpenAI client; unused by the server)."
+          "description": "API key sent to the server (required by the OpenAI client; unused by Lemonade/Ollama)."
         },
         "multiagent.model": {
           "type": "string",

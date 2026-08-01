@@ -1,13 +1,13 @@
 # MultiAgent for VS Code
 
-Multi-agent chat over a local [Lemonade Server](https://github.com/lemonade-sdk/lemonade), in the editor sidebar.
+Multi-agent chat over a local LLM server, in the editor sidebar. Connects to either an OpenAI-compatible server ([Lemonade](https://github.com/lemonade-sdk/lemonade) by default) or a native Ollama server, switchable via `multiagent.providerType`.
 
 This is the VS Code client. It shares persona definitions (`../personas/`) and message types (`../shared/types.ts`) with [`../desktop/`](../desktop) — see the repo root [README.md](../README.md).
 
 ## v1 scope
 
 - Sidebar chat view (activity bar → MultiAgent)
-- Streaming chat over Lemonade's OpenAI-compatible API
+- Streaming chat over an OpenAI-compatible or native Ollama server
 - Persona switching (system prompt only)
 - Conversation history persisted per-workspace, single conversation
 
@@ -27,14 +27,15 @@ Press **F5** ("Run MultiAgent Extension") to launch an Extension Development Hos
 
 Settings → search "MultiAgent":
 
-| Setting                 | Default                         |
-| ----------------------- | ------------------------------- |
-| `multiagent.baseUrl`    | `http://localhost:13305/api/v1` |
-| `multiagent.apiKey`     | `lemonade`                      |
-| `multiagent.model`      | _(empty — must be set)_         |
-| `multiagent.maxHistory` | `40`                            |
+| Setting                   | Default                         |
+| ------------------------- | ------------------------------- |
+| `multiagent.providerType` | `openai`                        |
+| `multiagent.baseUrl`      | `http://localhost:13305/api/v1` |
+| `multiagent.apiKey`       | `lemonade`                      |
+| `multiagent.model`        | _(empty — must be set)_         |
+| `multiagent.maxHistory`   | `40`                            |
 
-Requires [Lemonade Server](https://lemonade-server.ai/) running locally with a chat model loaded.
+Requires a local server running with a chat model loaded — [Lemonade Server](https://lemonade-server.ai/) by default, or set `multiagent.providerType` to `ollama` and `multiagent.baseUrl` to your Ollama instance (default `http://localhost:11434`).
 
 ## Known limitation
 

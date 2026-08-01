@@ -1,6 +1,6 @@
 # MultiAgent — Architecture & User Guide
 
-MultiAgent is a Windows desktop app (Electron + React) for chatting with local models and generating images through a **Lemonade Server** (OpenAI-compatible API). It supports switchable agent personas, folder-bound workspace chats with read/write tools, dedicated image sessions, and **orchestrator** sessions that route work across specialists.
+MultiAgent is a Windows desktop app (Electron + React) for chatting with local models. It connects to either an **OpenAI-compatible server** (Lemonade, NoLlama, LM Studio, vLLM, real OpenAI, ...) or a **native Ollama server**, switchable per-install in Settings. It supports switchable agent personas, folder-bound workspace chats with read/write tools, dedicated image sessions, and **orchestrator** sessions that route work across specialists.
 
 ---
 
@@ -20,18 +20,29 @@ MultiAgent is a Windows desktop app (Electron + React) for chatting with local m
 
 ## 1. Overview
 
-| Concern      | Choice                                                           |
-| ------------ | ---------------------------------------------------------------- |
-| Shell        | Electron (main + preload + renderer)                             |
-| UI           | React 19 + TypeScript + Vite                                     |
-| State        | Zustand (`chatStore`, `settingsStore`)                           |
-| LLM / images | OpenAI SDK + raw HTTP → Lemonade `http://localhost:13305/api/v1` |
-| Settings     | `electron-store` → `%APPDATA%/MultiAgent/config.json`            |
-| Chats        | SQLite via **sql.js** → `%APPDATA%/MultiAgent/chats.db`          |
-| Images cache | `%APPDATA%/MultiAgent/images/*.png`                              |
-| Packaging    | `electron-builder` NSIS (Windows x64)                            |
+| Concern      | Choice                                                                                                                             |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------------------- |
+| Shell        | Electron (main + preload + renderer)                                                                                               |
+| UI           | React 19 + TypeScript + Vite                                                                                                       |
+| State        | Zustand (`chatStore`, `settingsStore`)                                                                                             |
+| LLM / images | `shared/llm/` — `OpenAiClient` (OpenAI SDK + raw HTTP) or `OllamaClient` (native Ollama API), picked by `AppSettings.providerType` |
+| Settings     | `electron-store` → `%APPDATA%/MultiAgent/config.json`                                                                              |
+| Chats        | SQLite via **sql.js** → `%APPDATA%/MultiAgent/chats.db`                                                                            |
+| Images cache | `%APPDATA%/MultiAgent/images/*.png`                                                                                                |
+| Packaging    | `electron-builder` NSIS (Windows x64)                                                                                              |
 
-**Security rule:** the renderer never calls Lemonade directly. All network I/O, file system access, and dialogs run in the Electron **main** process and are exposed through a typed `window.api` bridge (preload + `contextIsolation`).
+**Security rule:** the renderer never calls the LLM server directly. All network I/O, file system access, and dialogs run in the Electron **main** process and are exposed through a typed `window.api` bridge (preload + `contextIsolation`).
+
+### Providers
+
+`shared/llm/types.ts` defines an `LlmClient` interface (`checkHealth`, `listModels`, `listLoadedModelNames`, `ensureModelLoaded`, `streamChat`, `completeChat`, `generateImage`, `supportsImageGeneration`) that both client implementations satisfy, so `ChatService`/`OrchestratorService`/`ImageService` are written once against whichever provider is active:
+
+- **`OpenAiClient`** (`shared/llm/openAiClient.ts`) — any OpenAI-compatible server. Uses the `openai` SDK for `/v1/chat/completions` and `/v1/models`. Lemonade also exposes a non-standard `/health` + `/load` extension for explicit model preloading; `ensureModelLoaded` uses it opportunistically when present (`/health` returns an `all_models_loaded` array) and is a no-op otherwise, since most other OpenAI-compatible servers (NoLlama, LM Studio, vLLM, real OpenAI) manage loading themselves and don't expose that extension — without this fallback, `ensureModelLoaded` would always conclude "not loaded" and call a `/load` endpoint that doesn't exist, hard-failing every request.
+- **`OllamaClient`** (`shared/llm/ollamaClient.ts`) — native Ollama protocol: `POST /api/chat` (NDJSON streaming, not SSE), `GET /api/tags` for model listing, `GET /api/ps` for currently-loaded models (best-effort — not every Ollama-compatible server implements it; falls back to an empty list), `POST /api/generate` with no prompt to trigger on-demand loading. Ollama assigns no id to tool calls and sends `arguments` as an object rather than a JSON string, so `completeChat` synthesizes an id and re-serializes arguments to match the shape `OpenAiClient` produces. **Has no image-generation endpoint** — `generateImage` always rejects with a `'unsupported'` `ProviderError`, and `ImageStudio` disables the Generate button with an explanation when this provider is active.
+
+`createLlmClient(providerType, settings)` (`shared/llm/createLlmClient.ts`) picks the implementation. `handlers.ts` holds the active client behind a `getClient()`/`setClient()` pair (mirroring the `getSettings`/`getWindow` getter pattern already used elsewhere) and rebuilds it on every `settings:set`, so switching provider type in Settings takes effect immediately without restarting the app.
+
+> **Compatibility note:** [NoLlama](https://github.com/spignelon/nollama) exposes both an OpenAI-compatible endpoint (port 8000, its primary/recommended interface) and an Ollama-compatible one (port 11434). As of testing, NoLlama's Ollama-compat `/api/chat` and `/api/generate` don't reliably honor the requested `model`/`prompt` — verified independently of this app via raw HTTP requests. Prefer the OpenAI-compatible provider pointed at NoLlama's port 8000 rather than the Ollama provider pointed at port 11434.
 
 ---
 
@@ -58,10 +69,10 @@ flowchart TB
     Personas[PersonaRegistry]
     DB[ConversationStore]
     Config[AppConfig]
-    Client[LemonadeClient]
+    Client["LlmClient\n(OpenAiClient | OllamaClient)"]
   end
 
-  Lemonade["Lemonade_Server\napi_v1"]
+  Server["OpenAI-compatible_or_Ollama_server"]
 
   App --> ChatUI
   App --> ImageUI
@@ -79,13 +90,13 @@ flowchart TB
   ChatSvc --> DB
   ImageSvc --> Client
   ImageSvc --> Workspace
-  Client --> Lemonade
+  Client --> Server
   Config --> Client
 ```
 
 ### Process roles
 
-- **Main** — window lifecycle, IPC, Lemonade HTTP, SQLite, workspace file tools, image generation/save/download.
+- **Main** — window lifecycle, IPC, LLM server HTTP, SQLite, workspace file tools, image generation/save/download.
 - **Preload** — exposes a safe `window.api` surface via `contextBridge`.
 - **Renderer** — React UI only; talks to main through IPC invoke/events.
 
@@ -94,16 +105,16 @@ flowchart TB
 1. User sends a message in the composer.
 2. Renderer → `chat:send` with `conversationId`, `content`, `personaId`.
 3. `ChatService` loads history, injects persona system prompt (and workspace instructions if a folder is bound).
-4. Streams tokens from Lemonade (`chat:token` events) or runs a workspace tool loop.
+4. Streams tokens from the active `LlmClient` (`chat:token` events) or runs a workspace tool loop.
 5. Persists assistant message; emits `chat:done` / `chat:error`.
 
 For `kind: 'orchestrator'`, `ChatService` delegates to `OrchestratorService` (plan → specialists → synthesize).
 
 ### Image request path
 
-1. User opens an **image** conversation and fills the Image Generator panel.
+1. User opens an **image** conversation and fills the Image Generator panel (disabled if the active provider is Ollama).
 2. Renderer → `images:generate`.
-3. `ImageService` calls Lemonade `POST /images/generations` (b64 PNG).
+3. `ImageService` calls the active `LlmClient`'s `generateImage` (OpenAI-compatible servers only — `POST /images/generations`, b64 PNG).
 4. File is cached under `userData/images/`; optionally written into the bound workspace folder.
 5. An assistant message with `[[MA_IMAGE]]…[[/MA_IMAGE]]` metadata is stored for preview / download / save.
 
@@ -150,14 +161,15 @@ MultiAgent/
 
 ### Settings (`electron-store`)
 
-| Key          | Default                         | Purpose                                                                       |
-| ------------ | ------------------------------- | ----------------------------------------------------------------------------- |
-| `baseUrl`    | `http://localhost:13305/api/v1` | Lemonade API base                                                             |
-| `apiKey`     | `lemonade`                      | Required by OpenAI client; unused by server                                   |
-| `model`      | `""`                            | Fallback chat/orchestrator model for conversations that haven't set their own |
-| `imageModel` | `""`                            | Fallback image model for image sessions that haven't set their own            |
-| `maxHistory` | `40`                            | Max messages sent as history                                                  |
-| `theme`      | `light`                         | UI theme (`light` \| `dark`), toggled in Settings                             |
+| Key            | Default                         | Purpose                                                                       |
+| -------------- | ------------------------------- | ----------------------------------------------------------------------------- |
+| `providerType` | `openai`                        | `'openai'` (any OpenAI-compatible server) or `'ollama'` (native Ollama)       |
+| `baseUrl`      | `http://localhost:13305/api/v1` | Server API base (`http://localhost:11434` default for Ollama)                 |
+| `apiKey`       | `lemonade`                      | Required by the OpenAI client; unused by Lemonade/Ollama                      |
+| `model`        | `""`                            | Fallback chat/orchestrator model for conversations that haven't set their own |
+| `imageModel`   | `""`                            | Fallback image model for image sessions that haven't set their own            |
+| `maxHistory`   | `40`                            | Max messages sent as history                                                  |
+| `theme`        | `light`                         | UI theme (`light` \| `dark`), toggled in Settings                             |
 
 Path: `%APPDATA%/MultiAgent/config.json`
 
@@ -185,7 +197,7 @@ Path: `%APPDATA%/MultiAgent/chats.db`
 | Channel                                   | Direction | Purpose                                               |
 | ----------------------------------------- | --------- | ----------------------------------------------------- |
 | `settings:get` / `settings:set`           | invoke    | Read/update app settings                              |
-| `models:list`                             | invoke    | List Lemonade models                                  |
+| `models:list`                             | invoke    | List models from the active provider                  |
 | `health:check`                            | invoke    | Ping `/models`                                        |
 | `personas:list`                           | invoke    | Built-in personas                                     |
 | `chat:send` / `chat:cancel`               | invoke    | Start / abort completion                              |
@@ -370,15 +382,15 @@ Installer options (see `package.json` → `build.nsis`):
 
 ## 9. Troubleshooting
 
-| Symptom                  | Likely cause                         | What to try                                      |
-| ------------------------ | ------------------------------------ | ------------------------------------------------ |
-| Badge offline            | Lemonade not running / wrong URL     | Start Lemonade; check Settings base URL          |
-| Empty model list         | Server up but no models              | `lemonade pull` / `lemonade run` a model         |
-| Chat works, images fail  | Chat model selected as image model   | Load an image model; pick it in Image Generator  |
-| Generate button disabled | No prompt or no image model          | Enter prompt; select model                       |
-| Save to folder disabled  | Session wasn't created from a folder | Open the folder, right-click it → New image/chat |
-| Tool / write errors      | Path outside workspace or ignored    | Stay under the bound folder; avoid `..`          |
-| `node` not found         | Node not on PATH                     | Install Node LTS or add it to user PATH          |
+| Symptom                  | Likely cause                                         | What to try                                                 |
+| ------------------------ | ---------------------------------------------------- | ----------------------------------------------------------- |
+| Badge offline            | Server not running / wrong URL / wrong provider type | Start the server; check Settings base URL and provider type |
+| Empty model list         | Server up but no models                              | `lemonade pull` / `lemonade run` a model                    |
+| Chat works, images fail  | Chat model selected as image model                   | Load an image model; pick it in Image Generator             |
+| Generate button disabled | No prompt or no image model                          | Enter prompt; select model                                  |
+| Save to folder disabled  | Session wasn't created from a folder                 | Open the folder, right-click it → New image/chat            |
+| Tool / write errors      | Path outside workspace or ignored                    | Stay under the bound folder; avoid `..`                     |
+| `node` not found         | Node not on PATH                                     | Install Node LTS or add it to user PATH                     |
 
 ### Useful paths
 

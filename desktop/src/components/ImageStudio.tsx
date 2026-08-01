@@ -33,7 +33,10 @@ export function ImageStudio() {
   const hasFolder = Boolean(active?.workspacePath);
   const models = imageModels();
   const activeModel = active?.model ?? settings?.imageModel ?? '';
-  const canGenerate = Boolean(prompt.trim() && (activeModel || models[0]));
+  const providerSupportsImages = settings?.providerType !== 'ollama';
+  const canGenerate = Boolean(
+    providerSupportsImages && prompt.trim() && (activeModel || models[0]),
+  );
 
   const imageMessages = useMemo(
     () => messages.filter((message) => parseImageMessage(message.content)),
@@ -181,13 +184,20 @@ export function ImageStudio() {
 
           {error ? <div className="error-banner image-studio-error">{error}</div> : null}
 
+          {!providerSupportsImages ? (
+            <div className="error-banner image-studio-error">
+              Image generation isn't available with the Ollama provider (no image-generation
+              endpoint). Switch to an OpenAI-compatible provider in Settings to use this feature.
+            </div>
+          ) : null}
+
           <div className="image-prompt-shell">
             <textarea
               value={prompt}
               onChange={(event) => setPrompt(event.target.value)}
               onKeyDown={onKeyDown}
               placeholder="Describe the image you want to generate..."
-              disabled={generatingImage}
+              disabled={generatingImage || !providerSupportsImages}
             />
             <div className="image-prompt-toolbar">
               <div className="image-prompt-actions image-prompt-actions-end">

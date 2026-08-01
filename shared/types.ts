@@ -43,6 +43,8 @@ export type FolderEntry = {
 
 export type ThemeMode = 'light' | 'dark';
 
+export type ProviderType = 'openai' | 'ollama';
+
 export type AppSettings = {
   baseUrl: string;
   apiKey: string;
@@ -50,6 +52,7 @@ export type AppSettings = {
   imageModel: string;
   maxHistory: number;
   theme: ThemeMode;
+  providerType: ProviderType;
 };
 
 export type HealthStatus = {
@@ -85,7 +88,13 @@ export type ChatDoneEvent = {
 export type ChatErrorEvent = {
   conversationId: string;
   messageId: string;
-  code: 'server_unreachable' | 'model_not_loaded' | 'context_exceeded' | 'cancelled' | 'unknown';
+  code:
+    | 'server_unreachable'
+    | 'model_not_loaded'
+    | 'context_exceeded'
+    | 'unsupported'
+    | 'cancelled'
+    | 'unknown';
   message: string;
 };
 

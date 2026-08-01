@@ -1,5 +1,9 @@
 import { useEffect, useState } from 'react';
+import type { ProviderType } from '../../../shared/types';
 import { useSettingsStore } from '../store/settingsStore';
+
+const OPENAI_DEFAULT_URL = 'http://localhost:13305/api/v1';
+const OLLAMA_DEFAULT_URL = 'http://localhost:11434';
 
 export function SettingsModal() {
   const open = useSettingsStore((state) => state.settingsOpen);
@@ -9,6 +13,7 @@ export function SettingsModal() {
   const theme = useSettingsStore((state) => state.settings?.theme ?? 'light');
   const setTheme = useSettingsStore((state) => state.setTheme);
 
+  const [providerType, setProviderType] = useState<ProviderType>('openai');
   const [baseUrl, setBaseUrl] = useState('');
   const [apiKey, setApiKey] = useState('');
   const [maxHistory, setMaxHistory] = useState(40);
@@ -16,6 +21,7 @@ export function SettingsModal() {
 
   useEffect(() => {
     if (open && settings) {
+      setProviderType(settings.providerType);
       setBaseUrl(settings.baseUrl);
       setApiKey(settings.apiKey);
       setMaxHistory(settings.maxHistory);
@@ -24,10 +30,23 @@ export function SettingsModal() {
 
   if (!open) return null;
 
+  const onProviderTypeChange = (next: ProviderType) => {
+    setProviderType(next);
+    // Nudge the base URL to that provider's usual default, but only if the
+    // field still holds the *other* provider's default untouched - never
+    // clobber a URL the user actually typed.
+    if (next === 'ollama' && baseUrl === OPENAI_DEFAULT_URL) {
+      setBaseUrl(OLLAMA_DEFAULT_URL);
+    } else if (next === 'openai' && baseUrl === OLLAMA_DEFAULT_URL) {
+      setBaseUrl(OPENAI_DEFAULT_URL);
+    }
+  };
+
   const onSave = async () => {
     setSaving(true);
     try {
       await updateSettings({
+        providerType,
         baseUrl: baseUrl.trim().replace(/\/$/, ''),
         apiKey: apiKey.trim() || 'lemonade',
         maxHistory: Math.max(1, Number(maxHistory) || 40),
@@ -43,29 +62,45 @@ export function SettingsModal() {
       <div className="modal" onClick={(event) => event.stopPropagation()}>
         <h2>Settings</h2>
         <p className="hint">
-          Point the app at your local Lemonade Server. Default base URL is{' '}
-          <code>http://localhost:13305/api/v1</code>. The API key is required by the OpenAI client
-          but unused by Lemonade.
+          Connect to a local Lemonade Server, another OpenAI-compatible server (LM Studio, vLLM,
+          NoLlama, ...), or a native Ollama server. Chat and image models are chosen in the top bar.
         </p>
         <div className="modal-grid">
           <div className="field">
-            <label htmlFor="baseUrl">Lemonade base URL</label>
+            <label htmlFor="providerType">Server type</label>
+            <select
+              id="providerType"
+              className="select"
+              value={providerType}
+              onChange={(event) => onProviderTypeChange(event.target.value as ProviderType)}
+            >
+              <option value="openai">OpenAI-compatible (Lemonade, NoLlama, LM Studio, ...)</option>
+              <option value="ollama">Ollama</option>
+            </select>
+          </div>
+          <div className="field">
+            <label htmlFor="baseUrl">
+              {providerType === 'ollama' ? 'Ollama base URL' : 'Server base URL'}
+            </label>
             <input
               id="baseUrl"
               className="text-input"
               value={baseUrl}
+              placeholder={providerType === 'ollama' ? OLLAMA_DEFAULT_URL : OPENAI_DEFAULT_URL}
               onChange={(event) => setBaseUrl(event.target.value)}
             />
           </div>
-          <div className="field">
-            <label htmlFor="apiKey">API key stub</label>
-            <input
-              id="apiKey"
-              className="text-input"
-              value={apiKey}
-              onChange={(event) => setApiKey(event.target.value)}
-            />
-          </div>
+          {providerType === 'openai' ? (
+            <div className="field">
+              <label htmlFor="apiKey">API key stub</label>
+              <input
+                id="apiKey"
+                className="text-input"
+                value={apiKey}
+                onChange={(event) => setApiKey(event.target.value)}
+              />
+            </div>
+          ) : null}
           <div className="field">
             <label htmlFor="maxHistory">Max history messages</label>
             <input
@@ -91,8 +126,9 @@ export function SettingsModal() {
             </label>
           </div>
           <p className="hint">
-            Chat model and image model are chosen in the top bar. Image models use Lemonade{' '}
-            <code>/images/generations</code>.
+            {providerType === 'ollama'
+              ? 'Ollama has no image-generation endpoint, so image sessions are disabled for this provider.'
+              : 'Image models use the /images/generations endpoint.'}
           </p>
         </div>
         <div className="modal-actions">

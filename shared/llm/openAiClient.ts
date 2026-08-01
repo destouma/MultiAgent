@@ -3,16 +3,14 @@ import type {
   ChatCompletionMessageParam,
   ChatCompletionTool,
 } from 'openai/resources/chat/completions';
-import type { AppErrorCode, AppSettings, HealthStatus, ModelInfo } from '../../../shared/types';
-
-export type ChatCompletionResult = {
-  content: string;
-  toolCalls: Array<{
-    id: string;
-    name: string;
-    arguments: string;
-  }>;
-};
+import type { HealthStatus, ModelInfo } from '../types';
+import {
+  ProviderError,
+  type ChatCompletionResult,
+  type GenerateImageInput,
+  type LlmClient,
+  type ProviderSettings,
+} from './types';
 
 type LemonadeHealthResponse = {
   status?: string;
@@ -25,20 +23,10 @@ type LemonadeHealthResponse = {
 const MODEL_LOAD_TIMEOUT_MS = 10 * 60 * 1000;
 const MODEL_POLL_INTERVAL_MS = 1500;
 
-export class LemonadeError extends Error {
-  code: AppErrorCode;
-
-  constructor(code: AppErrorCode, message: string) {
-    super(message);
-    this.name = 'LemonadeError';
-    this.code = code;
-  }
-}
-
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
-      reject(new LemonadeError('cancelled', 'Generation cancelled'));
+      reject(new ProviderError('cancelled', 'Generation cancelled'));
       return;
     }
     const timer = setTimeout(() => {
@@ -47,30 +35,42 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
     }, ms);
     const onAbort = () => {
       clearTimeout(timer);
-      reject(new LemonadeError('cancelled', 'Generation cancelled'));
+      reject(new ProviderError('cancelled', 'Generation cancelled'));
     };
     signal?.addEventListener('abort', onAbort, { once: true });
   });
 }
 
-export class LemonadeClient {
+/**
+ * Client for any OpenAI-compatible server: Lemonade, NoLlama (port 8000),
+ * LM Studio, vLLM, real OpenAI, etc. Lemonade additionally exposes a
+ * non-standard /health + /load extension for explicit model preloading;
+ * that's used opportunistically when present, but every other part of this
+ * client only relies on the standard /v1 surface so it works against any
+ * of them.
+ */
+export class OpenAiClient implements LlmClient {
   private client: OpenAI;
-  private settings: AppSettings;
+  private settings: ProviderSettings;
 
-  constructor(settings: AppSettings) {
+  constructor(settings: ProviderSettings) {
     this.settings = settings;
     this.client = this.createClient(settings);
   }
 
-  updateSettings(settings: AppSettings): void {
+  updateSettings(settings: ProviderSettings): void {
     this.settings = settings;
     this.client = this.createClient(settings);
   }
 
-  private createClient(settings: AppSettings): OpenAI {
+  supportsImageGeneration(): boolean {
+    return true;
+  }
+
+  private createClient(settings: ProviderSettings): OpenAI {
     return new OpenAI({
       baseURL: settings.baseUrl.replace(/\/$/, ''),
-      apiKey: settings.apiKey || 'lemonade',
+      apiKey: settings.apiKey || 'unused',
       dangerouslyAllowBrowser: false,
     });
   }
@@ -82,7 +82,7 @@ export class LemonadeClient {
   private authHeaders(): Record<string, string> {
     return {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${this.settings.apiKey || 'lemonade'}`,
+      Authorization: `Bearer ${this.settings.apiKey || 'unused'}`,
     };
   }
 
@@ -92,7 +92,7 @@ export class LemonadeClient {
       await this.client.models.list();
       return {
         ok: true,
-        message: 'Connected to Lemonade',
+        message: 'Connected',
         latencyMs: Date.now() - started,
       };
     } catch (error) {
@@ -116,38 +116,28 @@ export class LemonadeClient {
     }
   }
 
-  async getServerHealth(signal?: AbortSignal): Promise<LemonadeHealthResponse> {
+  /** Returns null if the server doesn't expose Lemonade's /health extension at all. */
+  private async tryGetServerHealth(signal?: AbortSignal): Promise<LemonadeHealthResponse | null> {
     try {
       const response = await fetch(`${this.apiBase()}/health`, {
         method: 'GET',
         headers: this.authHeaders(),
         signal,
       });
-      if (!response.ok) {
-        const text = await response.text();
-        throw new LemonadeError(
-          'server_unreachable',
-          `Health check failed (${response.status}): ${text || 'no details'}`,
-        );
-      }
+      if (!response.ok) return null;
       return (await response.json()) as LemonadeHealthResponse;
-    } catch (error) {
-      throw this.mapError(error);
+    } catch {
+      return null;
     }
   }
 
   async listLoadedModelNames(signal?: AbortSignal): Promise<string[]> {
-    const health = await this.getServerHealth(signal);
-    const names = (health.all_models_loaded ?? [])
+    const health = await this.tryGetServerHealth(signal);
+    if (!health?.all_models_loaded) return [];
+    const names = health.all_models_loaded
       .map((entry) => (entry.model_name || '').trim())
       .filter(Boolean);
     return [...new Set(names)];
-  }
-
-  async isModelLoaded(model: string, signal?: AbortSignal): Promise<boolean> {
-    const loaded = await this.listLoadedModelNames(signal);
-    const target = model.trim().toLowerCase();
-    return loaded.some((name) => name.toLowerCase() === target);
   }
 
   async loadModel(model: string, signal?: AbortSignal): Promise<void> {
@@ -160,7 +150,7 @@ export class LemonadeClient {
       });
       if (!response.ok) {
         const text = await response.text();
-        throw new LemonadeError(
+        throw new ProviderError(
           'model_not_loaded',
           `Failed to load model "${model}" (${response.status}): ${text || 'no details'}`,
         );
@@ -171,8 +161,12 @@ export class LemonadeClient {
   }
 
   /**
-   * Ensure a model is loaded in Lemonade before inference.
-   * Checks /health; if missing, POSTs /load and polls until ready (or timeout).
+   * Ensure a model is loaded before inference. Lemonade needs an explicit
+   * /load call and polling; most other OpenAI-compatible servers (NoLlama,
+   * LM Studio, vLLM, real OpenAI...) manage loading themselves and don't
+   * expose that extension at all, in which case this is a no-op and the
+   * chat call itself will surface a clear error if the model truly isn't
+   * available.
    */
   async ensureModelLoaded(
     model: string,
@@ -183,13 +177,22 @@ export class LemonadeClient {
   ): Promise<void> {
     const name = model.trim();
     if (!name) {
-      throw new LemonadeError('model_not_loaded', 'No model selected.');
+      throw new ProviderError('model_not_loaded', 'No model selected.');
     }
 
     const signal = options?.signal;
     options?.onStatus?.(`Checking if ${name} is loaded…`);
 
-    if (await this.isModelLoaded(name, signal)) {
+    const health = await this.tryGetServerHealth(signal);
+    if (!health?.all_models_loaded) {
+      options?.onStatus?.(`${name} ready`);
+      return;
+    }
+
+    const isLoaded = (names: string[]) =>
+      names.some((entry) => entry.toLowerCase() === name.toLowerCase());
+
+    if (isLoaded(await this.listLoadedModelNames(signal))) {
       options?.onStatus?.(`${name} is ready`);
       return;
     }
@@ -197,7 +200,7 @@ export class LemonadeClient {
     options?.onStatus?.(`Loading ${name}…`);
     await this.loadModel(name, signal);
 
-    if (await this.isModelLoaded(name, signal)) {
+    if (isLoaded(await this.listLoadedModelNames(signal))) {
       options?.onStatus?.(`${name} is ready`);
       return;
     }
@@ -205,19 +208,19 @@ export class LemonadeClient {
     const deadline = Date.now() + MODEL_LOAD_TIMEOUT_MS;
     while (Date.now() < deadline) {
       if (signal?.aborted) {
-        throw new LemonadeError('cancelled', 'Generation cancelled');
+        throw new ProviderError('cancelled', 'Generation cancelled');
       }
       options?.onStatus?.(`Waiting for ${name} to become available…`);
       await sleep(MODEL_POLL_INTERVAL_MS, signal);
-      if (await this.isModelLoaded(name, signal)) {
+      if (isLoaded(await this.listLoadedModelNames(signal))) {
         options?.onStatus?.(`${name} is ready`);
         return;
       }
     }
 
-    throw new LemonadeError(
+    throw new ProviderError(
       'model_not_loaded',
-      `Timed out waiting for model "${name}" to load. Check Lemonade and try again.`,
+      `Timed out waiting for model "${name}" to load. Check the server and try again.`,
     );
   }
 
@@ -238,7 +241,7 @@ export class LemonadeClient {
 
       for await (const chunk of stream) {
         if (signal?.aborted) {
-          throw new LemonadeError('cancelled', 'Generation cancelled');
+          throw new ProviderError('cancelled', 'Generation cancelled');
         }
         const delta = chunk.choices[0]?.delta?.content;
         if (delta) {
@@ -295,15 +298,7 @@ export class LemonadeClient {
     }
   }
 
-  async generateImage(input: {
-    prompt: string;
-    model: string;
-    size?: string;
-    steps?: number;
-    cfgScale?: number;
-    seed?: number;
-    signal?: AbortSignal;
-  }): Promise<string> {
+  async generateImage(input: GenerateImageInput): Promise<string> {
     try {
       return await this.generateImageRaw(input);
     } catch (rawError) {
@@ -329,15 +324,7 @@ export class LemonadeClient {
     }
   }
 
-  private async generateImageRaw(input: {
-    prompt: string;
-    model: string;
-    size?: string;
-    steps?: number;
-    cfgScale?: number;
-    seed?: number;
-    signal?: AbortSignal;
-  }): Promise<string> {
+  private async generateImageRaw(input: GenerateImageInput): Promise<string> {
     const body: Record<string, unknown> = {
       model: input.model,
       prompt: input.prompt,
@@ -363,7 +350,7 @@ export class LemonadeClient {
 
     if (!response.ok) {
       const text = await response.text();
-      throw new LemonadeError(
+      throw new ProviderError(
         'unknown',
         `Image API error (${response.status}): ${text || 'no details'}. ` +
           'Load an image model on the local server and select it in the model menu.',
@@ -375,18 +362,18 @@ export class LemonadeClient {
     };
     const b64 = json.data?.[0]?.b64_json;
     if (!b64) {
-      throw new LemonadeError('unknown', 'Image generation returned no image data');
+      throw new ProviderError('unknown', 'Image generation returned no image data');
     }
     return b64;
   }
 
-  private mapError(error: unknown): LemonadeError {
-    if (error instanceof LemonadeError) {
+  private mapError(error: unknown): ProviderError {
+    if (error instanceof ProviderError) {
       return error;
     }
 
     if (error instanceof Error && error.name === 'AbortError') {
-      return new LemonadeError('cancelled', 'Generation cancelled');
+      return new ProviderError('cancelled', 'Generation cancelled');
     }
 
     const message = error instanceof Error ? error.message : String(error);
@@ -400,16 +387,13 @@ export class LemonadeClient {
       lower.includes('timed out') ||
       lower.includes('connection')
     ) {
-      return new LemonadeError(
-        'server_unreachable',
-        'Cannot reach Lemonade Server. Is it running?',
-      );
+      return new ProviderError('server_unreachable', 'Cannot reach the server. Is it running?');
     }
 
     if (lower.includes('model') && (lower.includes('not found') || lower.includes('load'))) {
-      return new LemonadeError(
+      return new ProviderError(
         'model_not_loaded',
-        'Model is not available. Pull or load it in Lemonade, then retry.',
+        'Model is not available. Pull or load it on the server, then retry.',
       );
     }
 
@@ -417,13 +401,13 @@ export class LemonadeClient {
       (lower.includes('context size') || lower.includes('context length')) &&
       (lower.includes('exceed') || lower.includes('too long') || lower.includes('too large'))
     ) {
-      return new LemonadeError(
+      return new ProviderError(
         'context_exceeded',
-        `${message} In MultiAgent: lower "Max history messages" in Settings, ask about a smaller ` +
-          'part of a bound workspace folder, or load this model with a larger context window in Lemonade.',
+        `${message} Lower "Max history messages" in Settings, ask about a smaller part of a ` +
+          'bound workspace folder, or load this model with a larger context window on the server.',
       );
     }
 
-    return new LemonadeError('unknown', message || 'Unexpected Lemonade error');
+    return new ProviderError('unknown', message || 'Unexpected provider error');
   }
 }

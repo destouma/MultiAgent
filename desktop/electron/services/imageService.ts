@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { GeneratedImageInfo, GenerateImageRequest } from '../../../shared/types';
-import { LemonadeClient, LemonadeError } from './lemonadeClient';
+import { ProviderError, type LlmClient } from '../../../shared/llm/types';
 import { WorkspaceError, WorkspaceService } from './workspaceService';
 import { emitModelStatus } from './modelStatus';
 
@@ -11,7 +11,7 @@ export class ImageService {
   private workspace = new WorkspaceService();
 
   constructor(
-    private lemonade: LemonadeClient,
+    private getClient: () => LlmClient,
     private getImageModel: () => string,
     private getWindow: () => BrowserWindow | null,
   ) {}
@@ -31,20 +31,28 @@ export class ImageService {
     request: GenerateImageRequest,
     workspaceRoot: string | null,
   ): Promise<GeneratedImageInfo> {
+    const client = this.getClient();
+    if (!client.supportsImageGeneration()) {
+      throw new ProviderError(
+        'unsupported',
+        'The current provider does not support image generation. Switch to an OpenAI-compatible provider in Settings to use this feature.',
+      );
+    }
+
     const model = request.model || this.getImageModel();
     if (!model) {
-      throw new LemonadeError(
+      throw new ProviderError(
         'model_not_loaded',
         'No image model selected. Choose an image model in the generator.',
       );
     }
 
-    await this.lemonade.ensureModelLoaded(model, {
+    await client.ensureModelLoaded(model, {
       onStatus: (message) => emitModelStatus(this.getWindow, model, message),
     });
 
     const size = request.size || '512x512';
-    const b64 = await this.lemonade.generateImage({
+    const b64 = await client.generateImage({
       prompt: request.prompt,
       model,
       size,
@@ -80,7 +88,7 @@ export class ImageService {
   getDataUrl(fileName: string): string {
     const absolute = this.absolutePath(fileName);
     if (!fs.existsSync(absolute)) {
-      throw new LemonadeError('unknown', 'Image file not found');
+      throw new ProviderError('unknown', 'Image file not found');
     }
     const buffer = fs.readFileSync(absolute);
     return `data:image/png;base64,${buffer.toString('base64')}`;
@@ -89,7 +97,7 @@ export class ImageService {
   async download(fileName: string, defaultName?: string): Promise<string | null> {
     const absolute = this.absolutePath(fileName);
     if (!fs.existsSync(absolute)) {
-      throw new LemonadeError('unknown', 'Image file not found');
+      throw new ProviderError('unknown', 'Image file not found');
     }
 
     const win = this.getWindow();
@@ -113,7 +121,7 @@ export class ImageService {
   saveToWorkspace(fileName: string, workspaceRoot: string, relativePath?: string): string {
     const absolute = this.absolutePath(fileName);
     if (!fs.existsSync(absolute)) {
-      throw new LemonadeError('unknown', 'Image file not found');
+      throw new ProviderError('unknown', 'Image file not found');
     }
     const buffer = fs.readFileSync(absolute);
     const rel = relativePath?.trim() || `images/${path.basename(fileName)}`;

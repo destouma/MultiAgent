@@ -15,7 +15,7 @@ import type {
   Persona,
   WorkspaceOpEvent,
 } from '../../../shared/types';
-import { LemonadeClient, LemonadeError } from './lemonadeClient';
+import { ProviderError, type LlmClient } from '../../../shared/llm/types';
 import { ConversationStore } from './conversationStore';
 import { PersonaRegistry } from './personaRegistry';
 import { emitModelStatus } from './modelStatus';
@@ -38,7 +38,7 @@ export class OrchestratorService {
   private workspace = new WorkspaceService();
 
   constructor(
-    private lemonade: LemonadeClient,
+    private getClient: () => LlmClient,
     private store: ConversationStore,
     private personas: PersonaRegistry,
     private getSettings: () => AppSettings,
@@ -55,7 +55,7 @@ export class OrchestratorService {
 
     const conversation = this.store.getConversation(request.conversationId);
     if (!conversation) {
-      throw new LemonadeError('unknown', 'Conversation not found');
+      throw new ProviderError('unknown', 'Conversation not found');
     }
 
     const settings = this.getSettings();
@@ -64,7 +64,7 @@ export class OrchestratorService {
     const model = orchestrator.defaultModel || conversation.model || settings.model;
 
     if (!model) {
-      throw new LemonadeError(
+      throw new ProviderError(
         'model_not_loaded',
         'No model selected. Choose a model in the top bar or Settings.',
       );
@@ -85,7 +85,7 @@ export class OrchestratorService {
     let fullContent = '';
 
     try {
-      await this.lemonade.ensureModelLoaded(model, {
+      await this.getClient().ensureModelLoaded(model, {
         signal,
         onStatus: (message) => emitModelStatus(this.getWindow, model, message),
       });
@@ -136,7 +136,7 @@ export class OrchestratorService {
 
       for (const specialistId of plan.specialists) {
         if (signal.aborted) {
-          throw new LemonadeError('cancelled', 'Generation cancelled');
+          throw new ProviderError('cancelled', 'Generation cancelled');
         }
 
         const persona = this.personas.get(specialistId);
@@ -218,9 +218,9 @@ export class OrchestratorService {
       return { userMessageId: userMessage.id, assistantMessageId };
     } catch (error) {
       const mapped =
-        error instanceof LemonadeError
+        error instanceof ProviderError
           ? error
-          : new LemonadeError('unknown', error instanceof Error ? error.message : String(error));
+          : new ProviderError('unknown', error instanceof Error ? error.message : String(error));
 
       if (mapped.code !== 'cancelled' && fullContent) {
         this.store.addMessage({
@@ -302,7 +302,7 @@ export class OrchestratorService {
       },
     ];
 
-    const completion = await this.lemonade.completeChat(messages, input.model, {
+    const completion = await this.getClient().completeChat(messages, input.model, {
       signal: input.signal,
     });
     return parsePlan(completion.content || '', SPECIALIST_IDS);
@@ -352,13 +352,13 @@ export class OrchestratorService {
       },
     ];
 
-    await this.lemonade.ensureModelLoaded(specialistModel, {
+    await this.getClient().ensureModelLoaded(specialistModel, {
       signal: input.signal,
       onStatus: (message) => emitModelStatus(this.getWindow, specialistModel, message),
     });
 
     if (!input.workspacePath) {
-      const completion = await this.lemonade.completeChat(messages, specialistModel, {
+      const completion = await this.getClient().completeChat(messages, specialistModel, {
         signal: input.signal,
       });
       const content = (completion.content || '').trim();
@@ -390,19 +390,19 @@ export class OrchestratorService {
 
     for (let round = 0; round < MAX_SPECIALIST_TOOL_ROUNDS; round += 1) {
       if (input.signal.aborted) {
-        throw new LemonadeError('cancelled', 'Generation cancelled');
+        throw new ProviderError('cancelled', 'Generation cancelled');
       }
 
       let completion;
       try {
-        completion = await this.lemonade.completeChat(messages, input.model, {
+        completion = await this.getClient().completeChat(messages, input.model, {
           tools: toolsEnabled ? readOnlyWorkspaceTools : undefined,
           signal: input.signal,
         });
       } catch (error) {
         if (toolsEnabled) {
           toolsEnabled = false;
-          completion = await this.lemonade.completeChat(messages, input.model, {
+          completion = await this.getClient().completeChat(messages, input.model, {
             signal: input.signal,
           });
         } else {
@@ -554,7 +554,7 @@ export class OrchestratorService {
     ];
 
     let full = '';
-    for await (const delta of this.lemonade.streamChat(messages, input.model, input.signal)) {
+    for await (const delta of this.getClient().streamChat(messages, input.model, input.signal)) {
       full += delta;
       this.emitToken(input.conversationId, input.messageId, delta);
     }

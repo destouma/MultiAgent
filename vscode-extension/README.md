@@ -1,13 +1,13 @@
 # MultiAgent for VS Code
 
-Multi-agent chat over a local [Lemonade Server](https://github.com/lemonade-sdk/lemonade), in the editor sidebar.
+Multi-agent chat over a local LLM server, in the editor sidebar. Connects to [Lemonade](https://github.com/lemonade-sdk/lemonade) (default), any other OpenAI-compatible server (NoLlama, LM Studio, vLLM, ...), or a native Ollama server, switchable via `multiagent.providerType`.
 
 This is the VS Code client. It shares persona definitions (`../personas/`) and message types (`../shared/types.ts`) with [`../desktop/`](../desktop) — see the repo root [README.md](../README.md).
 
 ## v1 scope
 
 - Sidebar chat view (activity bar → MultiAgent)
-- Streaming chat over Lemonade's OpenAI-compatible API
+- Streaming chat over an OpenAI-compatible or native Ollama server
 - Persona switching (system prompt only)
 - Conversation history persisted per-workspace, single conversation
 
@@ -27,15 +27,28 @@ Press **F5** ("Run MultiAgent Extension") to launch an Extension Development Hos
 
 Settings → search "MultiAgent":
 
-| Setting                 | Default                         |
-| ----------------------- | ------------------------------- |
-| `multiagent.baseUrl`    | `http://localhost:13305/api/v1` |
-| `multiagent.apiKey`     | `lemonade`                      |
-| `multiagent.model`      | _(empty — must be set)_         |
-| `multiagent.maxHistory` | `40`                            |
+| Setting                   | Default                         |
+| ------------------------- | ------------------------------- |
+| `multiagent.providerType` | `lemonade`                      |
+| `multiagent.baseUrl`      | `http://localhost:13305/api/v1` |
+| `multiagent.apiKey`       | `local-llm`                     |
+| `multiagent.model`        | _(empty — must be set)_         |
+| `multiagent.maxHistory`   | `40`                            |
 
-Requires [Lemonade Server](https://lemonade-server.ai/) running locally with a chat model loaded.
+Requires a local server running with a chat model loaded — [Lemonade Server](https://lemonade-server.ai/) by default, or set `multiagent.providerType` to `openai` for any other OpenAI-compatible server, or `ollama` with `multiagent.baseUrl` pointed at your Ollama instance (default `http://localhost:11434`).
 
-## Known limitation
+## Package
 
-Personas are read from `../personas/` at the extension's install path, which only resolves correctly when running from this repo checkout (dev / F5). Packaging as a `.vsix` (`vsce package`) needs a build step that copies `personas/` into `vscode-extension/personas` first, since a vsix can't include files from outside its own directory — not yet wired up.
+```bash
+cd vscode-extension
+npm install
+npm run package
+```
+
+Produces `multiagent-vscode-<version>.vsix`. `esbuild.js` copies the repo-root `personas/*.json` into `vscode-extension/personas/` as part of the build (a `.vsix` can only contain files from inside its own directory, so this is what makes personas resolve once installed, not just when running from this repo checkout via F5). Install it with:
+
+```bash
+code --install-extension multiagent-vscode-<version>.vsix
+```
+
+or via "Install from VSIX..." in the Extensions view. No publisher account or marketplace listing needed for this — `npm run package` / manual install is enough for private or personal use. Publishing to the VS Marketplace or Open VSX is a separate step (`vsce publish` / `ovsx publish`) that additionally needs a registered publisher account.

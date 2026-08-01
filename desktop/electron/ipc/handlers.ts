@@ -6,16 +6,18 @@ import type {
   GenerateImageRequest,
 } from '../../../shared/types';
 import { encodeImageMessage } from '../../../shared/types';
-import { getSettings, setSettings } from '../config';
+import { createLlmClient } from '../../../shared/llm/createLlmClient';
+import { ProviderError, type LlmClient } from '../../../shared/llm/types';
+import { ensureDefaultServer, getSettings, setSettings } from '../config';
 import { ChatService } from '../services/chatService';
 import { ConversationStore } from '../services/conversationStore';
 import { ImageService } from '../services/imageService';
-import { LemonadeClient, LemonadeError } from '../services/lemonadeClient';
 import { PersonaRegistry } from '../services/personaRegistry';
 import { IpcChannels } from './channels';
 
 export type AppServices = {
-  lemonade: LemonadeClient;
+  getClient: () => LlmClient;
+  setClient: (next: LlmClient) => void;
   store: ConversationStore;
   personas: PersonaRegistry;
   chat: ChatService;
@@ -23,42 +25,79 @@ export type AppServices = {
 };
 
 export async function createServices(getWindow: () => BrowserWindow | null): Promise<AppServices> {
-  const settings = getSettings();
-  const lemonade = new LemonadeClient(settings);
+  const settings = ensureDefaultServer();
+  let client = createLlmClient(settings.providerType, settings);
+  const getClient = () => client;
+  const setClient = (next: LlmClient) => {
+    client = next;
+  };
+
   const store = new ConversationStore();
   await store.ensureReady();
   const personas = new PersonaRegistry();
   personas.load();
-  const images = new ImageService(lemonade, () => getSettings().imageModel, getWindow);
+  const images = new ImageService(getClient, () => getSettings().imageModel, getWindow);
 
-  const chat = new ChatService(lemonade, store, personas, images, () => getSettings(), getWindow);
+  const chat = new ChatService(getClient, store, personas, images, () => getSettings(), getWindow);
 
-  return { lemonade, store, personas, chat, images };
+  return { getClient, setClient, store, personas, chat, images };
 }
 
 export function registerIpcHandlers(
   services: AppServices,
   getWindow: () => BrowserWindow | null,
 ): void {
-  const { lemonade, store, personas, chat, images } = services;
+  const { getClient, setClient, store, personas, chat, images } = services;
 
   ipcMain.handle(IpcChannels.settingsGet, () => getSettings());
 
   ipcMain.handle(IpcChannels.settingsSet, (_event, partial: Partial<AppSettings>) => {
     const next = setSettings(partial);
-    lemonade.updateSettings(next);
+    // Provider type or connection details may have changed; simplest and
+    // safest is to always build a fresh client rather than track exactly
+    // which fields changed.
+    setClient(createLlmClient(next.providerType, next));
     return next;
   });
 
   ipcMain.handle(IpcChannels.modelsList, async () => {
     try {
-      return await lemonade.listModels();
+      return await getClient().listModels();
     } catch (error) {
       throw serializeError(error);
     }
   });
 
-  ipcMain.handle(IpcChannels.healthCheck, async () => lemonade.checkHealth());
+  ipcMain.handle(IpcChannels.modelsLoaded, async () => {
+    try {
+      const names = await getClient().listLoadedModelNames();
+      return { names, supported: getClient().supportsLoadStatus() };
+    } catch (error) {
+      throw serializeError(error);
+    }
+  });
+
+  ipcMain.handle(IpcChannels.modelsLoad, async (_event, model: string) => {
+    try {
+      const win = getWindow();
+      await getClient().ensureModelLoaded(model, {
+        onStatus: (message) => {
+          const lower = message.toLowerCase();
+          const phase = lower.includes('ready')
+            ? 'ready'
+            : lower.includes('loading') || lower.includes('waiting')
+              ? 'loading'
+              : 'checking';
+          win?.webContents.send('model:status', { model, phase, message });
+        },
+      });
+      return true;
+    } catch (error) {
+      throw serializeError(error);
+    }
+  });
+
+  ipcMain.handle(IpcChannels.healthCheck, async () => getClient().checkHealth());
 
   ipcMain.handle(IpcChannels.personasList, () => personas.list());
 
@@ -110,11 +149,15 @@ export function registerIpcHandlers(
     return store.addFolder(selected);
   });
 
+  ipcMain.handle(IpcChannels.foldersRemove, (_event, folderPath: string) =>
+    store.removeFolder(folderPath),
+  );
+
   ipcMain.handle(IpcChannels.imagesGenerate, async (_event, request: GenerateImageRequest) => {
     try {
       const conversation = store.getConversation(request.conversationId);
       if (!conversation) {
-        throw new LemonadeError('unknown', 'Conversation not found');
+        throw new ProviderError('unknown', 'Conversation not found');
       }
 
       const info = await images.generate(
@@ -173,7 +216,7 @@ export function registerIpcHandlers(
       try {
         const conversation = store.getConversation(conversationId);
         if (!conversation?.workspacePath) {
-          throw new LemonadeError(
+          throw new ProviderError(
             'unknown',
             'This chat has no workspace folder. Create a new chat with a folder, or download the image instead.',
           );
@@ -202,7 +245,7 @@ async function pickFolderDialog(getWindow: () => BrowserWindow | null): Promise<
 }
 
 function serializeError(error: unknown): Error {
-  if (error instanceof LemonadeError) {
+  if (error instanceof ProviderError) {
     const err = new Error(error.message);
     err.name = error.code;
     return err;

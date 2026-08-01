@@ -7,16 +7,7 @@ import type {
   OrchestratorStepEvent,
   WorkspaceOpEvent,
 } from '../../../shared/types';
-
-// Electron prefixes errors thrown from ipcMain.handle with
-// "Error invoking remote method 'x': " before rejecting the invoke()
-// promise in the renderer. Strip it so error banners show the same
-// clean message regardless of whether they came from that rejection
-// or from a chat:error/workspace event.
-function cleanErrorMessage(error: unknown, fallback: string): string {
-  const message = error instanceof Error ? error.message : fallback;
-  return message.replace(/^Error invoking remote method '[^']*':\s*/, '');
-}
+import { cleanErrorMessage } from '../lib/errors';
 
 type ChatState = {
   conversations: Conversation[];
@@ -39,6 +30,7 @@ type ChatState = {
   bootstrap: () => Promise<void>;
   loadFolders: () => Promise<void>;
   openFolder: () => Promise<void>;
+  removeFolder: (folderPath: string) => Promise<void>;
   selectConversation: (id: string) => Promise<void>;
   createConversation: (
     workspacePath?: string | null,
@@ -120,6 +112,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
         ? state.folders
         : [...state.folders, folder],
     }));
+  },
+
+  removeFolder: async (folderPath) => {
+    await window.api.removeFolder(folderPath);
+    const [folders, conversations] = await Promise.all([
+      window.api.listFolders(),
+      window.api.listConversations(),
+    ]);
+    set({ folders, conversations });
   },
 
   selectConversation: async (id) => {

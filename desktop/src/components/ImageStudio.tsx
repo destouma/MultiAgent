@@ -26,7 +26,6 @@ export function ImageStudio() {
   const modelStatus = useChatStore((state) => state.modelStatus);
   const conversations = useChatStore((state) => state.conversations);
   const activeConversationId = useChatStore((state) => state.activeConversationId);
-  const setConversationModel = useChatStore((state) => state.setConversationModel);
   const settings = useSettingsStore((state) => state.settings);
   const imageModels = useSettingsStore((state) => state.imageModels);
 
@@ -34,7 +33,10 @@ export function ImageStudio() {
   const hasFolder = Boolean(active?.workspacePath);
   const models = imageModels();
   const activeModel = active?.model ?? settings?.imageModel ?? '';
-  const canGenerate = Boolean(prompt.trim() && (activeModel || models[0]));
+  const providerSupportsImages = settings?.providerType !== 'ollama';
+  const canGenerate = Boolean(
+    providerSupportsImages && prompt.trim() && (activeModel || models[0]),
+  );
 
   const imageMessages = useMemo(
     () => messages.filter((message) => parseImageMessage(message.content)),
@@ -182,31 +184,23 @@ export function ImageStudio() {
 
           {error ? <div className="error-banner image-studio-error">{error}</div> : null}
 
+          {!providerSupportsImages ? (
+            <div className="error-banner image-studio-error">
+              Image generation isn't available with the Ollama provider (no image-generation
+              endpoint). Switch to an OpenAI-compatible provider in Settings to use this feature.
+            </div>
+          ) : null}
+
           <div className="image-prompt-shell">
             <textarea
               value={prompt}
               onChange={(event) => setPrompt(event.target.value)}
               onKeyDown={onKeyDown}
               placeholder="Describe the image you want to generate..."
-              disabled={generatingImage}
+              disabled={generatingImage || !providerSupportsImages}
             />
             <div className="image-prompt-toolbar">
-              <select
-                className="image-model-chip"
-                value={activeModel}
-                onChange={(event) => void setConversationModel(event.target.value)}
-                disabled={generatingImage || !models.length}
-                title="Image model"
-              >
-                {!models.length && <option value="">No models</option>}
-                {models.map((model) => (
-                  <option key={model.id} value={model.id}>
-                    {model.id}
-                  </option>
-                ))}
-              </select>
-
-              <div className="image-prompt-actions">
+              <div className="image-prompt-actions image-prompt-actions-end">
                 <div className="image-menu-wrap">
                   <button
                     type="button"

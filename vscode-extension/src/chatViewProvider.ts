@@ -1,9 +1,13 @@
 import * as vscode from 'vscode';
 import { randomUUID } from 'node:crypto';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
-import type { ChatMessage, ModelInfo, Persona } from '../../shared/types';
-import { LemonadeClient, LemonadeError } from './lemonadeClient';
+import type { ChatMessage, ModelInfo, Persona, ProviderType } from '../../shared/types';
+import { createLlmClient } from '../../shared/llm/createLlmClient';
+import { ProviderError, type LlmClient, type ProviderSettings } from '../../shared/llm/types';
 import { loadPersonas } from './personaRegistry';
+
+const OPENAI_DEFAULT_URL = 'http://localhost:13305/api/v1';
+const OLLAMA_DEFAULT_URL = 'http://localhost:11434';
 
 type WebviewToExtensionMessage =
   | { type: 'ready' }
@@ -31,20 +35,23 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
   private view: vscode.WebviewView | undefined;
   private readonly personas: Persona[];
-  private readonly lemonade: LemonadeClient;
+  private client: LlmClient;
   private abortController: AbortController | null = null;
 
   constructor(private readonly context: vscode.ExtensionContext) {
     this.personas = loadPersonas(context.extensionUri);
-    this.lemonade = new LemonadeClient(this.readConnectionSettings());
+    this.client = createLlmClient(this.readProviderType(), this.readConnectionSettings());
 
     context.subscriptions.push(
       vscode.workspace.onDidChangeConfiguration((event) => {
         if (
+          event.affectsConfiguration('multiagent.providerType') ||
           event.affectsConfiguration('multiagent.baseUrl') ||
           event.affectsConfiguration('multiagent.apiKey')
         ) {
-          this.lemonade.updateSettings(this.readConnectionSettings());
+          // Provider type may have changed, so always build a fresh client
+          // rather than track exactly which field changed.
+          this.client = createLlmClient(this.readProviderType(), this.readConnectionSettings());
         }
         if (event.affectsConfiguration('multiagent.model')) {
           void this.postModels();
@@ -102,7 +109,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   }
 
   private async checkHealth(): Promise<void> {
-    const health = await this.lemonade.checkHealth();
+    const health = await this.client.checkHealth();
     this.post({ type: 'health', ok: health.ok, message: health.message });
   }
 
@@ -110,7 +117,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     const currentModel = vscode.workspace.getConfiguration('multiagent').get<string>('model', '');
     let models: ModelInfo[];
     try {
-      models = await this.lemonade.listModels();
+      models = await this.client.listModels();
     } catch {
       models = [];
     }
@@ -155,7 +162,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         type: 'error',
         messageId: assistantMessageId,
         message:
-          'No model configured. Set "multiagent.model" in Settings to a model loaded in Lemonade.',
+          'No model configured. Set "multiagent.model" in Settings to a model loaded on your local server.',
       });
       return;
     }
@@ -190,13 +197,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
     let fullContent = '';
     try {
-      await this.lemonade.ensureModelLoaded(model, { signal: controller.signal });
+      await this.client.ensureModelLoaded(model, { signal: controller.signal });
 
-      for await (const delta of this.lemonade.streamChat(
-        openaiMessages,
-        model,
-        controller.signal,
-      )) {
+      for await (const delta of this.client.streamChat(openaiMessages, model, controller.signal)) {
         fullContent += delta;
         this.post({ type: 'token', messageId: assistantMessageId, delta });
       }
@@ -218,9 +221,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       });
     } catch (error) {
       const mapped =
-        error instanceof LemonadeError
+        error instanceof ProviderError
           ? error
-          : new LemonadeError('unknown', error instanceof Error ? error.message : String(error));
+          : new ProviderError('unknown', error instanceof Error ? error.message : String(error));
 
       if (mapped.code !== 'cancelled') {
         this.post({ type: 'error', messageId: assistantMessageId, message: mapped.message });
@@ -233,11 +236,18 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     }
   }
 
-  private readConnectionSettings() {
+  private readProviderType(): ProviderType {
     const config = vscode.workspace.getConfiguration('multiagent');
+    return config.get<ProviderType>('providerType', 'lemonade');
+  }
+
+  private readConnectionSettings(): ProviderSettings {
+    const config = vscode.workspace.getConfiguration('multiagent');
+    const defaultUrl =
+      this.readProviderType() === 'ollama' ? OLLAMA_DEFAULT_URL : OPENAI_DEFAULT_URL;
     return {
-      baseUrl: config.get<string>('baseUrl', 'http://localhost:13305/api/v1'),
-      apiKey: config.get<string>('apiKey', 'lemonade'),
+      baseUrl: config.get<string>('baseUrl', defaultUrl),
+      apiKey: config.get<string>('apiKey', 'local-llm'),
     };
   }
 

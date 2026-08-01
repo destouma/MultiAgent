@@ -192,6 +192,18 @@ export class ConversationStore {
     return { path: row.path, addedAt: row.addedAt };
   }
 
+  removeFolder(folderPath: string): boolean {
+    const before = this.listFolders().some((folder) => folder.path === folderPath);
+    if (!before) return false;
+    this.db.run(`DELETE FROM folders WHERE path = ?`, [folderPath]);
+    this.db.run(
+      `UPDATE conversations SET workspacePath = NULL, updatedAt = ? WHERE workspacePath = ?`,
+      [Date.now(), folderPath],
+    );
+    this.persist();
+    return true;
+  }
+
   createConversation(input: CreateConversationRequest = {}): Conversation {
     const now = Date.now();
     const kind: ConversationKind =

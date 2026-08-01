@@ -1,7 +1,7 @@
 {
   "name": "multi-agent",
   "version": "1.0.0",
-  "description": "Windows desktop multi-agent chat for local Lemonade Server",
+  "description": "Windows desktop multi-agent chat for local LLM servers",
   "main": "dist-electron/main.js",
   "author": "MultiAgent",
   "license": "MIT",

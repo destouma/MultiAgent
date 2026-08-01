@@ -1,6 +1,22 @@
 const esbuild = require('esbuild');
+const fs = require('node:fs');
+const path = require('node:path');
 
 const watch = process.argv.includes('--watch');
+
+// A packaged .vsix can only contain files from inside this directory, so
+// personaRegistry.ts's bundled-personas lookup (extensionUri/personas) needs
+// a real copy here - the repo-root personas/ it falls back to in dev only
+// exists in a full checkout, not inside an installed extension.
+function copyPersonas() {
+  const srcDir = path.join(__dirname, '..', 'personas');
+  const destDir = path.join(__dirname, 'personas');
+  fs.mkdirSync(destDir, { recursive: true });
+  for (const file of fs.readdirSync(srcDir)) {
+    if (!file.endsWith('.json')) continue;
+    fs.copyFileSync(path.join(srcDir, file), path.join(destDir, file));
+  }
+}
 
 const extensionConfig = {
   entryPoints: ['src/extension.ts'],
@@ -30,6 +46,8 @@ const cssConfig = {
 };
 
 async function run() {
+  copyPersonas();
+
   const contexts = await Promise.all(
     [extensionConfig, webviewConfig, cssConfig].map((config) => esbuild.context(config)),
   );

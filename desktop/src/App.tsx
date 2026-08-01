@@ -5,6 +5,7 @@ import { ConnectionBadge } from './components/ConnectionBadge';
 import { ConversationList } from './components/ConversationList';
 import { ImageStudio } from './components/ImageStudio';
 import { ModelPicker } from './components/ModelPicker';
+import { ModelsModal } from './components/ModelsModal';
 import { NewChatModal } from './components/NewChatModal';
 import { PersonaSwitcher } from './components/PersonaSwitcher';
 import { SettingsModal } from './components/SettingsModal';
@@ -24,6 +25,7 @@ export default function App() {
   const activeConversationId = useChatStore((state) => state.activeConversationId);
   const loadSettings = useSettingsStore((state) => state.load);
   const setSettingsOpen = useSettingsStore((state) => state.setSettingsOpen);
+  const setModelsOpen = useSettingsStore((state) => state.setModelsOpen);
 
   const active = conversations.find((item) => item.id === activeConversationId) ?? null;
   const isImageSession = active?.kind === 'image';
@@ -108,21 +110,27 @@ export default function App() {
         <header className="topbar">
           <div className="topbar-left">
             {isImageSession ? (
-              <div className="brand-inline">Image session</div>
+              <>
+                <div className="brand-inline">Image session</div>
+                <ModelPicker kind="image" />
+              </>
             ) : isOrchestratorSession ? (
               <>
                 <div className="brand-inline">Orchestrator</div>
-                <ModelPicker />
+                <ModelPicker kind="chat" />
               </>
             ) : (
               <>
                 <PersonaSwitcher />
-                <ModelPicker />
+                <ModelPicker kind="chat" />
               </>
             )}
           </div>
           <div className="topbar-right">
             <ConnectionBadge />
+            <button type="button" className="btn" onClick={() => setModelsOpen(true)}>
+              Models
+            </button>
             <button type="button" className="btn" onClick={() => setSettingsOpen(true)}>
               Settings
             </button>
@@ -138,6 +146,7 @@ export default function App() {
         )}
       </main>
       <SettingsModal />
+      <ModelsModal />
       <NewChatModal />
     </div>
   );

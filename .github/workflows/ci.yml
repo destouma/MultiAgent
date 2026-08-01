@@ -20,6 +20,14 @@ jobs:
           cache: npm
           cache-dependency-path: desktop/package-lock.json
 
+      # shared/llm/*.ts imports the `openai` package; Node/tsc resolve that
+      # bare specifier by walking up from shared/llm/'s own location, which
+      # reaches this root-level node_modules but never desktop/'s, since
+      # shared/ is a sibling of desktop/, not a descendant of it.
+      - name: Install shared/ dependencies (openai)
+        working-directory: .
+        run: npm ci
+
       - run: npm ci
 
       - name: Typecheck
@@ -63,6 +71,10 @@ jobs:
           node-version: 20
           cache: npm
           cache-dependency-path: desktop/package-lock.json
+
+      - name: Install shared/ dependencies (openai)
+        working-directory: .
+        run: npm ci
 
       - run: npm ci
 

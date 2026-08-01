@@ -37,6 +37,32 @@
         }
       ]
     },
+    "commands": [
+      {
+        "command": "multiagent.switchServer",
+        "title": "MultiAgent: Switch Server",
+        "icon": "$(server-environment)"
+      },
+      {
+        "command": "multiagent.toggleWorkspaceTools",
+        "title": "MultiAgent: Toggle Workspace Tools",
+        "icon": "$(folder)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "multiagent.switchServer",
+          "when": "view == multiagent.chat",
+          "group": "navigation"
+        },
+        {
+          "command": "multiagent.toggleWorkspaceTools",
+          "when": "view == multiagent.chat",
+          "group": "navigation"
+        }
+      ]
+    },
     "configuration": {
       "title": "MultiAgent",
       "properties": {
@@ -74,6 +100,57 @@
           "type": "number",
           "default": 40,
           "description": "Maximum number of past messages sent as context."
+        },
+        "multiagent.servers": {
+          "type": "array",
+          "default": [],
+          "description": "Saved server connections. Use the \"MultiAgent: Switch Server\" command (server icon in the Chat view title bar) to add or switch between them, or edit this list directly.",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "name",
+              "providerType",
+              "baseUrl",
+              "apiKey",
+              "maxHistory"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "providerType": {
+                "type": "string",
+                "enum": [
+                  "lemonade",
+                  "openai",
+                  "ollama"
+                ]
+              },
+              "baseUrl": {
+                "type": "string"
+              },
+              "apiKey": {
+                "type": "string"
+              },
+              "maxHistory": {
+                "type": "number"
+              }
+            }
+          }
+        },
+        "multiagent.activeServerId": {
+          "type": "string",
+          "default": "",
+          "description": "Id of the entry in multiagent.servers currently copied into providerType/baseUrl/apiKey/maxHistory. Set via the \"MultiAgent: Switch Server\" command."
+        },
+        "multiagent.enableWorkspaceTools": {
+          "type": "boolean",
+          "default": false,
+          "description": "Let the assistant read and write files in the first open workspace folder (list_dir, read_file, write_file, delete_file). Toggle via the folder icon in the Chat view title bar."
         }
       }
     }

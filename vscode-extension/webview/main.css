@@ -51,6 +51,30 @@ body {
   padding: 2px 4px;
 }
 
+.ma-workspace {
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.ma-tool-op {
+  font-size: 11px;
+  font-family: var(--vscode-editor-font-family, monospace);
+  padding: 2px 0;
+  opacity: 0.85;
+}
+
+.ma-tool-op--running {
+  color: var(--vscode-descriptionForeground);
+}
+
+.ma-tool-op--ok {
+  color: var(--vscode-testing-iconPassed, #3fb950);
+}
+
+.ma-tool-op--error {
+  color: var(--vscode-testing-iconFailed, #f85149);
+}
+
 .ma-messages {
   flex: 1;
   overflow-y: auto;

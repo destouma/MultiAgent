@@ -16,11 +16,15 @@ import type {
   WorkspaceOpEvent,
 } from '../../../shared/types';
 import { ProviderError, type LlmClient } from '../../../shared/llm/types';
+import {
+  WorkspaceError,
+  WorkspaceService,
+  workspaceTools,
+} from '../../../shared/workspace/workspaceService';
 import { ConversationStore } from './conversationStore';
 import { PersonaRegistry } from './personaRegistry';
 import { emitModelStatus } from './modelStatus';
 import { parsePlan, type PlanResult } from './planParser';
-import { WorkspaceError, WorkspaceService, workspaceTools } from './workspaceService';
 
 const SPECIALIST_IDS = ['researcher', 'coder', 'critic'] as const;
 const MAX_SPECIALIST_TOOL_ROUNDS = 4;

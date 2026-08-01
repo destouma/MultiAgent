@@ -5,5 +5,8 @@
   "description": "Root-level deps for shared/ so it resolves runtime packages (e.g. openai) without a full workspace setup. desktop/ and vscode-extension/ remain independently installable.",
   "dependencies": {
     "openai": "^5.8.2"
+  },
+  "devDependencies": {
+    "vitest": "^4.1.10"
   }
 }

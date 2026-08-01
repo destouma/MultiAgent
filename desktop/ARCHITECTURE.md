@@ -20,16 +20,16 @@ MultiAgent is a Windows desktop app (Electron + React) for chatting with local m
 
 ## 1. Overview
 
-| Concern      | Choice                                                                                                                             |
-| ------------ | ---------------------------------------------------------------------------------------------------------------------------------- |
-| Shell        | Electron (main + preload + renderer)                                                                                               |
-| UI           | React 19 + TypeScript + Vite                                                                                                       |
-| State        | Zustand (`chatStore`, `settingsStore`)                                                                                             |
+| Concern      | Choice                                                                                                                                                                                                           |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Shell        | Electron (main + preload + renderer)                                                                                                                                                                             |
+| UI           | React 19 + TypeScript + Vite                                                                                                                                                                                     |
+| State        | Zustand (`chatStore`, `settingsStore`)                                                                                                                                                                           |
 | LLM / images | `shared/llm/` — `OpenAiClient` (generic OpenAI SDK + raw HTTP), `LemonadeClient` (extends it with Lemonade's load-status extension), or `OllamaClient` (native Ollama API), picked by `AppSettings.providerType` |
-| Settings     | `electron-store` → `%APPDATA%/MultiAgent/config.json`                                                                              |
-| Chats        | SQLite via **sql.js** → `%APPDATA%/MultiAgent/chats.db`                                                                            |
-| Images cache | `%APPDATA%/MultiAgent/images/*.png`                                                                                                |
-| Packaging    | `electron-builder` NSIS (Windows x64)                                                                                              |
+| Settings     | `electron-store` → `%APPDATA%/MultiAgent/config.json`                                                                                                                                                            |
+| Chats        | SQLite via **sql.js** → `%APPDATA%/MultiAgent/chats.db`                                                                                                                                                          |
+| Images cache | `%APPDATA%/MultiAgent/images/*.png`                                                                                                                                                                              |
+| Packaging    | `electron-builder` NSIS (Windows x64)                                                                                                                                                                            |
 
 **Security rule:** the renderer never calls the LLM server directly. All network I/O, file system access, and dialogs run in the Electron **main** process and are exposed through a typed `window.api` bridge (preload + `contextIsolation`).
 
@@ -162,19 +162,19 @@ MultiAgent/
 
 ### Settings (`electron-store`)
 
-| Key             | Default                         | Purpose                                                                              |
-| --------------- | -------------------------------- | ------------------------------------------------------------------------------------ |
-| `providerType`  | `lemonade`                      | `'lemonade'`, `'openai'` (any other OpenAI-compatible server), or `'ollama'`          |
-| `baseUrl`       | `http://localhost:13305/api/v1` | Active connection's server API base (`http://localhost:11434` default for Ollama)    |
-| `apiKey`        | `local-llm`                     | Required by the OpenAI client; unused by Lemonade/Ollama                             |
-| `model`         | `""`                            | Fallback chat/orchestrator model for conversations that haven't set their own        |
-| `imageModel`    | `""`                            | Fallback image model for image sessions that haven't set their own                   |
-| `maxHistory`    | `40`                            | Max messages sent as history                                                         |
-| `theme`         | `light`                         | UI theme (`light` \| `dark`), toggled in Settings                                    |
-| `servers`       | `[]`                            | Saved `ServerProfile[]` (name, providerType, baseUrl, apiKey, maxHistory)             |
-| `activeServerId`| `null`                          | Id of the `servers` entry currently copied into the fields above                     |
+| Key              | Default                         | Purpose                                                                           |
+| ---------------- | ------------------------------- | --------------------------------------------------------------------------------- |
+| `providerType`   | `lemonade`                      | `'lemonade'`, `'openai'` (any other OpenAI-compatible server), or `'ollama'`      |
+| `baseUrl`        | `http://localhost:13305/api/v1` | Active connection's server API base (`http://localhost:11434` default for Ollama) |
+| `apiKey`         | `local-llm`                     | Required by the OpenAI client; unused by Lemonade/Ollama                          |
+| `model`          | `""`                            | Fallback chat/orchestrator model for conversations that haven't set their own     |
+| `imageModel`     | `""`                            | Fallback image model for image sessions that haven't set their own                |
+| `maxHistory`     | `40`                            | Max messages sent as history                                                      |
+| `theme`          | `light`                         | UI theme (`light` \| `dark`), toggled in Settings                                 |
+| `servers`        | `[]`                            | Saved `ServerProfile[]` (name, providerType, baseUrl, apiKey, maxHistory)         |
+| `activeServerId` | `null`                          | Id of the `servers` entry currently copied into the fields above                  |
 
-`providerType`/`baseUrl`/`apiKey`/`maxHistory` are the *active connection* — switching servers in Settings copies the selected profile's fields into these rather than every consumer reading `servers[activeServerId]` directly, so `getClient()`/`setClient()` keep working unchanged. `ensureDefaultServer()` (`electron/config.ts`) seeds one profile from these fields on first run if `servers` is empty, so existing configs aren't lost.
+`providerType`/`baseUrl`/`apiKey`/`maxHistory` are the _active connection_ — switching servers in Settings copies the selected profile's fields into these rather than every consumer reading `servers[activeServerId]` directly, so `getClient()`/`setClient()` keep working unchanged. `ensureDefaultServer()` (`electron/config.ts`) seeds one profile from these fields on first run if `servers` is empty, so existing configs aren't lost.
 
 Path: `%APPDATA%/MultiAgent/config.json`
 

@@ -1,12 +1,16 @@
-import { useChatStore } from '../store/chatStore';
+import { useChatStore, type ChatStoreHook } from '../store/chatStore';
 import { useSettingsStore } from '../store/settingsStore';
 
-export function PersonaSwitcher() {
+type Props = {
+  store?: ChatStoreHook;
+};
+
+export function PersonaSwitcher({ store = useChatStore }: Props) {
   const personas = useSettingsStore((state) => state.personas).filter(
     (persona) => persona.id !== 'orchestrator',
   );
-  const activePersonaId = useChatStore((state) => state.activePersonaId);
-  const setActivePersona = useChatStore((state) => state.setActivePersona);
+  const activePersonaId = store((state) => state.activePersonaId);
+  const setActivePersona = store((state) => state.setActivePersona);
   const active = personas.find((persona) => persona.id === activePersonaId);
 
   return (

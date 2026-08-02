@@ -666,11 +666,43 @@ button {
   color: #b91c1c;
 }
 
+.content-column {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.global-topbar {
+  justify-content: flex-end;
+  flex: 0 0 auto;
+}
+
+.main-area {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+}
+
 .main {
   display: grid;
   grid-template-rows: auto 1fr auto;
   min-width: 0;
   min-height: 0;
+  flex: 1;
+}
+
+.main-area.split .main {
+  border-right: 1px solid var(--line);
+}
+
+.split-pane {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
 }
 
 .topbar {

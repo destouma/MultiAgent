@@ -1,6 +1,6 @@
 # MultiAgent — Architecture & User Guide
 
-MultiAgent is a Windows desktop app (Electron + React) for chatting with local models. It connects to **Lemonade**, any other **OpenAI-compatible server** (NoLlama, LM Studio, vLLM, real OpenAI, ...), or a **native Ollama server** — save multiple named connections in Settings and switch between them without restarting. It supports switchable agent personas, folder-bound workspace chats with read/write tools, dedicated image sessions, and **orchestrator** sessions that route work across specialists.
+MultiAgent is a Windows desktop app (Electron + React) for chatting with local models. It connects to **Lemonade**, any other **OpenAI-compatible server** (NoLlama, LM Studio, vLLM, real OpenAI, ...), or a **native Ollama server** — save multiple named connections in Settings and switch between them without restarting. It supports switchable agent personas, folder-bound workspace chats with read/write tools, dedicated image sessions, **orchestrator** sessions that route work across specialists, and a **side-by-side split view** for comparing two conversations from the same folder.
 
 ---
 
@@ -24,7 +24,7 @@ MultiAgent is a Windows desktop app (Electron + React) for chatting with local m
 | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Shell        | Electron (main + preload + renderer)                                                                                                                                                                             |
 | UI           | React 19 + TypeScript + Vite                                                                                                                                                                                     |
-| State        | Zustand (`chatStore`, `settingsStore`)                                                                                                                                                                           |
+| State        | Zustand (`chatStore` — a factory, two instances for split view — plus `settingsStore`, `splitViewStore`)                                                                                                         |
 | LLM / images | `shared/llm/` — `OpenAiClient` (generic OpenAI SDK + raw HTTP), `LemonadeClient` (extends it with Lemonade's load-status extension), or `OllamaClient` (native Ollama API), picked by `AppSettings.providerType` |
 | Settings     | `electron-store` → `%APPDATA%/MultiAgent/config.json`                                                                                                                                                            |
 | Chats        | SQLite via **sql.js** → `%APPDATA%/MultiAgent/chats.db`                                                                                                                                                          |
@@ -55,7 +55,7 @@ flowchart TB
     App[App]
     ChatUI[Chat_UI]
     ImageUI[ImageStudio]
-    Stores[Zustand_stores]
+    Stores["Zustand_stores\n(chatStore x2 for split view)"]
   end
 
   subgraph preload [Preload]
@@ -70,7 +70,7 @@ flowchart TB
     Personas[PersonaRegistry]
     DB[ConversationStore]
     Config[AppConfig]
-    Client["LlmClient\n(OpenAiClient | OllamaClient)"]
+    Client["LlmClient\n(LemonadeClient | OpenAiClient | OllamaClient)"]
   end
 
   Server["OpenAI-compatible_or_Ollama_server"]
@@ -131,21 +131,24 @@ MultiAgent/
     electron/
       main.ts                 # BrowserWindow, app lifecycle
       preload.ts              # contextBridge → window.api
-      config.ts               # electron-store settings
+      config.ts               # electron-store settings + ensureDefaultServer() migration
       ipc/
         channels.ts           # channel name constants
         handlers.ts           # IPC registration + service wiring
       services/
-        lemonadeClient.ts     # OpenAI client + image HTTP
         chatService.ts        # chat + workspace agent loop
+        orchestratorService.ts # plan → specialists → synthesize
         conversationStore.ts  # sql.js persistence
         personaRegistry.ts    # load ../../personas/*.json (dev) or extraResources (packaged)
-        workspaceService.ts   # safe list/read/write/delete
         imageService.ts       # generate, cache, download, save
+        modelStatus.ts        # emitModelStatus() IPC helper
     src/                      # React renderer
-      App.tsx
-      components/             # UI pieces
-      store/                  # Zustand
+      App.tsx                 # global topbar + main pane + split pane wiring
+      components/             # UI pieces (ChatThread, Composer, SplitPane, SplitPickerModal, ...)
+      store/
+        chatStore.ts          # pane-store factory - useChatStore (primary) + useSecondaryChatStore (split view)
+        settingsStore.ts      # server connection, models, theme
+        splitViewStore.ts     # side-by-side open/picker state
       styles.css
     package.json
     vite.config.ts
@@ -153,7 +156,9 @@ MultiAgent/
   vscode-extension/           # VS Code client (see ../vscode-extension/README.md)
   shared/
     types.ts                  # shared TS types + image message helpers
-  personas/                   # General, Researcher, Coder, Critic
+    llm/                      # LlmClient interface + OpenAiClient/LemonadeClient/OllamaClient/createLlmClient
+    workspace/                # WorkspaceService (safe list/read/write/delete) + action-tag XML fallback parser
+  personas/                   # General, Researcher, Coder, Critic, Orchestrator
 ```
 
 ---
@@ -237,7 +242,16 @@ Switching persona mid-thread changes the **system prompt for the next reply only
 
 ### Folders
 
-Click **Open folder** (same row as New chat / New image / New orchestrator) to register a folder — it appears as a group in the sidebar. Right-click a folder's name to create a **New chat**, **New image**, or **New orchestrator** session bound to it; all sessions created that way are listed nested under that folder. The plain top-level New chat / New image / New orchestrator buttons always create folder-less sessions — there is no folder picker in the creation dialog. A conversation's folder binding is fixed at creation and can't be changed afterward.
+Click **Open folder** (same row as New chat / New image / New orchestrator) to register a folder — it appears as a group in the sidebar. Right-click a folder's name to create a **New chat**, **New image**, or **New orchestrator** session bound to it; all sessions created that way are listed nested under that folder. The plain top-level New chat / New image / New orchestrator buttons always create folder-less sessions — there is no folder picker in the creation dialog. A conversation's folder binding is fixed at creation and can't be changed afterward. Once a folder has 2+ conversations, its right-click menu also offers **Side by side** (see below).
+
+### Side by side (split view)
+
+Right-click a folder with 2+ conversations → **Side by side** opens a picker (Left / Right dropdowns, populated with that folder's chat/orchestrator/image conversations). Confirming shows both at once, split-screen, each fully independent — own messages, streaming state, persona, and model.
+
+- **State:** `src/store/chatStore.ts` exports a `createChatStore()` factory; `useChatStore` (left/primary pane) and `useSecondaryChatStore` (right pane) are two separate instances of it. Both register themselves in a small in-module sibling list so a create/delete/rename in either pane pushes the refreshed `conversations`/`folders` list into the other immediately (and into the sidebar, which is always bound to the primary instance) — otherwise the second pane's mutations would only surface in the sidebar on the sidebar's own next unrelated action.
+- **Streaming isolation:** IPC events (`chat:token`, `chat:done`, `chat:error`, `workspace:op`, `orchestrator:step`) are dispatched to both store instances from `App.tsx`; each store's own reducer ignores events whose `conversationId` doesn't match its own `activeConversationId`, so tokens/errors/tool-ops never leak from one pane into the other.
+- **Generation is still serialized backend-wide:** `ChatService`/`OrchestratorService` each track a single in-flight `AbortController`, so only one generation (one chat/image, or one orchestrator run) can be in flight at a time even with two panes open. `Composer`/`ImageStudio` disable Send/Generate (with an explanatory tooltip) whenever the _other_ pane is streaming or generating, rather than silently cancelling it the way a second `chat:send` would.
+- **Layout:** the connection badge, Models, and Settings buttons live in a `.global-topbar` above both panes (not inside either pane's own topbar), since they're connection-level, not per-conversation. Each pane's own topbar only holds persona/model — this is also what keeps the two panes' topbar rows the same height and visually aligned regardless of which conversation kinds are shown side by side. A "× Close split" button appears in the global topbar while split view is open; closing it hides the second pane without deleting its conversation.
 
 ### Workspace chats
 
@@ -322,6 +336,14 @@ npm run dev
 2. Ask a question in the composer.
 3. Watch the status banner while specialists run; each specialist reply appears in the thread.
 4. Read the final Orchestrator synthesis at the end.
+
+### Side by side
+
+1. Make sure the folder has at least 2 conversations (any mix of chat/orchestrator/image).
+2. Right-click the folder's name in the sidebar → **Side by side**.
+3. Pick a **Left** and a **Right** conversation → **Open side by side**.
+4. Each pane works independently — different persona/model, separate history. Sending in one pane while the other is generating is blocked until it finishes (one generation in flight at a time, backend-wide).
+5. **× Close split** (top right, global bar) hides the second pane without deleting either conversation.
 
 ### Tips
 
@@ -412,3 +434,4 @@ Installer options (see `package.json` → `build.nsis`):
 - Image edit / variations / upscale modes (UI placeholders only; generate is implemented)
 - Parallel specialist execution (specialists still run one at a time)
 - Write/delete/generate-image tools inside orchestrator sessions (specialists are read-only; only workspace chats can modify files)
+- Concurrent generation across split-view panes (`ChatService`/`OrchestratorService` each track one in-flight request; the UI blocks Send/Generate in the idle pane instead)

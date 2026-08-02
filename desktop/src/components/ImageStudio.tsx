@@ -1,12 +1,16 @@
 import { useEffect, useMemo, useState, type KeyboardEvent } from 'react';
 import { parseImageMessage } from '../../../shared/types';
-import { useChatStore } from '../store/chatStore';
+import { useChatStore, useSecondaryChatStore, type ChatStoreHook } from '../store/chatStore';
 import { useSettingsStore } from '../store/settingsStore';
 import { MessageBubble } from './MessageBubble';
 
 const SIZE_OPTIONS = ['256', '512', '768', '1024'];
 
-export function ImageStudio() {
+type Props = {
+  store?: ChatStoreHook;
+};
+
+export function ImageStudio({ store = useChatStore }: Props) {
   const [mode, setMode] = useState('generate');
   const [steps, setSteps] = useState(20);
   const [cfgScale, setCfgScale] = useState(2.5);
@@ -19,15 +23,18 @@ export function ImageStudio() {
   const [saveToFolder, setSaveToFolder] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
 
-  const messages = useChatStore((state) => state.messages);
-  const generateImage = useChatStore((state) => state.generateImage);
-  const generatingImage = useChatStore((state) => state.generatingImage);
-  const error = useChatStore((state) => state.error);
-  const modelStatus = useChatStore((state) => state.modelStatus);
-  const conversations = useChatStore((state) => state.conversations);
-  const activeConversationId = useChatStore((state) => state.activeConversationId);
+  const messages = store((state) => state.messages);
+  const generateImage = store((state) => state.generateImage);
+  const generatingImage = store((state) => state.generatingImage);
+  const error = store((state) => state.error);
+  const modelStatus = store((state) => state.modelStatus);
+  const conversations = store((state) => state.conversations);
+  const activeConversationId = store((state) => state.activeConversationId);
   const settings = useSettingsStore((state) => state.settings);
   const imageModels = useSettingsStore((state) => state.imageModels);
+
+  const otherStore = store === useChatStore ? useSecondaryChatStore : useChatStore;
+  const otherBusy = otherStore((state) => state.isStreaming || state.generatingImage);
 
   const active = conversations.find((item) => item.id === activeConversationId);
   const hasFolder = Boolean(active?.workspacePath);
@@ -35,7 +42,7 @@ export function ImageStudio() {
   const activeModel = active?.model ?? settings?.imageModel ?? '';
   const providerSupportsImages = settings?.providerType !== 'ollama';
   const canGenerate = Boolean(
-    providerSupportsImages && prompt.trim() && (activeModel || models[0]),
+    providerSupportsImages && !otherBusy && prompt.trim() && (activeModel || models[0]),
   );
 
   const imageMessages = useMemo(
@@ -191,13 +198,19 @@ export function ImageStudio() {
             </div>
           ) : null}
 
+          {otherBusy ? (
+            <div className="status-banner">
+              Waiting for the other split-view pane to finish generating…
+            </div>
+          ) : null}
+
           <div className="image-prompt-shell">
             <textarea
               value={prompt}
               onChange={(event) => setPrompt(event.target.value)}
               onKeyDown={onKeyDown}
               placeholder="Describe the image you want to generate..."
-              disabled={generatingImage || !providerSupportsImages}
+              disabled={generatingImage || !providerSupportsImages || otherBusy}
             />
             <div className="image-prompt-toolbar">
               <div className="image-prompt-actions image-prompt-actions-end">

@@ -1,6 +1,6 @@
 # MultiAgent Desktop
 
-Windows desktop chat app for local LLM servers. Talk to models through an OpenAI-compatible API (Lemonade, NoLlama, LM Studio, vLLM, real OpenAI, ...) or a native Ollama server — switchable in Settings — with switchable agent personas, workspace folder tools, image sessions (OpenAI-compatible providers only), and orchestrator mode.
+Windows desktop chat app for local LLM servers. Talk to models through Lemonade, any other OpenAI-compatible API (NoLlama, LM Studio, vLLM, real OpenAI, ...), or a native Ollama server — save multiple named connections and switch between them in Settings — with switchable agent personas, workspace folder tools, image sessions (OpenAI-compatible providers only), orchestrator mode, and a side-by-side split view for comparing two conversations from the same folder.
 
 This is the Electron client. Persona definitions (`../personas/`) and shared types (`../shared/types.ts`) live one level up, at the repo root, so they can also be used by [`../vscode-extension/`](../vscode-extension/).
 

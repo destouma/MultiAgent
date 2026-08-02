@@ -13,13 +13,17 @@ import type {
   WorkspaceOpEvent,
 } from '../../../shared/types';
 import { ProviderError, type LlmClient } from '../../../shared/llm/types';
+import { parseActionTags } from '../../../shared/workspace/actionTags';
+import {
+  WorkspaceError,
+  WorkspaceService,
+  workspaceTools,
+} from '../../../shared/workspace/workspaceService';
 import { ConversationStore } from './conversationStore';
 import { PersonaRegistry } from './personaRegistry';
-import { WorkspaceError, WorkspaceService, workspaceTools } from './workspaceService';
 import { ImageService } from './imageService';
 import { OrchestratorService } from './orchestratorService';
 import { emitModelStatus } from './modelStatus';
-import { parseActionTags } from './actionTags';
 
 const MAX_TOOL_ROUNDS = 8;
 

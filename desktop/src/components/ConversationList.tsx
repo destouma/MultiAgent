@@ -1,6 +1,7 @@
 import { useEffect, useState, type MouseEvent } from 'react';
 import type { Conversation, ConversationKind } from '../../../shared/types';
 import { useChatStore } from '../store/chatStore';
+import { useSplitViewStore } from '../store/splitViewStore';
 
 function folderLabel(folderPath: string): string {
   const parts = folderPath.replace(/\\/g, '/').split('/');
@@ -60,6 +61,7 @@ export function ConversationList() {
   const setNewChatOpen = useChatStore((state) => state.setNewChatOpen);
   const openFolder = useChatStore((state) => state.openFolder);
   const removeFolder = useChatStore((state) => state.removeFolder);
+  const openSplitPicker = useSplitViewStore((state) => state.openPicker);
   const [contextMenu, setContextMenu] = useState<FolderContextMenu | null>(null);
 
   useEffect(() => {
@@ -101,6 +103,16 @@ export function ConversationList() {
     void removeFolder(folderPath);
     setContextMenu(null);
   };
+
+  const openSideBySide = () => {
+    if (!contextMenu) return;
+    openSplitPicker(contextMenu.folderPath);
+    setContextMenu(null);
+  };
+
+  const contextMenuFolderCount = contextMenu
+    ? conversations.filter((item) => item.workspacePath === contextMenu.folderPath).length
+    : 0;
 
   return (
     <aside className="sidebar">
@@ -189,6 +201,11 @@ export function ConversationList() {
             <button type="button" onClick={() => createInFolder('orchestrator')}>
               New orchestrator
             </button>
+            {contextMenuFolderCount >= 2 ? (
+              <button type="button" onClick={openSideBySide}>
+                Side by side
+              </button>
+            ) : null}
             <button
               type="button"
               className="context-menu-danger"

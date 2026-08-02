@@ -1,13 +1,20 @@
 import { useState, type KeyboardEvent } from 'react';
-import { useChatStore } from '../store/chatStore';
+import { useChatStore, useSecondaryChatStore, type ChatStoreHook } from '../store/chatStore';
 
-export function Composer() {
+type Props = {
+  store?: ChatStoreHook;
+};
+
+export function Composer({ store = useChatStore }: Props) {
   const [value, setValue] = useState('');
-  const sendMessage = useChatStore((state) => state.sendMessage);
-  const cancelStream = useChatStore((state) => state.cancelStream);
-  const isStreaming = useChatStore((state) => state.isStreaming);
-  const error = useChatStore((state) => state.error);
-  const modelStatus = useChatStore((state) => state.modelStatus);
+  const sendMessage = store((state) => state.sendMessage);
+  const cancelStream = store((state) => state.cancelStream);
+  const isStreaming = store((state) => state.isStreaming);
+  const error = store((state) => state.error);
+  const modelStatus = store((state) => state.modelStatus);
+
+  const otherStore = store === useChatStore ? useSecondaryChatStore : useChatStore;
+  const otherBusy = otherStore((state) => state.isStreaming || state.generatingImage);
 
   const onSend = async () => {
     const content = value;
@@ -18,7 +25,7 @@ export function Composer() {
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
-      if (!isStreaming && value.trim()) {
+      if (!isStreaming && !otherBusy && value.trim()) {
         void onSend();
       }
     }
@@ -34,7 +41,7 @@ export function Composer() {
           onChange={(event) => setValue(event.target.value)}
           onKeyDown={onKeyDown}
           placeholder="Message the local LLM… (Enter to send, Shift+Enter for newline)"
-          disabled={isStreaming}
+          disabled={isStreaming || otherBusy}
         />
         <div className="composer-actions">
           {isStreaming ? (
@@ -45,7 +52,10 @@ export function Composer() {
             <button
               type="button"
               className="btn btn-primary"
-              disabled={!value.trim()}
+              disabled={!value.trim() || otherBusy}
+              title={
+                otherBusy ? 'Only one response can generate at a time across split view' : undefined
+              }
               onClick={() => void onSend()}
             >
               Send

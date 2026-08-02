@@ -9,23 +9,24 @@ import { ModelsModal } from './components/ModelsModal';
 import { NewChatModal } from './components/NewChatModal';
 import { PersonaSwitcher } from './components/PersonaSwitcher';
 import { SettingsModal } from './components/SettingsModal';
-import { useChatStore } from './store/chatStore';
+import { SplitPane } from './components/SplitPane';
+import { SplitPickerModal } from './components/SplitPickerModal';
+import { useChatStore, useSecondaryChatStore, type ChatStoreHook } from './store/chatStore';
 import { useSettingsStore } from './store/settingsStore';
+import { useSplitViewStore } from './store/splitViewStore';
+
+const PANE_STORES: ChatStoreHook[] = [useChatStore, useSecondaryChatStore];
 
 export default function App() {
   const bootstrap = useChatStore((state) => state.bootstrap);
-  const appendToken = useChatStore((state) => state.appendToken);
-  const appendWorkspaceOp = useChatStore((state) => state.appendWorkspaceOp);
-  const setModelStatus = useChatStore((state) => state.setModelStatus);
-  const applyOrchestratorStep = useChatStore((state) => state.applyOrchestratorStep);
-  const reloadMessages = useChatStore((state) => state.reloadMessages);
-  const completeStream = useChatStore((state) => state.completeStream);
-  const failStream = useChatStore((state) => state.failStream);
   const conversations = useChatStore((state) => state.conversations);
   const activeConversationId = useChatStore((state) => state.activeConversationId);
+  const splitOpen = useSplitViewStore((state) => state.open);
   const loadSettings = useSettingsStore((state) => state.load);
   const setSettingsOpen = useSettingsStore((state) => state.setSettingsOpen);
   const setModelsOpen = useSettingsStore((state) => state.setModelsOpen);
+
+  const closeSplit = useSplitViewStore((state) => state.closeSplit);
 
   const active = conversations.find((item) => item.id === activeConversationId) ?? null;
   const isImageSession = active?.kind === 'image';
@@ -38,43 +39,48 @@ export default function App() {
 
   useEffect(() => {
     const offToken = window.api.onChatToken((event) => {
-      appendToken(event.messageId, event.delta);
+      for (const store of PANE_STORES) {
+        store.getState().appendToken(event.conversationId, event.messageId, event.delta);
+      }
     });
     const offDone = window.api.onChatDone((event) => {
-      void completeStream(event.messageId, event.content, event.personaId);
+      for (const store of PANE_STORES) {
+        void store
+          .getState()
+          .completeStream(event.conversationId, event.messageId, event.content, event.personaId);
+      }
     });
     const offError = window.api.onChatError((event) => {
       if (event.code === 'cancelled') {
-        const conversationId = useChatStore.getState().activeConversationId;
-        useChatStore.setState({
-          isStreaming: false,
-          streamingMessageId: null,
-          streamingContent: '',
-          streamingPersonaId: null,
-          orchestratorStatus: null,
-        });
-        if (conversationId) {
-          void useChatStore.getState().selectConversation(conversationId);
+        for (const store of PANE_STORES) {
+          store.getState().handleCancelled(event.conversationId);
         }
         return;
       }
-      failStream(event.message);
+      for (const store of PANE_STORES) {
+        store.getState().failStream(event.conversationId, event.message);
+      }
     });
     const offWorkspace = window.api.onWorkspaceOp((event) => {
-      appendWorkspaceOp(event);
+      for (const store of PANE_STORES) {
+        store.getState().appendWorkspaceOp(event);
+      }
     });
     const offModel = window.api.onModelStatus((event) => {
-      if (event.phase === 'ready') {
-        setModelStatus(null);
-      } else {
-        setModelStatus(event.message);
+      const message = event.phase === 'ready' ? null : event.message;
+      for (const store of PANE_STORES) {
+        store.getState().setModelStatus(message);
       }
     });
     const offOrch = window.api.onOrchestratorStep((event) => {
-      applyOrchestratorStep(event);
+      for (const store of PANE_STORES) {
+        store.getState().applyOrchestratorStep(event);
+      }
     });
     const offMessages = window.api.onChatMessagesUpdated((event) => {
-      void reloadMessages(event.conversationId);
+      for (const store of PANE_STORES) {
+        void store.getState().reloadMessages(event.conversationId);
+      }
     });
 
     return () => {
@@ -86,15 +92,7 @@ export default function App() {
       offOrch();
       offMessages();
     };
-  }, [
-    appendToken,
-    appendWorkspaceOp,
-    applyOrchestratorStep,
-    completeStream,
-    failStream,
-    reloadMessages,
-    setModelStatus,
-  ]);
+  }, []);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -106,48 +104,59 @@ export default function App() {
   return (
     <div className="app-shell">
       <ConversationList />
-      <main className="main">
-        <header className="topbar">
-          <div className="topbar-left">
+      <div className="content-column">
+        <header className="topbar global-topbar">
+          <ConnectionBadge />
+          <button type="button" className="btn" onClick={() => setModelsOpen(true)}>
+            Models
+          </button>
+          <button type="button" className="btn" onClick={() => setSettingsOpen(true)}>
+            Settings
+          </button>
+          {splitOpen ? (
+            <button type="button" className="btn" title="Close side by side" onClick={closeSplit}>
+              × Close split
+            </button>
+          ) : null}
+        </header>
+        <div className={`main-area ${splitOpen ? 'split' : ''}`}>
+          <main className="main">
+            <header className="topbar">
+              <div className="topbar-left">
+                {isImageSession ? (
+                  <>
+                    <div className="brand-inline">Image session</div>
+                    <ModelPicker kind="image" />
+                  </>
+                ) : isOrchestratorSession ? (
+                  <>
+                    <div className="brand-inline">Orchestrator</div>
+                    <ModelPicker kind="chat" />
+                  </>
+                ) : (
+                  <>
+                    <PersonaSwitcher />
+                    <ModelPicker kind="chat" />
+                  </>
+                )}
+              </div>
+            </header>
             {isImageSession ? (
-              <>
-                <div className="brand-inline">Image session</div>
-                <ModelPicker kind="image" />
-              </>
-            ) : isOrchestratorSession ? (
-              <>
-                <div className="brand-inline">Orchestrator</div>
-                <ModelPicker kind="chat" />
-              </>
+              <ImageStudio />
             ) : (
               <>
-                <PersonaSwitcher />
-                <ModelPicker kind="chat" />
+                <ChatThread />
+                <Composer />
               </>
             )}
-          </div>
-          <div className="topbar-right">
-            <ConnectionBadge />
-            <button type="button" className="btn" onClick={() => setModelsOpen(true)}>
-              Models
-            </button>
-            <button type="button" className="btn" onClick={() => setSettingsOpen(true)}>
-              Settings
-            </button>
-          </div>
-        </header>
-        {isImageSession ? (
-          <ImageStudio />
-        ) : (
-          <>
-            <ChatThread />
-            <Composer />
-          </>
-        )}
-      </main>
+          </main>
+          {splitOpen ? <SplitPane /> : null}
+        </div>
+      </div>
       <SettingsModal />
       <ModelsModal />
       <NewChatModal />
+      <SplitPickerModal />
     </div>
   );
 }

@@ -1,20 +1,24 @@
 import { useEffect, useMemo, useRef } from 'react';
-import { useChatStore } from '../store/chatStore';
+import { useChatStore, type ChatStoreHook } from '../store/chatStore';
 import { useSettingsStore } from '../store/settingsStore';
 import { MessageBubble } from './MessageBubble';
 
-export function ChatThread() {
-  const messages = useChatStore((state) => state.messages);
-  const streamingContent = useChatStore((state) => state.streamingContent);
-  const streamingMessageId = useChatStore((state) => state.streamingMessageId);
-  const streamingPersonaId = useChatStore((state) => state.streamingPersonaId);
-  const isStreaming = useChatStore((state) => state.isStreaming);
-  const activePersonaId = useChatStore((state) => state.activePersonaId);
-  const conversations = useChatStore((state) => state.conversations);
-  const activeConversationId = useChatStore((state) => state.activeConversationId);
-  const workspaceOps = useChatStore((state) => state.workspaceOps);
-  const orchestratorStatus = useChatStore((state) => state.orchestratorStatus);
-  const modelStatus = useChatStore((state) => state.modelStatus);
+type Props = {
+  store?: ChatStoreHook;
+};
+
+export function ChatThread({ store = useChatStore }: Props) {
+  const messages = store((state) => state.messages);
+  const streamingContent = store((state) => state.streamingContent);
+  const streamingMessageId = store((state) => state.streamingMessageId);
+  const streamingPersonaId = store((state) => state.streamingPersonaId);
+  const isStreaming = store((state) => state.isStreaming);
+  const activePersonaId = store((state) => state.activePersonaId);
+  const conversations = store((state) => state.conversations);
+  const activeConversationId = store((state) => state.activeConversationId);
+  const workspaceOps = store((state) => state.workspaceOps);
+  const orchestratorStatus = store((state) => state.orchestratorStatus);
+  const modelStatus = store((state) => state.modelStatus);
   const personas = useSettingsStore((state) => state.personas);
   const bottomRef = useRef<HTMLDivElement | null>(null);
 

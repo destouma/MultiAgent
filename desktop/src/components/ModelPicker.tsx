@@ -1,13 +1,14 @@
 import { isLikelyImageModel } from '../../../shared/types';
-import { useChatStore } from '../store/chatStore';
+import { useChatStore, type ChatStoreHook } from '../store/chatStore';
 import { useSettingsStore } from '../store/settingsStore';
 import { ModelSelect } from './ModelSelect';
 
 type Props = {
   kind?: 'chat' | 'image';
+  store?: ChatStoreHook;
 };
 
-export function ModelPicker({ kind = 'chat' }: Props) {
+export function ModelPicker({ kind = 'chat', store = useChatStore }: Props) {
   const models = useSettingsStore((state) => state.models);
   const modelsError = useSettingsStore((state) => state.modelsError);
   const loadedModels = useSettingsStore((state) => state.loadedModels);
@@ -15,9 +16,9 @@ export function ModelPicker({ kind = 'chat' }: Props) {
   const refreshModels = useSettingsStore((state) => state.refreshModels);
   const refreshLoadedModels = useSettingsStore((state) => state.refreshLoadedModels);
   const settings = useSettingsStore((state) => state.settings);
-  const conversations = useChatStore((state) => state.conversations);
-  const activeConversationId = useChatStore((state) => state.activeConversationId);
-  const setConversationModel = useChatStore((state) => state.setConversationModel);
+  const conversations = store((state) => state.conversations);
+  const activeConversationId = store((state) => state.activeConversationId);
+  const setConversationModel = store((state) => state.setConversationModel);
 
   const active = conversations.find((item) => item.id === activeConversationId);
   const filtered =

@@ -4,7 +4,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { GeneratedImageInfo, GenerateImageRequest } from '../../../shared/types';
 import { ProviderError, type LlmClient } from '../../../shared/llm/types';
-import { WorkspaceError, WorkspaceService } from './workspaceService';
+import { WorkspaceError, WorkspaceService } from '../../../shared/workspace/workspaceService';
 import { emitModelStatus } from './modelStatus';
 
 export class ImageService {

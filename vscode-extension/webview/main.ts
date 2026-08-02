@@ -29,7 +29,15 @@ type ExtensionToWebviewMessage =
   | { type: 'token'; messageId: string; delta: string }
   | { type: 'done'; messageId: string; content: string; personaId: string }
   | { type: 'error'; messageId: string; message: string }
-  | { type: 'busy'; busy: boolean };
+  | { type: 'busy'; busy: boolean }
+  | { type: 'workspaceStatus'; enabled: boolean; folderName: string | null }
+  | {
+      type: 'workspaceOp';
+      op: string;
+      path: string;
+      status: 'running' | 'ok' | 'error';
+      detail?: string;
+    };
 
 declare function acquireVsCodeApi(): {
   postMessage: (message: unknown) => void;
@@ -50,6 +58,9 @@ root.innerHTML = `
       <div class="ma-toolbar__row">
         <select id="ma-model"></select>
       </div>
+      <div class="ma-toolbar__row">
+        <span id="ma-workspace" class="ma-workspace" hidden></span>
+      </div>
     </div>
     <div id="ma-messages" class="ma-messages"></div>
     <div class="ma-composer">
@@ -65,6 +76,7 @@ root.innerHTML = `
 const statusEl = document.getElementById('ma-status') as HTMLSpanElement;
 const personaSelect = document.getElementById('ma-persona') as HTMLSelectElement;
 const modelSelect = document.getElementById('ma-model') as HTMLSelectElement;
+const workspaceEl = document.getElementById('ma-workspace') as HTMLSpanElement;
 const messagesEl = document.getElementById('ma-messages') as HTMLDivElement;
 const inputEl = document.getElementById('ma-input') as HTMLTextAreaElement;
 const sendBtn = document.getElementById('ma-send') as HTMLButtonElement;
@@ -72,6 +84,7 @@ const stopBtn = document.getElementById('ma-stop') as HTMLButtonElement;
 
 let personas: Persona[] = [];
 const streamingBodies = new Map<string, HTMLDivElement>();
+const pendingToolOps = new Map<string, HTMLDivElement>();
 
 function personaColor(id: string | null): string {
   return personas.find((persona) => persona.id === id)?.color ?? '#888888';
@@ -208,6 +221,34 @@ window.addEventListener('message', (event: MessageEvent<ExtensionToWebviewMessag
     case 'busy':
       setBusy(message.busy);
       break;
+    case 'workspaceStatus':
+      if (message.enabled && message.folderName) {
+        workspaceEl.hidden = false;
+        workspaceEl.textContent = `📁 ${message.folderName}`;
+        workspaceEl.title = `Workspace tools enabled for "${message.folderName}"`;
+      } else {
+        workspaceEl.hidden = true;
+      }
+      break;
+    case 'workspaceOp': {
+      const key = `${message.op}|${message.path}`;
+      if (message.status === 'running') {
+        const el = document.createElement('div');
+        el.className = 'ma-tool-op ma-tool-op--running';
+        el.textContent = `→ ${message.op}(${message.path})`;
+        messagesEl.append(el);
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+        pendingToolOps.set(key, el);
+      } else {
+        const el = pendingToolOps.get(key);
+        if (el) {
+          el.className = `ma-tool-op ma-tool-op--${message.status}`;
+          el.textContent = `→ ${message.op}(${message.path})${message.detail ? `: ${message.detail}` : ''}`;
+          pendingToolOps.delete(key);
+        }
+      }
+      break;
+    }
   }
 });
 

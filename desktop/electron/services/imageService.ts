@@ -11,7 +11,7 @@ export class ImageService {
   private workspace = new WorkspaceService();
 
   constructor(
-    private getClient: () => LlmClient,
+    private getClientFor: (serverId: string | null) => LlmClient,
     private getImageModel: () => string,
     private getWindow: () => BrowserWindow | null,
   ) {}
@@ -30,8 +30,9 @@ export class ImageService {
   async generate(
     request: GenerateImageRequest,
     workspaceRoot: string | null,
+    serverId: string | null = null,
   ): Promise<GeneratedImageInfo> {
-    const client = this.getClient();
+    const client = this.getClientFor(serverId);
     if (!client.supportsImageGeneration()) {
       throw new ProviderError(
         'unsupported',
@@ -136,6 +137,7 @@ export class ImageService {
     model?: string;
     size?: string;
     conversationId: string;
+    serverId?: string | null;
   }): Promise<string> {
     const info = await this.generate(
       {
@@ -146,6 +148,7 @@ export class ImageService {
         saveToWorkspacePath: input.relativePath || `images/gen-${Date.now()}.png`,
       },
       input.workspaceRoot,
+      input.serverId ?? null,
     );
     return `Generated image saved to workspace as ${info.workspaceRelativePath} (cache id ${info.fileName})`;
   }

@@ -116,4 +116,24 @@ describe('WorkspaceService', () => {
       expect(() => workspace.executeTool(root, 'not_a_real_tool', {})).toThrow(WorkspaceError);
     });
   });
+
+  describe('tryReadFile', () => {
+    it('returns the file content when the file exists', () => {
+      workspace.writeFile(root, 'notes.txt', 'hello world');
+      expect(workspace.tryReadFile(root, 'notes.txt')).toBe('hello world');
+    });
+
+    it('returns null when the file does not exist, instead of throwing', () => {
+      expect(workspace.tryReadFile(root, 'missing.txt')).toBeNull();
+    });
+
+    it('returns null for a directory rather than throwing', () => {
+      fs.mkdirSync(path.join(root, 'a-dir'));
+      expect(workspace.tryReadFile(root, 'a-dir')).toBeNull();
+    });
+
+    it('returns null instead of throwing when the path escapes the workspace root', () => {
+      expect(workspace.tryReadFile(root, path.join('..', 'outside.txt'))).toBeNull();
+    });
+  });
 });

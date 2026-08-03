@@ -41,9 +41,11 @@ export type ChatState = {
   ) => Promise<void>;
   deleteConversation: (id: string) => Promise<void>;
   setConversationModel: (model: string | null) => Promise<void>;
+  setConversationServer: (serverId: string | null) => Promise<void>;
   setActivePersona: (personaId: string) => void;
   setNewChatOpen: (open: boolean, kind?: ConversationKind, folderPath?: string | null) => void;
   sendMessage: (content: string) => Promise<void>;
+  editAndResend: (messageId: string, content: string) => Promise<void>;
   generateImage: (input: {
     prompt: string;
     size: string;
@@ -255,6 +257,17 @@ function createChatStore(): ChatStoreHook {
       await window.api.setConversationModel(conversationId, model);
     },
 
+    setConversationServer: async (serverId) => {
+      const conversationId = get().activeConversationId;
+      if (!conversationId) return;
+      const conversations = get().conversations.map((item) =>
+        item.id === conversationId ? { ...item, serverId } : item,
+      );
+      set({ conversations });
+      pushConversationsToAllPanes(conversations);
+      await window.api.setConversationServer(conversationId, serverId);
+    },
+
     setActivePersona: (personaId) => set({ activePersonaId: personaId }),
     setNewChatOpen: (open, kind = 'chat', folderPath = null) =>
       set({ newChatOpen: open, newChatKind: kind, newChatFolder: open ? folderPath : null }),
@@ -316,6 +329,17 @@ function createChatStore(): ChatStoreHook {
       }
     },
 
+    editAndResend: async (messageId, content) => {
+      const conversationId = get().activeConversationId;
+      const trimmed = content.trim();
+      if (!conversationId || !trimmed || get().isStreaming || get().generatingImage) return;
+
+      await window.api.deleteMessagesFrom(conversationId, messageId);
+      const messages = await window.api.listMessages(conversationId);
+      set({ messages });
+      await get().sendMessage(trimmed);
+    },
+
     generateImage: async ({ prompt, size, steps, cfgScale, seed, saveToWorkspacePath }) => {
       const conversationId = get().activeConversationId;
       const trimmed = prompt.trim();
@@ -354,7 +378,9 @@ function createChatStore(): ChatStoreHook {
     },
 
     cancelStream: async () => {
-      await window.api.cancelChat();
+      const conversationId = get().activeConversationId;
+      if (!conversationId) return;
+      await window.api.cancelChat(conversationId);
     },
 
     appendToken: (conversationId, messageId, delta) => {

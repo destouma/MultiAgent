@@ -8,6 +8,8 @@ import { ModelPicker } from './components/ModelPicker';
 import { ModelsModal } from './components/ModelsModal';
 import { NewChatModal } from './components/NewChatModal';
 import { PersonaSwitcher } from './components/PersonaSwitcher';
+import { SearchModal } from './components/SearchModal';
+import { ServerPicker } from './components/ServerPicker';
 import { SettingsModal } from './components/SettingsModal';
 import { SplitPane } from './components/SplitPane';
 import { SplitPickerModal } from './components/SplitPickerModal';
@@ -21,6 +23,7 @@ export default function App() {
   const bootstrap = useChatStore((state) => state.bootstrap);
   const conversations = useChatStore((state) => state.conversations);
   const activeConversationId = useChatStore((state) => state.activeConversationId);
+  const isBusy = useChatStore((state) => state.isStreaming || state.generatingImage);
   const splitOpen = useSplitViewStore((state) => state.open);
   const loadSettings = useSettingsStore((state) => state.load);
   const setSettingsOpen = useSettingsStore((state) => state.setSettingsOpen);
@@ -120,22 +123,25 @@ export default function App() {
           ) : null}
         </header>
         <div className={`main-area ${splitOpen ? 'split' : ''}`}>
-          <main className="main">
+          <main className={`main ${isBusy ? 'busy' : ''}`}>
             <header className="topbar">
               <div className="topbar-left">
                 {isImageSession ? (
                   <>
                     <div className="brand-inline">Image session</div>
+                    <ServerPicker />
                     <ModelPicker kind="image" />
                   </>
                 ) : isOrchestratorSession ? (
                   <>
                     <div className="brand-inline">Orchestrator</div>
+                    <ServerPicker />
                     <ModelPicker kind="chat" />
                   </>
                 ) : (
                   <>
                     <PersonaSwitcher />
+                    <ServerPicker />
                     <ModelPicker kind="chat" />
                   </>
                 )}
@@ -157,6 +163,7 @@ export default function App() {
       <ModelsModal />
       <NewChatModal />
       <SplitPickerModal />
+      <SearchModal />
     </div>
   );
 }

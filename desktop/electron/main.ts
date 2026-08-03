@@ -3,7 +3,11 @@ import path from 'node:path';
 import { createServices, registerIpcHandlers, type AppServices } from './ipc/handlers';
 import { getSettings } from './config';
 
-const THEME_BACKGROUND = { light: '#F3F0E8', dark: '#17150F' } as const;
+const THEME_BACKGROUND = { light: '#F3F0E8', dark: '#17150F', terminal: '#000000' } as const;
+
+// icon.ico is a Windows-only format; every other platform (Linux window icon,
+// eventually macOS) uses the plain PNG instead.
+const WINDOW_ICON = process.platform === 'win32' ? '../build/icon.ico' : '../build/icon.png';
 
 let mainWindow: BrowserWindow | null = null;
 let services: AppServices | null = null;
@@ -24,7 +28,7 @@ function createWindow(): void {
     minHeight: 640,
     title: 'MultiAgent',
     backgroundColor: THEME_BACKGROUND[getSettings().theme],
-    icon: path.join(__dirname, '../build/icon.ico'),
+    icon: path.join(__dirname, WINDOW_ICON),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,

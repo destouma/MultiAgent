@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
 import type {
   AppSettings,
+  CheckpointDiff,
   ChatDoneEvent,
   ChatErrorEvent,
   ChatMessagesUpdatedEvent,
@@ -18,6 +19,7 @@ import type {
   ModelStatusEvent,
   OrchestratorStepEvent,
   Persona,
+  SearchResult,
   WorkspaceOpEvent,
 } from '../../shared/types';
 
@@ -29,14 +31,21 @@ const api = {
   listModels: (): Promise<ModelInfo[]> => ipcRenderer.invoke('models:list'),
   listLoadedModels: (): Promise<LoadedModelsResult> => ipcRenderer.invoke('models:loaded'),
   loadModel: (model: string): Promise<boolean> => ipcRenderer.invoke('models:load', model),
+  listModelsForServer: (serverId: string | null): Promise<ModelInfo[]> =>
+    ipcRenderer.invoke('models:listForServer', serverId),
+  listLoadedModelsForServer: (serverId: string | null): Promise<LoadedModelsResult> =>
+    ipcRenderer.invoke('models:loadedForServer', serverId),
   checkHealth: (): Promise<HealthStatus> => ipcRenderer.invoke('health:check'),
+  checkHealthForServer: (serverId: string | null): Promise<HealthStatus> =>
+    ipcRenderer.invoke('health:checkForServer', serverId),
   listPersonas: (): Promise<Persona[]> => ipcRenderer.invoke('personas:list'),
 
   sendChat: (
     request: ChatSendRequest,
   ): Promise<{ userMessageId: string; assistantMessageId: string }> =>
     ipcRenderer.invoke('chat:send', request),
-  cancelChat: (): Promise<boolean> => ipcRenderer.invoke('chat:cancel'),
+  cancelChat: (conversationId: string): Promise<boolean> =>
+    ipcRenderer.invoke('chat:cancel', conversationId),
 
   listConversations: (): Promise<Conversation[]> => ipcRenderer.invoke('conversations:list'),
   createConversation: (request?: CreateConversationRequest | string): Promise<Conversation> =>
@@ -45,12 +54,25 @@ const api = {
     ipcRenderer.invoke('conversations:rename', id, title),
   setConversationModel: (id: string, model: string | null): Promise<Conversation | null> =>
     ipcRenderer.invoke('conversations:setModel', id, model),
+  setConversationServer: (id: string, serverId: string | null): Promise<Conversation | null> =>
+    ipcRenderer.invoke('conversations:setServer', id, serverId),
+  exportConversation: (id: string, format: 'markdown' | 'json'): Promise<string | null> =>
+    ipcRenderer.invoke('conversations:export', id, format),
   deleteConversation: (id: string): Promise<boolean> =>
     ipcRenderer.invoke('conversations:delete', id),
   getConversation: (id: string): Promise<Conversation | null> =>
     ipcRenderer.invoke('conversations:get', id),
   listMessages: (conversationId: string): Promise<ChatMessage[]> =>
     ipcRenderer.invoke('messages:list', conversationId),
+  deleteMessagesFrom: (conversationId: string, messageId: string): Promise<boolean> =>
+    ipcRenderer.invoke('messages:deleteFrom', conversationId, messageId),
+
+  search: (term: string): Promise<SearchResult[]> => ipcRenderer.invoke('search:query', term),
+
+  diffCheckpoint: (checkpointId: string): Promise<CheckpointDiff> =>
+    ipcRenderer.invoke('checkpoints:diff', checkpointId),
+  revertCheckpoint: (checkpointId: string): Promise<boolean> =>
+    ipcRenderer.invoke('checkpoints:revert', checkpointId),
 
   listFolders: (): Promise<FolderEntry[]> => ipcRenderer.invoke('folders:list'),
   openFolder: (): Promise<FolderEntry | null> => ipcRenderer.invoke('folders:open'),

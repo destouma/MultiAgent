@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type KeyboardEvent } from 'react';
 import { parseImageMessage } from '../../../shared/types';
-import { useChatStore, useSecondaryChatStore, type ChatStoreHook } from '../store/chatStore';
+import { useChatStore, type ChatStoreHook } from '../store/chatStore';
 import { useSettingsStore } from '../store/settingsStore';
 import { MessageBubble } from './MessageBubble';
 
@@ -33,16 +33,13 @@ export function ImageStudio({ store = useChatStore }: Props) {
   const settings = useSettingsStore((state) => state.settings);
   const imageModels = useSettingsStore((state) => state.imageModels);
 
-  const otherStore = store === useChatStore ? useSecondaryChatStore : useChatStore;
-  const otherBusy = otherStore((state) => state.isStreaming || state.generatingImage);
-
   const active = conversations.find((item) => item.id === activeConversationId);
   const hasFolder = Boolean(active?.workspacePath);
   const models = imageModels();
   const activeModel = active?.model ?? settings?.imageModel ?? '';
   const providerSupportsImages = settings?.providerType !== 'ollama';
   const canGenerate = Boolean(
-    providerSupportsImages && !otherBusy && prompt.trim() && (activeModel || models[0]),
+    providerSupportsImages && prompt.trim() && (activeModel || models[0]),
   );
 
   const imageMessages = useMemo(
@@ -83,7 +80,7 @@ export function ImageStudio({ store = useChatStore }: Props) {
         {imageMessages.length ? (
           <div className="image-studio-gallery">
             {imageMessages.map((message) => (
-              <MessageBubble key={message.id} message={message} />
+              <MessageBubble key={message.id} message={message} store={store} />
             ))}
           </div>
         ) : null}
@@ -198,19 +195,13 @@ export function ImageStudio({ store = useChatStore }: Props) {
             </div>
           ) : null}
 
-          {otherBusy ? (
-            <div className="status-banner">
-              Waiting for the other split-view pane to finish generating…
-            </div>
-          ) : null}
-
           <div className="image-prompt-shell">
             <textarea
               value={prompt}
               onChange={(event) => setPrompt(event.target.value)}
               onKeyDown={onKeyDown}
               placeholder="Describe the image you want to generate..."
-              disabled={generatingImage || !providerSupportsImages || otherBusy}
+              disabled={generatingImage || !providerSupportsImages}
             />
             <div className="image-prompt-toolbar">
               <div className="image-prompt-actions image-prompt-actions-end">

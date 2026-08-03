@@ -59,6 +59,58 @@
   --orchestrator-fg: #fdba8c;
 }
 
+:root[data-theme='terminal'] {
+  color-scheme: dark;
+  --inline-code-bg: rgba(51, 255, 102, 0.1);
+  --bg: #000000;
+  --bg-elevated: #061006;
+  --bg-sidebar: #030803;
+  --ink: #4dff7f;
+  --ink-muted: #1f8f45;
+  --line: #10401f;
+  --accent: #33ff66;
+  --accent-hover: #6fffa0;
+  --accent-fg: #001505;
+  --accent-soft: rgba(51, 255, 102, 0.16);
+  --danger: #ff5566;
+  --shadow: 0 0 32px rgba(51, 255, 102, 0.18);
+  --btn-hover-border: #1f8f45;
+  --overlay-sheen: rgba(51, 255, 102, 0.05);
+  --overlay-hover: rgba(51, 255, 102, 0.08);
+  --overlay-glass: rgba(0, 8, 0, 0.78);
+  --overlay-glass-strong: rgba(0, 8, 0, 0.9);
+  --user-bubble-bg: #33ff66;
+  --user-bubble-fg: #001505;
+  --orchestrator-bg: rgba(51, 255, 102, 0.08);
+  --orchestrator-border: rgba(51, 255, 102, 0.35);
+  --orchestrator-fg: #9dffb8;
+}
+
+/* Phosphor-glow CRT flourish: monospace everywhere, glowing text, faint scanlines. */
+:root[data-theme='terminal'] body {
+  font-family: var(--mono);
+  text-shadow: 0 0 3px rgba(51, 255, 102, 0.45);
+  background:
+    radial-gradient(1200px 600px at 10% -10%, rgba(51, 255, 102, 0.1), transparent 55%),
+    radial-gradient(900px 500px at 100% 0%, rgba(51, 255, 102, 0.08), transparent 50%), var(--bg);
+}
+
+:root[data-theme='terminal'] body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9999;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0) 0px,
+    rgba(0, 0, 0, 0) 1px,
+    rgba(0, 0, 0, 0.15) 2px,
+    rgba(0, 0, 0, 0.15) 3px
+  );
+  mix-blend-mode: multiply;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -127,12 +179,12 @@ button {
 
 .sidebar-actions {
   display: flex;
+  flex-direction: column;
   gap: 8px;
-  flex-wrap: wrap;
 }
 
 .sidebar-actions .btn {
-  flex: 1 1 auto;
+  width: 100%;
 }
 
 .image-composer-wrap {
@@ -526,7 +578,15 @@ button {
   color: var(--ink-muted);
 }
 
-.conversation-delete {
+.conversation-item-actions {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.conversation-delete,
+.conversation-menu-btn {
   opacity: 0;
   border: none;
   background: transparent;
@@ -536,13 +596,50 @@ button {
 }
 
 .conversation-item:hover .conversation-delete,
-.conversation-item.active .conversation-delete {
+.conversation-item.active .conversation-delete,
+.conversation-item:hover .conversation-menu-btn,
+.conversation-item.active .conversation-menu-btn {
   opacity: 1;
 }
 
 .conversation-delete:hover {
   color: var(--danger);
   background: rgba(190, 18, 60, 0.08);
+}
+
+.conversation-menu-btn:hover {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.conversation-menu-pop {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  width: max-content;
+  min-width: 160px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 6px;
+  display: grid;
+  gap: 2px;
+  box-shadow: var(--shadow);
+  z-index: 5;
+}
+
+.conversation-menu-pop button {
+  border: none;
+  background: transparent;
+  text-align: left;
+  padding: 6px 8px;
+  border-radius: 8px;
+  font-size: 0.82rem;
+}
+
+.conversation-menu-pop button:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 
 .folder-group {
@@ -705,6 +802,13 @@ button {
   flex: 1;
 }
 
+/* Busy cursor over a generating pane; buttons keep their own `pointer` cursor
+   (see the `button { cursor: pointer; }` rule) since they stay clickable. */
+.main.busy,
+.split-pane.busy {
+  cursor: progress;
+}
+
 .topbar {
   display: flex;
   align-items: center;
@@ -747,7 +851,8 @@ button {
 
 .select:focus,
 .text-input:focus,
-.composer textarea:focus {
+.composer textarea:focus,
+.message-edit-textarea:focus {
   outline: 2px solid var(--accent-soft);
   border-color: var(--accent);
 }
@@ -1090,6 +1195,62 @@ button {
   box-shadow: var(--shadow);
 }
 
+.message-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: min(480px, 60vw);
+}
+
+.message-edit-textarea {
+  width: 100%;
+  min-height: 60px;
+  resize: vertical;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: var(--bg-elevated);
+  /* Explicit, not `inherit`: user-message bubbles invert to light text on a
+     dark background, but this textarea's own background is always the
+     normal (light-on-dark-theme / dark-on-light-theme) elevated surface —
+     inheriting the bubble's inverted color made typed text unreadable
+     against it. */
+  color: var(--ink);
+  font: inherit;
+}
+
+.message-edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.message-edit-trigger,
+.message-regenerate-trigger {
+  border: none;
+  background: transparent;
+  color: var(--ink-muted);
+  font-size: 0.76rem;
+  padding: 2px 4px;
+  border-radius: 6px;
+}
+
+/* The edit trigger sits on every user message, so it only appears on hover
+   to avoid cluttering the thread; regenerate only ever renders on the last
+   assistant message, so it stays visible as the thread's "next action". */
+.message-edit-trigger {
+  opacity: 0;
+}
+
+.message:hover .message-edit-trigger {
+  opacity: 1;
+}
+
+.message-edit-trigger:hover,
+.message-regenerate-trigger:hover {
+  color: var(--accent);
+}
+
 .composer-wrap {
   padding: 14px 18px 18px;
   border-top: 1px solid var(--line);
@@ -1124,6 +1285,35 @@ button {
 .composer-actions {
   display: flex;
   gap: 8px;
+}
+
+.context-usage {
+  max-width: 860px;
+  margin: 8px auto 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.76rem;
+  color: var(--ink-muted);
+}
+
+.context-usage-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ink-muted);
+}
+
+.context-usage-warn .context-usage-dot {
+  background: var(--accent);
+}
+
+.context-usage-danger {
+  color: var(--danger);
+}
+
+.context-usage-danger .context-usage-dot {
+  background: var(--danger);
 }
 
 .error-banner {
@@ -1195,6 +1385,47 @@ button {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+}
+
+.search-modal {
+  gap: 12px;
+}
+
+.search-results {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 340px;
+  overflow: auto;
+}
+
+.search-result {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 1px solid transparent;
+  background: transparent;
+  border-radius: 10px;
+  padding: 8px 10px;
+}
+
+.search-result:hover {
+  background: var(--overlay-hover);
+  border-color: var(--line);
+}
+
+.search-result-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.9rem;
+}
+
+.search-result-snippet {
+  margin: 4px 0 0;
+  color: var(--ink-muted);
+  font-size: 0.8rem;
+  line-height: 1.4;
 }
 
 .hint {
@@ -1282,73 +1513,71 @@ button {
   color: var(--danger);
 }
 
+.workspace-op-actions {
+  margin-left: 8px;
+  display: inline-flex;
+  gap: 8px;
+}
+
+.workspace-op-actions button {
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  padding: 0;
+  text-decoration: underline;
+}
+
+.workspace-op-actions button:hover {
+  color: var(--accent-hover);
+}
+
+.workspace-op-reverted {
+  color: var(--ink-muted);
+  font-style: italic;
+}
+
+.diff-modal {
+  width: min(760px, 100%);
+}
+
+.diff-lines {
+  max-height: 420px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+}
+
+.diff-line {
+  display: flex;
+  gap: 8px;
+  padding: 1px 10px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.diff-line-marker {
+  flex: 0 0 auto;
+  opacity: 0.6;
+}
+
+.diff-line-add {
+  background: rgba(21, 128, 61, 0.12);
+  color: #15803d;
+}
+
+.diff-line-remove {
+  background: rgba(190, 18, 60, 0.1);
+  color: var(--danger);
+}
+
 .image-prompt-input {
   resize: vertical;
   min-height: 72px;
   font-family: var(--font);
-}
-
-.theme-switch {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  cursor: pointer;
-  width: fit-content;
-}
-
-.theme-switch input {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  opacity: 0;
-  pointer-events: none;
-}
-
-.theme-switch-track {
-  position: relative;
-  width: 42px;
-  height: 24px;
-  flex-shrink: 0;
-  border-radius: 999px;
-  background: var(--line);
-  border: 1px solid var(--line);
-  transition:
-    background 160ms ease,
-    border-color 160ms ease;
-}
-
-.theme-switch-track::after {
-  content: '';
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  background: var(--bg-elevated);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
-  transition:
-    transform 160ms ease,
-    background 160ms ease;
-}
-
-.theme-switch input:checked + .theme-switch-track {
-  background: var(--accent);
-  border-color: var(--accent);
-}
-
-.theme-switch input:checked + .theme-switch-track::after {
-  transform: translateX(18px);
-  background: var(--accent-fg);
-}
-
-.theme-switch input:focus-visible + .theme-switch-track {
-  outline: 2px solid var(--accent-soft);
-  outline-offset: 2px;
-}
-
-.theme-switch-label {
-  font-size: 0.9rem;
 }
 
 .check-row {
@@ -1406,10 +1635,13 @@ button {
 
 .cursor {
   display: inline-block;
-  width: 0.55ch;
-  margin-left: 1px;
-  background: currentColor;
+  width: 0.5em;
+  height: 0.5em;
+  margin-left: 4px;
+  border-radius: 50%;
+  background: var(--accent);
   animation: blink 1s steps(1) infinite;
+  vertical-align: middle;
 }
 
 @keyframes blink {
@@ -1549,8 +1781,45 @@ button {
 }
 
 .server-row-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   font-size: 0.9rem;
   font-weight: 600;
+}
+
+.server-status-dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: #b9b09c;
+  cursor: pointer;
+}
+
+.server-status-dot.ok {
+  background: #15803d;
+}
+
+.server-status-dot.bad {
+  background: var(--danger);
+}
+
+.server-status-dot.checking {
+  background: #b9b09c;
+  animation: pulse 1.1s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
 }
 
 .server-row-detail {

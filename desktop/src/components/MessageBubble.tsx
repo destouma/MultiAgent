@@ -1,23 +1,36 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type KeyboardEvent } from 'react';
 import { parseImageMessage, type ChatMessage, type Persona } from '../../../shared/types';
-import { useChatStore } from '../store/chatStore';
+import { useChatStore, type ChatStoreHook } from '../store/chatStore';
 import { MessageContent } from './MessageContent';
 
 type Props = {
   message: ChatMessage;
   persona?: Persona;
   streaming?: boolean;
+  store?: ChatStoreHook;
+  editable?: boolean;
+  onRegenerate?: () => void;
 };
 
-export function MessageBubble({ message, persona, streaming }: Props) {
+export function MessageBubble({
+  message,
+  persona,
+  streaming,
+  store = useChatStore,
+  editable,
+  onRegenerate,
+}: Props) {
   const isUser = message.role === 'user';
   const image = !isUser ? parseImageMessage(message.content) : null;
-  const activeConversationId = useChatStore((state) => state.activeConversationId);
-  const conversations = useChatStore((state) => state.conversations);
+  const activeConversationId = store((state) => state.activeConversationId);
+  const conversations = store((state) => state.conversations);
+  const editAndResend = store((state) => state.editAndResend);
   const active = conversations.find((item) => item.id === activeConversationId);
   const [dataUrl, setDataUrl] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(message.content);
 
   useEffect(() => {
     if (!image) return;
@@ -113,6 +126,33 @@ export function MessageBubble({ message, persona, streaming }: Props) {
     );
   }
 
+  const startEdit = () => {
+    setDraft(message.content);
+    setEditing(true);
+  };
+
+  const cancelEdit = () => {
+    setEditing(false);
+    setDraft(message.content);
+  };
+
+  const saveEdit = () => {
+    const trimmed = draft.trim();
+    setEditing(false);
+    if (trimmed && trimmed !== message.content) {
+      void editAndResend(message.id, trimmed);
+    }
+  };
+
+  const onEditKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault();
+      saveEdit();
+    } else if (event.key === 'Escape') {
+      cancelEdit();
+    }
+  };
+
   return (
     <div className={`message ${isUser ? 'user' : 'assistant'}`}>
       {!isUser && (
@@ -127,8 +167,53 @@ export function MessageBubble({ message, persona, streaming }: Props) {
         className="bubble"
         style={!isUser && persona ? { borderLeft: `3px solid ${persona.color}` } : undefined}
       >
-        <MessageContent content={message.content} streaming={streaming} />
+        {editing ? (
+          <div className="message-edit">
+            <textarea
+              className="message-edit-textarea"
+              value={draft}
+              autoFocus
+              onChange={(event) => setDraft(event.target.value)}
+              onKeyDown={onEditKeyDown}
+            />
+            <div className="message-edit-actions">
+              <button type="button" className="btn btn-ghost" onClick={cancelEdit}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary"
+                disabled={!draft.trim()}
+                onClick={saveEdit}
+              >
+                Save &amp; resend
+              </button>
+            </div>
+          </div>
+        ) : (
+          <MessageContent content={message.content} streaming={streaming} />
+        )}
       </div>
+      {isUser && editable && !editing ? (
+        <button
+          type="button"
+          className="message-edit-trigger"
+          title="Edit and resend, discarding replies after this message"
+          onClick={startEdit}
+        >
+          ✎ Edit
+        </button>
+      ) : null}
+      {!isUser && onRegenerate ? (
+        <button
+          type="button"
+          className="message-regenerate-trigger"
+          title="Regenerate this response"
+          onClick={onRegenerate}
+        >
+          ↻ Regenerate
+        </button>
+      ) : null}
     </div>
   );
 }

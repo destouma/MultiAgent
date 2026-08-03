@@ -1,6 +1,7 @@
-import { useEffect, useState, type MouseEvent } from 'react';
+import { useEffect, useRef, useState, type MouseEvent } from 'react';
 import type { Conversation, ConversationKind } from '../../../shared/types';
 import { useChatStore } from '../store/chatStore';
+import { useSettingsStore } from '../store/settingsStore';
 import { useSplitViewStore } from '../store/splitViewStore';
 
 function folderLabel(folderPath: string): string {
@@ -22,6 +23,24 @@ function ConversationRow({ conversation }: { conversation: Conversation }) {
   const activeConversationId = useChatStore((state) => state.activeConversationId);
   const selectConversation = useChatStore((state) => state.selectConversation);
   const deleteConversation = useChatStore((state) => state.deleteConversation);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onPointerDown = (event: globalThis.MouseEvent) => {
+      if (!menuRef.current?.contains(event.target as Node)) {
+        setMenuOpen(false);
+      }
+    };
+    window.addEventListener('mousedown', onPointerDown);
+    return () => window.removeEventListener('mousedown', onPointerDown);
+  }, [menuOpen]);
+
+  const exportAs = (format: 'markdown' | 'json') => {
+    setMenuOpen(false);
+    void window.api.exportConversation(conversation.id, format);
+  };
 
   return (
     <div
@@ -40,17 +59,40 @@ function ConversationRow({ conversation }: { conversation: Conversation }) {
         <span className="conversation-title">{conversation.title}</span>
         <span className="conversation-folder">{kindLabel(conversation.kind)}</span>
       </div>
-      <button
-        type="button"
-        className="conversation-delete"
-        title="Delete conversation"
-        onClick={(event) => {
-          event.stopPropagation();
-          void deleteConversation(conversation.id);
-        }}
-      >
-        ×
-      </button>
+      <div className="conversation-item-actions" ref={menuRef}>
+        <button
+          type="button"
+          className="conversation-menu-btn"
+          title="Export conversation"
+          onClick={(event) => {
+            event.stopPropagation();
+            setMenuOpen((open) => !open);
+          }}
+        >
+          ⋯
+        </button>
+        {menuOpen ? (
+          <div className="conversation-menu-pop" onClick={(event) => event.stopPropagation()}>
+            <button type="button" onClick={() => exportAs('markdown')}>
+              Export as Markdown
+            </button>
+            <button type="button" onClick={() => exportAs('json')}>
+              Export as JSON
+            </button>
+          </div>
+        ) : null}
+        <button
+          type="button"
+          className="conversation-delete"
+          title="Delete conversation"
+          onClick={(event) => {
+            event.stopPropagation();
+            void deleteConversation(conversation.id);
+          }}
+        >
+          ×
+        </button>
+      </div>
     </div>
   );
 }
@@ -62,6 +104,7 @@ export function ConversationList() {
   const openFolder = useChatStore((state) => state.openFolder);
   const removeFolder = useChatStore((state) => state.removeFolder);
   const openSplitPicker = useSplitViewStore((state) => state.openPicker);
+  const setSearchOpen = useSettingsStore((state) => state.setSearchOpen);
   const [contextMenu, setContextMenu] = useState<FolderContextMenu | null>(null);
 
   useEffect(() => {
@@ -122,11 +165,10 @@ export function ConversationList() {
       </div>
 
       <div className="sidebar-actions">
-        <button
-          type="button"
-          className="btn btn-primary"
-          onClick={() => setNewChatOpen(true, 'chat')}
-        >
+        <button type="button" className="btn" onClick={() => setSearchOpen(true)}>
+          Search
+        </button>
+        <button type="button" className="btn" onClick={() => setNewChatOpen(true, 'chat')}>
           New chat
         </button>
         <button type="button" className="btn" onClick={() => setNewChatOpen(true, 'image')}>

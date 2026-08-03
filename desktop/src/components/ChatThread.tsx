@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useChatStore, type ChatStoreHook } from '../store/chatStore';
 import { useSettingsStore } from '../store/settingsStore';
+import { DiffModal } from './DiffModal';
 import { MessageBubble } from './MessageBubble';
 
 type Props = {
@@ -19,8 +20,22 @@ export function ChatThread({ store = useChatStore }: Props) {
   const workspaceOps = store((state) => state.workspaceOps);
   const orchestratorStatus = store((state) => state.orchestratorStatus);
   const modelStatus = store((state) => state.modelStatus);
+  const generatingImage = store((state) => state.generatingImage);
+  const editAndResend = store((state) => state.editAndResend);
   const personas = useSettingsStore((state) => state.personas);
   const bottomRef = useRef<HTMLDivElement | null>(null);
+  const [diffCheckpointId, setDiffCheckpointId] = useState<string | null>(null);
+  const [revertedCheckpoints, setRevertedCheckpoints] = useState<Set<string>>(new Set());
+
+  const revertCheckpoint = (checkpointId: string) => {
+    const ok = window.confirm(
+      'Revert this file change? This overwrites the current file content on disk.',
+    );
+    if (!ok) return;
+    void window.api.revertCheckpoint(checkpointId).then(() => {
+      setRevertedCheckpoints((prev) => new Set(prev).add(checkpointId));
+    });
+  };
 
   const activeConversation = useMemo(
     () => conversations.find((item) => item.id === activeConversationId) ?? null,
@@ -78,14 +93,32 @@ export function ChatThread({ store = useChatStore }: Props) {
         </div>
       ) : (
         <div className="messages">
-          {messages.map((message) => (
-            <MessageBubble
-              key={message.id}
-              message={message}
-              persona={message.personaId ? personaById.get(message.personaId) : undefined}
-            />
-          ))}
-          {isStreaming && workspaceOps.length ? (
+          {messages.map((message, index) => {
+            const isLast = index === messages.length - 1;
+            const editable = message.role === 'user' && !isStreaming && !generatingImage;
+            const canRegenerate =
+              isLast && message.role === 'assistant' && !isStreaming && !generatingImage;
+            return (
+              <MessageBubble
+                key={message.id}
+                store={store}
+                message={message}
+                persona={message.personaId ? personaById.get(message.personaId) : undefined}
+                editable={editable}
+                onRegenerate={
+                  canRegenerate
+                    ? () => {
+                        const lastUser = [...messages]
+                          .reverse()
+                          .find((item) => item.role === 'user');
+                        if (lastUser) void editAndResend(lastUser.id, lastUser.content);
+                      }
+                    : undefined
+                }
+              />
+            );
+          })}
+          {workspaceOps.length ? (
             <div className="workspace-ops">
               {workspaceOps.map((op, index) => (
                 <div
@@ -94,12 +127,27 @@ export function ChatThread({ store = useChatStore }: Props) {
                 >
                   <strong>{op.op}</strong> {op.path}
                   {op.detail ? <span> — {op.detail}</span> : null}
+                  {op.checkpointId && op.status === 'ok' ? (
+                    <span className="workspace-op-actions">
+                      <button type="button" onClick={() => setDiffCheckpointId(op.checkpointId!)}>
+                        View diff
+                      </button>
+                      {revertedCheckpoints.has(op.checkpointId) ? (
+                        <span className="workspace-op-reverted">Reverted</span>
+                      ) : (
+                        <button type="button" onClick={() => revertCheckpoint(op.checkpointId!)}>
+                          Revert
+                        </button>
+                      )}
+                    </span>
+                  ) : null}
                 </div>
               ))}
             </div>
           ) : null}
           {isStreaming && streamingMessageId ? (
             <MessageBubble
+              store={store}
               message={{
                 id: streamingMessageId,
                 conversationId: '',
@@ -115,6 +163,7 @@ export function ChatThread({ store = useChatStore }: Props) {
           <div ref={bottomRef} />
         </div>
       )}
+      <DiffModal checkpointId={diffCheckpointId} onClose={() => setDiffCheckpointId(null)} />
     </div>
   );
 }

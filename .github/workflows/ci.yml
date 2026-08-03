@@ -87,3 +87,36 @@ jobs:
           name: windows-installer
           path: desktop/release/*.exe
           retention-days: 90
+
+  package-linux:
+    name: Build Linux AppImage
+    needs: verify
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Install shared/ dependencies (openai)
+        working-directory: .
+        run: npm ci
+
+      - run: npm ci
+
+      - name: Build Linux AppImage
+        run: npm run pack:linux
+
+      - name: Upload AppImage
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-appimage
+          path: desktop/release/*.AppImage
+          retention-days: 90

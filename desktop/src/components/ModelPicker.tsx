@@ -86,6 +86,19 @@ export function ModelPicker({ kind = 'chat', store = useChatStore }: Props) {
     ? value
     : (filtered[0]?.id ?? '');
 
+  // The stored model (conversation.model, falling back to the global
+  // default) can point at a model that doesn't exist on the currently
+  // resolved server - e.g. after switching servers, or a stale global
+  // default. When that happens resolvedValue above already falls back to a
+  // real model for *display*, but that's meaningless unless it's also what
+  // actually gets sent - persist it so the picker never shows a model that
+  // isn't what chat/image generation will actually use.
+  useEffect(() => {
+    if (!resolvedValue || resolvedValue === value) return;
+    void setConversationModel(resolvedValue);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resolvedValue, value]);
+
   return (
     <div className="model-picker">
       <ModelSelect

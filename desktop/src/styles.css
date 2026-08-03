@@ -179,12 +179,12 @@ button {
 
 .sidebar-actions {
   display: flex;
+  flex-direction: column;
   gap: 8px;
-  flex-wrap: wrap;
 }
 
 .sidebar-actions .btn {
-  flex: 1 1 auto;
+  width: 100%;
 }
 
 .image-composer-wrap {
@@ -851,7 +851,8 @@ button {
 
 .select:focus,
 .text-input:focus,
-.composer textarea:focus {
+.composer textarea:focus,
+.message-edit-textarea:focus {
   outline: 2px solid var(--accent-soft);
   border-color: var(--accent);
 }
@@ -1209,7 +1210,12 @@ button {
   border-radius: 10px;
   padding: 8px 10px;
   background: var(--bg-elevated);
-  color: inherit;
+  /* Explicit, not `inherit`: user-message bubbles invert to light text on a
+     dark background, but this textarea's own background is always the
+     normal (light-on-dark-theme / dark-on-light-theme) elevated surface —
+     inheriting the bubble's inverted color made typed text unreadable
+     against it. */
+  color: var(--ink);
   font: inherit;
 }
 
@@ -1629,10 +1635,13 @@ button {
 
 .cursor {
   display: inline-block;
-  width: 0.55ch;
-  margin-left: 1px;
-  background: currentColor;
+  width: 0.5em;
+  height: 0.5em;
+  margin-left: 4px;
+  border-radius: 50%;
+  background: var(--accent);
   animation: blink 1s steps(1) infinite;
+  vertical-align: middle;
 }
 
 @keyframes blink {

@@ -165,11 +165,10 @@ export function ConversationList() {
       </div>
 
       <div className="sidebar-actions">
-        <button
-          type="button"
-          className="btn btn-primary"
-          onClick={() => setNewChatOpen(true, 'chat')}
-        >
+        <button type="button" className="btn" onClick={() => setSearchOpen(true)}>
+          Search
+        </button>
+        <button type="button" className="btn" onClick={() => setNewChatOpen(true, 'chat')}>
           New chat
         </button>
         <button type="button" className="btn" onClick={() => setNewChatOpen(true, 'image')}>
@@ -180,9 +179,6 @@ export function ConversationList() {
         </button>
         <button type="button" className="btn" onClick={() => void openFolder()}>
           Open folder
-        </button>
-        <button type="button" className="btn" onClick={() => setSearchOpen(true)}>
-          Search
         </button>
       </div>
 

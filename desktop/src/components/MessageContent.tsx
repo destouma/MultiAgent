@@ -77,7 +77,7 @@ export function MessageContent({ content, streaming }: Props) {
           </span>
         );
       })}
-      {streaming ? <span className="cursor">▋</span> : null}
+      {streaming ? <span className="cursor" aria-hidden /> : null}
     </div>
   );
 }

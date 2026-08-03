@@ -21,6 +21,7 @@ export default function App() {
   const bootstrap = useChatStore((state) => state.bootstrap);
   const conversations = useChatStore((state) => state.conversations);
   const activeConversationId = useChatStore((state) => state.activeConversationId);
+  const isBusy = useChatStore((state) => state.isStreaming || state.generatingImage);
   const splitOpen = useSplitViewStore((state) => state.open);
   const loadSettings = useSettingsStore((state) => state.load);
   const setSettingsOpen = useSettingsStore((state) => state.setSettingsOpen);
@@ -120,7 +121,7 @@ export default function App() {
           ) : null}
         </header>
         <div className={`main-area ${splitOpen ? 'split' : ''}`}>
-          <main className="main">
+          <main className={`main ${isBusy ? 'busy' : ''}`}>
             <header className="topbar">
               <div className="topbar-left">
                 {isImageSession ? (

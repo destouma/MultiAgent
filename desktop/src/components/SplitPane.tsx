@@ -8,13 +8,14 @@ import { useSecondaryChatStore } from '../store/chatStore';
 export function SplitPane() {
   const conversations = useSecondaryChatStore((state) => state.conversations);
   const activeConversationId = useSecondaryChatStore((state) => state.activeConversationId);
+  const isBusy = useSecondaryChatStore((state) => state.isStreaming || state.generatingImage);
 
   const active = conversations.find((item) => item.id === activeConversationId) ?? null;
   const isImageSession = active?.kind === 'image';
   const isOrchestratorSession = active?.kind === 'orchestrator';
 
   return (
-    <div className="split-pane">
+    <div className={`split-pane ${isBusy ? 'busy' : ''}`}>
       <header className="topbar">
         <div className="topbar-left">
           {isImageSession ? (

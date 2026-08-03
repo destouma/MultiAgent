@@ -1,6 +1,6 @@
 # MultiAgent Desktop
 
-Windows desktop chat app for local LLM servers. Talk to models through Lemonade, any other OpenAI-compatible API (NoLlama, LM Studio, vLLM, real OpenAI, ...), or a native Ollama server — save multiple named connections and switch between them in Settings — with switchable agent personas, workspace folder tools, image sessions (OpenAI-compatible providers only), orchestrator mode, and a side-by-side split view for comparing two conversations from the same folder.
+Desktop chat app for local LLM servers (Windows installer + Linux AppImage; macOS not packaged yet). Talk to models through Lemonade, any other OpenAI-compatible API (NoLlama, LM Studio, vLLM, real OpenAI, ...), or a native Ollama server — save multiple named connections and switch between them in Settings — with switchable agent personas, workspace folder tools, image sessions (OpenAI-compatible providers only), orchestrator mode, and a side-by-side split view for comparing two conversations from the same folder.
 
 This is the Electron client. Persona definitions (`../personas/`) and shared types (`../shared/types.ts`) live one level up, at the repo root, so they can also be used by [`../vscode-extension/`](../vscode-extension/).
 
@@ -48,3 +48,14 @@ What this does:
 ### Optional: bump version
 
 Edit `"version"` in `package.json` before packing so the installer filename and app version update.
+
+## Package a Linux AppImage
+
+```bash
+npm install
+npm run pack:linux
+```
+
+**Output:** `release/MultiAgent-<version>.AppImage` — a single self-contained executable; no install step, just `chmod +x` and run.
+
+**Must be built on Linux** (or Linux CI, e.g. `ubuntu-latest`) — AppImage packaging relies on symlinks that Windows can't create without elevated privileges, so `npm run pack:linux` will fail partway through on a Windows machine even though the config and build steps before it are identical. No signing is required to run an AppImage locally.

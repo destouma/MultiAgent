@@ -41,7 +41,7 @@ export type FolderEntry = {
   addedAt: number;
 };
 
-export type ThemeMode = 'light' | 'dark';
+export type ThemeMode = 'light' | 'dark' | 'terminal';
 
 export type ProviderType = 'openai' | 'lemonade' | 'ollama';
 

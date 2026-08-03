@@ -1,6 +1,6 @@
 # MultiAgent — Architecture & User Guide
 
-MultiAgent is a Windows desktop app (Electron + React) for chatting with local models. It connects to **Lemonade**, any other **OpenAI-compatible server** (NoLlama, LM Studio, vLLM, real OpenAI, ...), or a **native Ollama server** — save multiple named connections in Settings and switch between them without restarting. It supports switchable agent personas, folder-bound workspace chats with read/write tools, dedicated image sessions, **orchestrator** sessions that route work across specialists, and a **side-by-side split view** for comparing two conversations from the same folder.
+MultiAgent is a desktop app (Electron + React) for chatting with local models — packaged as a Windows installer and a Linux AppImage today, with macOS not yet packaged. It connects to **Lemonade**, any other **OpenAI-compatible server** (NoLlama, LM Studio, vLLM, real OpenAI, ...), or a **native Ollama server** — save multiple named connections in Settings and switch between them without restarting. It supports switchable agent personas, folder-bound workspace chats with read/write tools, dedicated image sessions, **orchestrator** sessions that route work across specialists, and a **side-by-side split view** for comparing two conversations from the same folder.
 
 ---
 
@@ -29,7 +29,7 @@ MultiAgent is a Windows desktop app (Electron + React) for chatting with local m
 | Settings     | `electron-store` → `%APPDATA%/MultiAgent/config.json`                                                                                                                                                            |
 | Chats        | SQLite via **sql.js** → `%APPDATA%/MultiAgent/chats.db`                                                                                                                                                          |
 | Images cache | `%APPDATA%/MultiAgent/images/*.png`                                                                                                                                                                              |
-| Packaging    | `electron-builder` NSIS (Windows x64)                                                                                                                                                                            |
+| Packaging    | `electron-builder` — NSIS installer (Windows x64), AppImage (Linux x64); macOS not packaged yet                                                                                                                  |
 
 **Security rule:** the renderer never calls the LLM server directly. All network I/O, file system access, and dialogs run in the Electron **main** process and are exposed through a typed `window.api` bridge (preload + `contextIsolation`).
 
@@ -175,7 +175,7 @@ MultiAgent/
 | `model`          | `""`                            | Fallback chat/orchestrator model for conversations that haven't set their own     |
 | `imageModel`     | `""`                            | Fallback image model for image sessions that haven't set their own                |
 | `maxHistory`     | `40`                            | Max messages sent as history                                                      |
-| `theme`          | `light`                         | UI theme (`light` \| `dark`), toggled in Settings                                 |
+| `theme`          | `light`                         | UI theme (`light` \| `dark` \| `terminal`), picked in Settings                    |
 | `servers`        | `[]`                            | Saved `ServerProfile[]` (name, providerType, baseUrl, apiKey, maxHistory)         |
 | `activeServerId` | `null`                          | Id of the `servers` entry currently copied into the fields above                  |
 
@@ -404,6 +404,25 @@ Installer options (see `package.json` → `build.nsis`):
 - Personas and `sql-wasm.wasm` are included via `extraResources`.
 - Lemonade is **not** bundled; end users must install and run it separately.
 - To change the displayed version / installer name, bump `"version"` in `package.json` and pack again.
+
+### Linux AppImage
+
+```bash
+npm run pack:linux
+```
+
+Equivalent to:
+
+```bash
+npm run build
+npx electron-builder --linux AppImage --x64
+```
+
+**Output:** `release/MultiAgent-<version>.AppImage` — a single self-contained executable (`chmod +x` and run, no install/signing needed). Config lives in `package.json` → `build.linux` (icon, `category`, `AppImage` target).
+
+**Must build on Linux** (or a Linux CI runner, e.g. `ubuntu-latest`) — AppImage packaging creates symlinks internally, which Windows can't do without elevated privileges; `npm run pack:linux` fails partway through (`EPERM: symlink`) on a Windows host even though the config itself validates and the `vite build`/`electron-builder` steps before packaging succeed. `ci.yml`'s `package-linux` job builds it on `ubuntu-latest`.
+
+macOS isn't packaged yet — beyond adding a `build.mac` target, it needs code signing and notarization (Apple Developer Program membership) to avoid Gatekeeper blocking the app outright, which is a real prerequisite rather than a cosmetic warning like Windows SmartScreen.
 
 ---
 

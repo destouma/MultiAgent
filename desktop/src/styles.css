@@ -59,6 +59,58 @@
   --orchestrator-fg: #fdba8c;
 }
 
+:root[data-theme='terminal'] {
+  color-scheme: dark;
+  --inline-code-bg: rgba(51, 255, 102, 0.1);
+  --bg: #000000;
+  --bg-elevated: #061006;
+  --bg-sidebar: #030803;
+  --ink: #4dff7f;
+  --ink-muted: #1f8f45;
+  --line: #10401f;
+  --accent: #33ff66;
+  --accent-hover: #6fffa0;
+  --accent-fg: #001505;
+  --accent-soft: rgba(51, 255, 102, 0.16);
+  --danger: #ff5566;
+  --shadow: 0 0 32px rgba(51, 255, 102, 0.18);
+  --btn-hover-border: #1f8f45;
+  --overlay-sheen: rgba(51, 255, 102, 0.05);
+  --overlay-hover: rgba(51, 255, 102, 0.08);
+  --overlay-glass: rgba(0, 8, 0, 0.78);
+  --overlay-glass-strong: rgba(0, 8, 0, 0.9);
+  --user-bubble-bg: #33ff66;
+  --user-bubble-fg: #001505;
+  --orchestrator-bg: rgba(51, 255, 102, 0.08);
+  --orchestrator-border: rgba(51, 255, 102, 0.35);
+  --orchestrator-fg: #9dffb8;
+}
+
+/* Phosphor-glow CRT flourish: monospace everywhere, glowing text, faint scanlines. */
+:root[data-theme='terminal'] body {
+  font-family: var(--mono);
+  text-shadow: 0 0 3px rgba(51, 255, 102, 0.45);
+  background:
+    radial-gradient(1200px 600px at 10% -10%, rgba(51, 255, 102, 0.1), transparent 55%),
+    radial-gradient(900px 500px at 100% 0%, rgba(51, 255, 102, 0.08), transparent 50%), var(--bg);
+}
+
+:root[data-theme='terminal'] body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9999;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0) 0px,
+    rgba(0, 0, 0, 0) 1px,
+    rgba(0, 0, 0, 0.15) 2px,
+    rgba(0, 0, 0, 0.15) 3px
+  );
+  mix-blend-mode: multiply;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -705,6 +757,13 @@ button {
   flex: 1;
 }
 
+/* Busy cursor over a generating pane; buttons keep their own `pointer` cursor
+   (see the `button { cursor: pointer; }` rule) since they stay clickable. */
+.main.busy,
+.split-pane.busy {
+  cursor: progress;
+}
+
 .topbar {
   display: flex;
   align-items: center;
@@ -1286,69 +1345,6 @@ button {
   resize: vertical;
   min-height: 72px;
   font-family: var(--font);
-}
-
-.theme-switch {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  cursor: pointer;
-  width: fit-content;
-}
-
-.theme-switch input {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  opacity: 0;
-  pointer-events: none;
-}
-
-.theme-switch-track {
-  position: relative;
-  width: 42px;
-  height: 24px;
-  flex-shrink: 0;
-  border-radius: 999px;
-  background: var(--line);
-  border: 1px solid var(--line);
-  transition:
-    background 160ms ease,
-    border-color 160ms ease;
-}
-
-.theme-switch-track::after {
-  content: '';
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  background: var(--bg-elevated);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
-  transition:
-    transform 160ms ease,
-    background 160ms ease;
-}
-
-.theme-switch input:checked + .theme-switch-track {
-  background: var(--accent);
-  border-color: var(--accent);
-}
-
-.theme-switch input:checked + .theme-switch-track::after {
-  transform: translateX(18px);
-  background: var(--accent-fg);
-}
-
-.theme-switch input:focus-visible + .theme-switch-track {
-  outline: 2px solid var(--accent-soft);
-  outline-offset: 2px;
-}
-
-.theme-switch-label {
-  font-size: 0.9rem;
 }
 
 .check-row {

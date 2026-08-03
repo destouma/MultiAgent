@@ -1,6 +1,12 @@
 import { useEffect, useState } from 'react';
-import type { ProviderType, ServerProfile } from '../../../shared/types';
+import type { ProviderType, ServerProfile, ThemeMode } from '../../../shared/types';
 import { useSettingsStore } from '../store/settingsStore';
+
+const THEME_OPTIONS: Array<{ value: ThemeMode; label: string }> = [
+  { value: 'light', label: 'Light' },
+  { value: 'dark', label: 'Dark' },
+  { value: 'terminal', label: 'Green Terminal' },
+];
 
 const LEMONADE_DEFAULT_URL = 'http://localhost:13305/api/v1';
 const OLLAMA_DEFAULT_URL = 'http://localhost:11434';
@@ -270,16 +276,19 @@ export function SettingsModal() {
 
         <div className="modal-grid">
           <div className="field">
-            <label>Appearance</label>
-            <label className="theme-switch">
-              <input
-                type="checkbox"
-                checked={theme === 'dark'}
-                onChange={(event) => void setTheme(event.target.checked ? 'dark' : 'light')}
-              />
-              <span className="theme-switch-track" />
-              <span className="theme-switch-label">{theme === 'dark' ? 'Dark' : 'Light'}</span>
-            </label>
+            <label htmlFor="theme">Appearance</label>
+            <select
+              id="theme"
+              className="select"
+              value={theme}
+              onChange={(event) => void setTheme(event.target.value as ThemeMode)}
+            >
+              {THEME_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
           </div>
           <p className="hint">
             {settings.providerType === 'ollama'

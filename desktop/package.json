@@ -1,7 +1,7 @@
 {
   "name": "multi-agent",
   "version": "1.0.0",
-  "description": "Windows desktop multi-agent chat for local LLM servers",
+  "description": "Desktop multi-agent chat for local LLM servers",
   "main": "dist-electron/main.js",
   "author": "MultiAgent",
   "license": "MIT",
@@ -12,6 +12,7 @@
     "preview": "vite preview",
     "start": "electron .",
     "pack": "npm run build && electron-builder --win nsis --x64 --publish never",
+    "pack:linux": "npm run build && electron-builder --linux AppImage --x64 --publish never",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.electron.json --noEmit",
@@ -83,6 +84,20 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
+    },
+    "linux": {
+      "icon": "build/icon.png",
+      "category": "Utility",
+      "synopsis": "Multi-agent chat over a local LLM server",
+      "syncDesktopName": true,
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
     }
   }
 }

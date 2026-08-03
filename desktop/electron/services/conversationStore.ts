@@ -8,8 +8,10 @@ import type {
   Conversation,
   ConversationKind,
   CreateConversationRequest,
+  FileCheckpoint,
   FolderEntry,
   MessageRole,
+  SearchResult,
 } from '../../../shared/types';
 
 function wasmPath(): string {
@@ -118,6 +120,21 @@ export class ConversationStore {
         GROUP BY workspacePath
       `);
     }
+
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS file_checkpoints (
+        id TEXT PRIMARY KEY,
+        conversationId TEXT NOT NULL,
+        relativePath TEXT NOT NULL,
+        previousContent TEXT,
+        previousExisted INTEGER NOT NULL,
+        createdAt INTEGER NOT NULL
+      );
+    `);
+    this.db.run(`
+      CREATE INDEX IF NOT EXISTS idx_checkpoints_conversation
+        ON file_checkpoints(conversationId);
+    `);
   }
 
   private persist(): void {
@@ -127,6 +144,10 @@ export class ConversationStore {
     const tmpPath = `${this.filePath}.${process.pid}.tmp`;
     fs.writeFileSync(tmpPath, Buffer.from(data));
     fs.renameSync(tmpPath, this.filePath);
+  }
+
+  private toKind(kind: string | null | undefined): ConversationKind {
+    return kind === 'image' ? 'image' : kind === 'orchestrator' ? 'orchestrator' : 'chat';
   }
 
   private mapConversation(row: {
@@ -139,8 +160,7 @@ export class ConversationStore {
     model?: string | null;
     serverId?: string | null;
   }): Conversation {
-    const kind: ConversationKind =
-      row.kind === 'image' ? 'image' : row.kind === 'orchestrator' ? 'orchestrator' : 'chat';
+    const kind = this.toKind(row.kind);
     return {
       id: row.id,
       title: row.title,
@@ -271,9 +291,84 @@ export class ConversationStore {
     return this.getConversation(id);
   }
 
+  search(term: string): SearchResult[] {
+    const trimmed = term.trim();
+    if (!trimmed) return [];
+    const MAX_RESULTS = 30;
+    // Escape SQLite LIKE's own special characters so a literal "%" or "_" in
+    // the search term is matched literally rather than as a wildcard.
+    const escaped = trimmed.replace(/[\\%_]/g, (ch) => `\\${ch}`);
+    const pattern = `%${escaped}%`;
+    const results = new Map<string, SearchResult>();
+
+    const titleStmt = this.db.prepare(
+      `SELECT id, title, kind, workspacePath FROM conversations
+       WHERE title LIKE ? ESCAPE '\\'
+       ORDER BY updatedAt DESC
+       LIMIT ?`,
+    );
+    titleStmt.bind([pattern, MAX_RESULTS]);
+    while (titleStmt.step()) {
+      const row = titleStmt.getAsObject() as {
+        id: string;
+        title: string;
+        kind: string | null;
+        workspacePath: string | null;
+      };
+      results.set(row.id, {
+        conversationId: row.id,
+        title: row.title,
+        kind: this.toKind(row.kind),
+        workspacePath: row.workspacePath ?? null,
+        matchedInTitle: true,
+        snippet: null,
+      });
+    }
+    titleStmt.free();
+
+    if (results.size < MAX_RESULTS) {
+      const messageStmt = this.db.prepare(
+        `SELECT m.conversationId, m.content, c.title, c.kind, c.workspacePath
+         FROM messages m
+         JOIN conversations c ON c.id = m.conversationId
+         WHERE m.content LIKE ? ESCAPE '\\'
+         ORDER BY m.createdAt DESC
+         LIMIT 200`,
+      );
+      messageStmt.bind([pattern]);
+      const lowerTerm = trimmed.toLowerCase();
+      while (results.size < MAX_RESULTS && messageStmt.step()) {
+        const row = messageStmt.getAsObject() as {
+          conversationId: string;
+          content: string;
+          title: string;
+          kind: string | null;
+          workspacePath: string | null;
+        };
+        if (results.has(row.conversationId)) continue;
+        const matchIndex = row.content.toLowerCase().indexOf(lowerTerm);
+        const start = matchIndex >= 0 ? Math.max(0, matchIndex - 40) : 0;
+        const end = matchIndex >= 0 ? matchIndex + lowerTerm.length + 40 : 80;
+        const snippet = row.content.slice(start, end).trim();
+        results.set(row.conversationId, {
+          conversationId: row.conversationId,
+          title: row.title,
+          kind: this.toKind(row.kind),
+          workspacePath: row.workspacePath ?? null,
+          matchedInTitle: false,
+          snippet,
+        });
+      }
+      messageStmt.free();
+    }
+
+    return Array.from(results.values());
+  }
+
   deleteConversation(id: string): boolean {
     const before = this.getConversation(id);
     this.db.run(`DELETE FROM messages WHERE conversationId = ?`, [id]);
+    this.db.run(`DELETE FROM file_checkpoints WHERE conversationId = ?`, [id]);
     this.db.run(`DELETE FROM conversations WHERE id = ?`, [id]);
     this.persist();
     return Boolean(before);
@@ -401,6 +496,90 @@ export class ConversationStore {
   updateMessageContent(id: string, content: string): void {
     this.db.run(`UPDATE messages SET content = ? WHERE id = ?`, [content, id]);
     this.persist();
+  }
+
+  /**
+   * Deletes the given message and every message after it in the same
+   * conversation, ordered by SQLite's implicit `rowid` (insertion order)
+   * rather than `createdAt`, since two messages can share a millisecond
+   * timestamp. Used to truncate a conversation before an edit-and-resend or
+   * a regenerate.
+   */
+  deleteMessagesFrom(conversationId: string, messageId: string): boolean {
+    const stmt = this.db.prepare(`SELECT rowid FROM messages WHERE id = ? AND conversationId = ?`);
+    stmt.bind([messageId, conversationId]);
+    if (!stmt.step()) {
+      stmt.free();
+      return false;
+    }
+    const { rowid } = stmt.getAsObject() as { rowid: number };
+    stmt.free();
+
+    this.db.run(`DELETE FROM messages WHERE conversationId = ? AND rowid >= ?`, [
+      conversationId,
+      rowid,
+    ]);
+    this.persist();
+    return true;
+  }
+
+  addCheckpoint(input: {
+    conversationId: string;
+    relativePath: string;
+    previousContent: string | null;
+    previousExisted: boolean;
+  }): FileCheckpoint {
+    const checkpoint: FileCheckpoint = {
+      id: randomUUID(),
+      conversationId: input.conversationId,
+      relativePath: input.relativePath,
+      previousContent: input.previousContent,
+      previousExisted: input.previousExisted,
+      createdAt: Date.now(),
+    };
+    this.db.run(
+      `INSERT INTO file_checkpoints (id, conversationId, relativePath, previousContent, previousExisted, createdAt)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        checkpoint.id,
+        checkpoint.conversationId,
+        checkpoint.relativePath,
+        checkpoint.previousContent,
+        checkpoint.previousExisted ? 1 : 0,
+        checkpoint.createdAt,
+      ],
+    );
+    this.persist();
+    return checkpoint;
+  }
+
+  getCheckpoint(id: string): FileCheckpoint | null {
+    const stmt = this.db.prepare(
+      `SELECT id, conversationId, relativePath, previousContent, previousExisted, createdAt
+       FROM file_checkpoints WHERE id = ?`,
+    );
+    stmt.bind([id]);
+    if (!stmt.step()) {
+      stmt.free();
+      return null;
+    }
+    const row = stmt.getAsObject() as {
+      id: string;
+      conversationId: string;
+      relativePath: string;
+      previousContent: string | null;
+      previousExisted: number;
+      createdAt: number;
+    };
+    stmt.free();
+    return {
+      id: row.id,
+      conversationId: row.conversationId,
+      relativePath: row.relativePath,
+      previousContent: row.previousContent,
+      previousExisted: Boolean(row.previousExisted),
+      createdAt: row.createdAt,
+    };
   }
 
   close(): void {

@@ -1,5 +1,6 @@
 import { useState, type KeyboardEvent } from 'react';
 import { useChatStore, type ChatStoreHook } from '../store/chatStore';
+import { ContextUsage } from './ContextUsage';
 
 type Props = {
   store?: ChatStoreHook;
@@ -57,6 +58,7 @@ export function Composer({ store = useChatStore }: Props) {
           )}
         </div>
       </div>
+      <ContextUsage store={store} />
     </div>
   );
 }

@@ -8,19 +8,6 @@ they'd be vs. how much work they are, not by priority.
 
 ### Proposed
 
-- **Per-conversation server selection.** Right now the LLM connection
-  (`providerType`/`baseUrl`/`apiKey`/`maxHistory`) is app-global — switching
-  servers in Settings affects every conversation. The **model** is already
-  per-conversation (`conversations.model` column, per-chat `ModelPicker`); the
-  natural next step is making the **server** per-conversation too, so a chat
-  bound to Lemonade keeps talking to Lemonade even after you switch the
-  active server elsewhere. Would need: a `serverId` column on `conversations`
-  (mirroring `model`), and `ChatService`/`OrchestratorService`/`ImageService`
-  resolving a client per-request (or a small `Map<serverId, LlmClient>` cache)
-  instead of the current single swapped-out `getClient()`/`setClient()`
-  singleton. Pairs nicely with split view — compare the same prompt against
-  two different servers side by side, not just two personas.
-
 - **AI dev loop.** Extend the workspace tool loop (`list_dir`/`read_file`/
   `write_file`/`delete_file` in `shared/workspace/workspaceService.ts`) with a
   `run_command` tool that executes a shell command in the bound folder,
@@ -37,27 +24,6 @@ they'd be vs. how much work they are, not by priority.
 
 ### Suggested
 
-- **Message edit + regenerate.** No way today to edit a sent message or
-  regenerate a reply without retyping — one of the more commonly-missed
-  features in a first-pass chat UI.
-- **True concurrent generation across split-view panes.** Documented as
-  out-of-scope in `ARCHITECTURE.md`: `ChatService`/`OrchestratorService` each
-  track a single in-flight `AbortController`, so the UI has to block Send in
-  the idle pane while the other streams. Swapping that single controller for
-  a `Map<conversationId, AbortController>` would let both panes genuinely
-  stream at once.
-- **Diff view + an undo/checkpoint for AI file writes.** `write_file`/
-  `delete_file` touch disk immediately with no review step. A lightweight
-  before/after diff when the model edits an existing file, plus a way to
-  revert the last AI-made change, would matter a lot more once the dev-loop
-  feature above lets the model make several unattended edits in a row.
-- **Conversation/message search.** Folders + conversations grow fast; there's
-  no way to search across titles or message content today.
-- **Export a conversation** to Markdown or JSON — easy given the SQLite store,
-  useful for sharing or archiving.
-- **Context/token usage indicator** near the composer, so a
-  `context_exceeded` error (see the existing error mapping in
-  `shared/llm/*.ts`) is something you see coming rather than hit.
 - **Code-sign the Windows installer.** Confirmed unsigned today — CI has no
   `CSC_LINK`/certificate wired in, so the NSIS installer trips SmartScreen and
   can't be verified as coming from a specific publisher.
@@ -75,12 +41,22 @@ they'd be vs. how much work they are, not by priority.
 - **Multi-conversation history** — the extension persists a single
   conversation per workspace (`workspaceState`); desktop has full
   create/switch/delete.
+- **Per-conversation server selection** — desktop can now pin a conversation
+  to a specific saved server profile (`Conversation.serverId`, independent
+  per-conversation `LlmClient`); the extension still only has the single
+  app-wide active connection since it has no multi-conversation store to
+  attach a `serverId` to. Would piggyback on the multi-conversation-history
+  item above.
 - **Publish somewhere durable** (Open VSX or an internal registry) once it's
   worth distributing beyond `npm run package` + manual `.vsix` install.
+- **Message edit/regenerate, conversation search/export, and file-write
+  diff/undo** — all desktop-only today (`ConversationStore`-backed, see
+  ARCHITECTURE.md); porting them needs the multi-conversation-history item
+  above first, since the extension's single `workspaceState` conversation has
+  no per-message ids or checkpoint table to hang them off of.
 
 ## Shared / infra
 
-- **Per-conversation server selection** and **`run_command` tool** above are
-  both natural fits for `shared/llm/` and `shared/workspace/` respectively,
-  so both clients would pick them up with comparatively little duplicated
-  work.
+- **`run_command` tool** above is a natural fit for
+  `shared/workspace/workspaceService.ts`, so both clients would pick it up
+  with comparatively little duplicated work.

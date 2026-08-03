@@ -305,3 +305,149 @@ describe('ConversationStore per-conversation server', () => {
     expect(store.getConversation(right.id)?.serverId).toBe('server-b');
   });
 });
+
+describe('ConversationStore deleteMessagesFrom', () => {
+  let dbPath: string;
+  let store: InstanceType<typeof ConversationStore>;
+
+  beforeEach(() => {
+    dbPath = tmpDbPath();
+  });
+
+  afterEach(() => {
+    store?.close();
+    for (const candidate of [dbPath, `${dbPath}.${process.pid}.tmp`]) {
+      fs.rmSync(candidate, { force: true });
+    }
+  });
+
+  it('deletes the given message and everything after it, keeping earlier messages', async () => {
+    store = new ConversationStore(dbPath);
+    await store.ensureReady();
+
+    const conversation = store.createConversation({ kind: 'chat' });
+    const first = store.addMessage({ conversationId: conversation.id, role: 'user', content: '1' });
+    const second = store.addMessage({
+      conversationId: conversation.id,
+      role: 'assistant',
+      content: '2',
+    });
+    store.addMessage({ conversationId: conversation.id, role: 'user', content: '3' });
+
+    expect(store.deleteMessagesFrom(conversation.id, second.id)).toBe(true);
+
+    const remaining = store.getMessages(conversation.id);
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0].id).toBe(first.id);
+  });
+
+  it('deletes every message when targeting the first one', async () => {
+    store = new ConversationStore(dbPath);
+    await store.ensureReady();
+
+    const conversation = store.createConversation({ kind: 'chat' });
+    const first = store.addMessage({ conversationId: conversation.id, role: 'user', content: '1' });
+    store.addMessage({ conversationId: conversation.id, role: 'assistant', content: '2' });
+
+    expect(store.deleteMessagesFrom(conversation.id, first.id)).toBe(true);
+    expect(store.getMessages(conversation.id)).toEqual([]);
+  });
+
+  it('does not touch messages in a different conversation, even with an earlier rowid', async () => {
+    store = new ConversationStore(dbPath);
+    await store.ensureReady();
+
+    const convoA = store.createConversation({ kind: 'chat' });
+    const convoB = store.createConversation({ kind: 'chat' });
+    store.addMessage({ conversationId: convoA.id, role: 'user', content: 'a1' });
+    const bMessage = store.addMessage({ conversationId: convoB.id, role: 'user', content: 'b1' });
+
+    expect(store.deleteMessagesFrom(convoB.id, bMessage.id)).toBe(true);
+    expect(store.getMessages(convoA.id)).toHaveLength(1);
+    expect(store.getMessages(convoB.id)).toEqual([]);
+  });
+
+  it('returns false and deletes nothing for an unknown message id', async () => {
+    store = new ConversationStore(dbPath);
+    await store.ensureReady();
+
+    const conversation = store.createConversation({ kind: 'chat' });
+    store.addMessage({ conversationId: conversation.id, role: 'user', content: '1' });
+
+    expect(store.deleteMessagesFrom(conversation.id, 'not-a-real-id')).toBe(false);
+    expect(store.getMessages(conversation.id)).toHaveLength(1);
+  });
+});
+
+describe('ConversationStore file checkpoints', () => {
+  let dbPath: string;
+  let store: InstanceType<typeof ConversationStore>;
+
+  beforeEach(() => {
+    dbPath = tmpDbPath();
+  });
+
+  afterEach(() => {
+    store?.close();
+    for (const candidate of [dbPath, `${dbPath}.${process.pid}.tmp`]) {
+      fs.rmSync(candidate, { force: true });
+    }
+  });
+
+  it('records and retrieves a checkpoint for an overwritten file', async () => {
+    store = new ConversationStore(dbPath);
+    await store.ensureReady();
+
+    const conversation = store.createConversation({ kind: 'chat' });
+    const checkpoint = store.addCheckpoint({
+      conversationId: conversation.id,
+      relativePath: 'notes.txt',
+      previousContent: 'old content',
+      previousExisted: true,
+    });
+
+    const fetched = store.getCheckpoint(checkpoint.id);
+    expect(fetched).toEqual(checkpoint);
+    expect(fetched?.previousContent).toBe('old content');
+    expect(fetched?.previousExisted).toBe(true);
+  });
+
+  it('records previousExisted:false and a null previousContent for a newly created file', async () => {
+    store = new ConversationStore(dbPath);
+    await store.ensureReady();
+
+    const conversation = store.createConversation({ kind: 'chat' });
+    const checkpoint = store.addCheckpoint({
+      conversationId: conversation.id,
+      relativePath: 'new-file.txt',
+      previousContent: null,
+      previousExisted: false,
+    });
+
+    const fetched = store.getCheckpoint(checkpoint.id);
+    expect(fetched?.previousExisted).toBe(false);
+    expect(fetched?.previousContent).toBeNull();
+  });
+
+  it('returns null for an unknown checkpoint id', async () => {
+    store = new ConversationStore(dbPath);
+    await store.ensureReady();
+    expect(store.getCheckpoint('not-a-real-id')).toBeNull();
+  });
+
+  it('deletes checkpoints when their conversation is deleted', async () => {
+    store = new ConversationStore(dbPath);
+    await store.ensureReady();
+
+    const conversation = store.createConversation({ kind: 'chat' });
+    const checkpoint = store.addCheckpoint({
+      conversationId: conversation.id,
+      relativePath: 'notes.txt',
+      previousContent: 'old',
+      previousExisted: true,
+    });
+
+    store.deleteConversation(conversation.id);
+    expect(store.getCheckpoint(checkpoint.id)).toBeNull();
+  });
+});

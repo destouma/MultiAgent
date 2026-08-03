@@ -80,7 +80,7 @@ export function ImageStudio({ store = useChatStore }: Props) {
         {imageMessages.length ? (
           <div className="image-studio-gallery">
             {imageMessages.map((message) => (
-              <MessageBubble key={message.id} message={message} />
+              <MessageBubble key={message.id} message={message} store={store} />
             ))}
           </div>
         ) : null}

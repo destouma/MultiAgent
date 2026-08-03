@@ -45,6 +45,7 @@ export type ChatState = {
   setActivePersona: (personaId: string) => void;
   setNewChatOpen: (open: boolean, kind?: ConversationKind, folderPath?: string | null) => void;
   sendMessage: (content: string) => Promise<void>;
+  editAndResend: (messageId: string, content: string) => Promise<void>;
   generateImage: (input: {
     prompt: string;
     size: string;
@@ -326,6 +327,17 @@ function createChatStore(): ChatStoreHook {
           error: cleanErrorMessage(error, 'Failed to send message'),
         });
       }
+    },
+
+    editAndResend: async (messageId, content) => {
+      const conversationId = get().activeConversationId;
+      const trimmed = content.trim();
+      if (!conversationId || !trimmed || get().isStreaming || get().generatingImage) return;
+
+      await window.api.deleteMessagesFrom(conversationId, messageId);
+      const messages = await window.api.listMessages(conversationId);
+      set({ messages });
+      await get().sendMessage(trimmed);
     },
 
     generateImage: async ({ prompt, size, steps, cfgScale, seed, saveToWorkspacePath }) => {

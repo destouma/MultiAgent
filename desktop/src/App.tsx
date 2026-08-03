@@ -8,6 +8,7 @@ import { ModelPicker } from './components/ModelPicker';
 import { ModelsModal } from './components/ModelsModal';
 import { NewChatModal } from './components/NewChatModal';
 import { PersonaSwitcher } from './components/PersonaSwitcher';
+import { SearchModal } from './components/SearchModal';
 import { ServerPicker } from './components/ServerPicker';
 import { SettingsModal } from './components/SettingsModal';
 import { SplitPane } from './components/SplitPane';
@@ -162,6 +163,7 @@ export default function App() {
       <ModelsModal />
       <NewChatModal />
       <SplitPickerModal />
+      <SearchModal />
     </div>
   );
 }

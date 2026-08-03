@@ -1,4 +1,5 @@
 import { dialog, ipcMain, type BrowserWindow } from 'electron';
+import fs from 'node:fs';
 import type {
   AppSettings,
   ChatSendRequest,
@@ -8,9 +9,16 @@ import type {
 import { encodeImageMessage } from '../../../shared/types';
 import { createLlmClient } from '../../../shared/llm/createLlmClient';
 import { ProviderError, type LlmClient } from '../../../shared/llm/types';
+import { WorkspaceService } from '../../../shared/workspace/workspaceService';
 import { ensureDefaultServer, getSettings, setSettings } from '../config';
 import { ChatService } from '../services/chatService';
 import { ConversationStore } from '../services/conversationStore';
+import {
+  formatConversationJson,
+  formatConversationMarkdown,
+  slugifyTitle,
+  type ExportFormat,
+} from '../services/exportFormat';
 import { ImageService } from '../services/imageService';
 import { PersonaRegistry } from '../services/personaRegistry';
 import { IpcChannels } from './channels';
@@ -67,6 +75,7 @@ export function registerIpcHandlers(
   getWindow: () => BrowserWindow | null,
 ): void {
   const { getClientFor, invalidateClients, store, personas, chat, images } = services;
+  const workspace = new WorkspaceService();
 
   ipcMain.handle(IpcChannels.settingsGet, () => getSettings());
 
@@ -136,6 +145,10 @@ export function registerIpcHandlers(
 
   ipcMain.handle(IpcChannels.healthCheck, async () => getClientFor(null).checkHealth());
 
+  ipcMain.handle(IpcChannels.healthCheckForServer, async (_event, serverId: string | null) =>
+    getClientFor(serverId).checkHealth(),
+  );
+
   ipcMain.handle(IpcChannels.personasList, () => personas.list());
 
   ipcMain.handle(IpcChannels.chatSend, async (_event, request: ChatSendRequest) => {
@@ -181,9 +194,110 @@ export function registerIpcHandlers(
 
   ipcMain.handle(IpcChannels.conversationsGet, (_event, id: string) => store.getConversation(id));
 
+  ipcMain.handle(
+    IpcChannels.conversationsExport,
+    async (_event, id: string, format: ExportFormat) => {
+      try {
+        const conversation = store.getConversation(id);
+        if (!conversation) {
+          throw new ProviderError('unknown', 'Conversation not found');
+        }
+        const messages = store.getMessages(id);
+        const content =
+          format === 'json'
+            ? formatConversationJson(conversation, messages)
+            : formatConversationMarkdown(conversation, messages, personas.list());
+        const extension = format === 'json' ? 'json' : 'md';
+        const defaultPath = `${slugifyTitle(conversation.title)}.${extension}`;
+
+        const win = getWindow();
+        const result = win
+          ? await dialog.showSaveDialog(win, {
+              title: 'Export conversation',
+              defaultPath,
+              filters:
+                format === 'json'
+                  ? [{ name: 'JSON', extensions: ['json'] }]
+                  : [{ name: 'Markdown', extensions: ['md'] }],
+            })
+          : await dialog.showSaveDialog({
+              title: 'Export conversation',
+              defaultPath,
+              filters:
+                format === 'json'
+                  ? [{ name: 'JSON', extensions: ['json'] }]
+                  : [{ name: 'Markdown', extensions: ['md'] }],
+            });
+        if (result.canceled || !result.filePath) return null;
+
+        fs.writeFileSync(result.filePath, content, 'utf8');
+        return result.filePath;
+      } catch (error) {
+        throw serializeError(error);
+      }
+    },
+  );
+
   ipcMain.handle(IpcChannels.messagesList, (_event, conversationId: string) =>
     store.getMessages(conversationId),
   );
+
+  ipcMain.handle(
+    IpcChannels.messagesDeleteFrom,
+    (_event, conversationId: string, messageId: string) =>
+      store.deleteMessagesFrom(conversationId, messageId),
+  );
+
+  ipcMain.handle(IpcChannels.searchQuery, (_event, term: string) => store.search(term));
+
+  ipcMain.handle(IpcChannels.checkpointsDiff, (_event, checkpointId: string) => {
+    const checkpoint = store.getCheckpoint(checkpointId);
+    if (!checkpoint) {
+      throw new ProviderError('unknown', 'Checkpoint not found');
+    }
+    const conversation = store.getConversation(checkpoint.conversationId);
+    if (!conversation?.workspacePath) {
+      throw new ProviderError('unknown', 'This chat no longer has a workspace folder bound to it');
+    }
+    return {
+      path: checkpoint.relativePath,
+      before: checkpoint.previousExisted ? checkpoint.previousContent : null,
+      after: workspace.tryReadFile(conversation.workspacePath, checkpoint.relativePath),
+    };
+  });
+
+  ipcMain.handle(IpcChannels.checkpointsRevert, (_event, checkpointId: string) => {
+    try {
+      const checkpoint = store.getCheckpoint(checkpointId);
+      if (!checkpoint) {
+        throw new ProviderError('unknown', 'Checkpoint not found');
+      }
+      const conversation = store.getConversation(checkpoint.conversationId);
+      if (!conversation?.workspacePath) {
+        throw new ProviderError(
+          'unknown',
+          'This chat no longer has a workspace folder bound to it',
+        );
+      }
+      if (checkpoint.previousExisted) {
+        workspace.writeFile(
+          conversation.workspacePath,
+          checkpoint.relativePath,
+          checkpoint.previousContent ?? '',
+        );
+      } else if (
+        workspace.tryReadFile(conversation.workspacePath, checkpoint.relativePath) !== null
+      ) {
+        // The op that created this checkpoint created the file from
+        // scratch; undoing it means removing the file, but only if it's
+        // still there (a later op may have already deleted it).
+        workspace.deleteFile(conversation.workspacePath, checkpoint.relativePath);
+      }
+      return true;
+    } catch (error) {
+      throw serializeError(error);
+    }
+  });
 
   ipcMain.handle(IpcChannels.foldersList, () => store.listFolders());
 

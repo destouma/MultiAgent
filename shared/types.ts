@@ -42,6 +42,15 @@ export type FolderEntry = {
   addedAt: number;
 };
 
+export type SearchResult = {
+  conversationId: string;
+  title: string;
+  kind: ConversationKind;
+  workspacePath: string | null;
+  matchedInTitle: boolean;
+  snippet: string | null;
+};
+
 export type ThemeMode = 'light' | 'dark' | 'terminal';
 
 export type ProviderType = 'openai' | 'lemonade' | 'ollama';
@@ -123,6 +132,24 @@ export type WorkspaceOpEvent = {
   path: string;
   status: 'running' | 'ok' | 'error';
   detail?: string;
+  /** Present on successful write_file/delete_file ops; lets the UI offer a diff/revert for that change. */
+  checkpointId?: string;
+};
+
+export type FileCheckpoint = {
+  id: string;
+  conversationId: string;
+  relativePath: string;
+  /** File content immediately before the write/delete, or null if the file didn't exist yet (the op created it). */
+  previousContent: string | null;
+  previousExisted: boolean;
+  createdAt: number;
+};
+
+export type CheckpointDiff = {
+  path: string;
+  before: string | null;
+  after: string | null;
 };
 
 export type GenerateImageRequest = {

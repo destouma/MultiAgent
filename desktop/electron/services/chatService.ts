@@ -354,6 +354,11 @@ export class ChatService {
       status: 'running',
     });
 
+    const capturesCheckpoint = input.name === 'write_file' || input.name === 'delete_file';
+    const previousContent = capturesCheckpoint
+      ? this.workspace.tryReadFile(input.workspacePath, relPath)
+      : null;
+
     try {
       let result: string;
       if (input.name === 'generate_image') {
@@ -368,6 +373,16 @@ export class ChatService {
       } else {
         result = this.workspace.executeTool(input.workspacePath, input.name, args);
       }
+
+      const checkpointId = capturesCheckpoint
+        ? this.store.addCheckpoint({
+            conversationId: input.conversationId,
+            relativePath: relPath,
+            previousContent,
+            previousExisted: previousContent !== null,
+          }).id
+        : undefined;
+
       this.emitOp({
         conversationId: input.conversationId,
         messageId: input.messageId,
@@ -375,6 +390,7 @@ export class ChatService {
         path: relPath,
         status: 'ok',
         detail: result.slice(0, 240),
+        checkpointId,
       });
       return result;
     } catch (error) {

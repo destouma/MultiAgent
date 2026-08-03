@@ -131,6 +131,15 @@ export class WorkspaceService {
     return fs.readFileSync(target, 'utf8');
   }
 
+  /** Like readFile, but returns null instead of throwing when the file is missing, not a file, or too large to read — used for checkpoint/diff snapshots where "doesn't exist" is a meaningful, expected state rather than an error. */
+  tryReadFile(workspaceRoot: string, relativePath: string): string | null {
+    try {
+      return this.readFile(workspaceRoot, relativePath);
+    } catch {
+      return null;
+    }
+  }
+
   writeFile(workspaceRoot: string, relativePath: string, content: string): string {
     if (Buffer.byteLength(content, 'utf8') > MAX_WRITE_BYTES) {
       throw new WorkspaceError(`Write too large. Max is ${MAX_WRITE_BYTES} bytes.`);

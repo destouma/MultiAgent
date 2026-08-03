@@ -1,6 +1,6 @@
 # MultiAgent — Architecture & User Guide
 
-MultiAgent is a desktop app (Electron + React) for chatting with local models — packaged as a Windows installer and a Linux AppImage today, with macOS not yet packaged. It connects to **Lemonade**, any other **OpenAI-compatible server** (NoLlama, LM Studio, vLLM, real OpenAI, ...), or a **native Ollama server** — save multiple named connections in Settings and switch between them without restarting. It supports switchable agent personas, folder-bound workspace chats with read/write tools, dedicated image sessions, **orchestrator** sessions that route work across specialists, and a **side-by-side split view** for comparing two conversations from the same folder — each conversation can be pinned to its own saved server connection and generates independently, so two servers can be in active use at the same time.
+MultiAgent is a desktop app (Electron + React) for chatting with local models — packaged as a Windows installer and a Linux AppImage today, with macOS not yet packaged. It connects to **Lemonade**, any other **OpenAI-compatible server** (NoLlama, LM Studio, vLLM, real OpenAI, ...), or a **native Ollama server** — save multiple named connections in Settings and switch between them without restarting. It supports switchable agent personas, folder-bound workspace chats with read/write tools, dedicated image sessions, **orchestrator** sessions that route work across specialists, and a **side-by-side split view** for comparing two conversations from the same folder — each conversation can be pinned to its own saved server connection and generates independently, so two servers can be in active use at the same time. Messages can be edited/regenerated, conversations searched and exported, AI file writes reviewed as a diff and reverted, and a rough token-usage estimate is shown near the composer.
 
 ---
 
@@ -191,8 +191,9 @@ Tables:
   - `kind`: `'chat'` | `'image'` | `'orchestrator'`
   - `model`: the model id used for this conversation specifically, or `null` to fall back to the global default (`AppSettings.model` / `imageModel`). Set independently per conversation via the top-bar/toolbar model picker — changing it in one chat never affects another chat, an orchestrator, or an image session, even within the same folder.
   - `serverId`: id of a saved `ServerProfile` this conversation is pinned to, or `null` to fall back to the active connection. Set via the top-bar Server picker; see **Two servers at once**, below.
-- `messages(id, conversationId, role, content, personaId, createdAt)`
+- `messages(id, conversationId, role, content, personaId, createdAt)` — deleted from a given message onward using SQLite's implicit `rowid` (insertion order), not `createdAt`, since two messages can share a millisecond timestamp; see **Message edit & regenerate**, below.
 - `folders(path, addedAt)` — folders opened via **Open folder**; also backfilled once from any pre-existing `conversations.workspacePath`
+- `file_checkpoints(id, conversationId, relativePath, previousContent, previousExisted, createdAt)` — one row per successful `write_file`/`delete_file` tool call, capturing the file's content immediately before the op (`previousContent: null` + `previousExisted: false` means the op created the file). Deleted along with the conversation. See **Diff & undo for AI file writes**, below.
 
 Path: `%APPDATA%/MultiAgent/chats.db`
 
@@ -205,24 +206,26 @@ Path: `%APPDATA%/MultiAgent/chats.db`
 
 ## 5. IPC contract
 
-| Channel                                           | Direction | Purpose                                                             |
-| ------------------------------------------------- | --------- | ------------------------------------------------------------------- |
-| `settings:get` / `settings:set`                   | invoke    | Read/update app settings                                            |
-| `models:list` / `models:loaded`                   | invoke    | List/loaded-status from the active connection                       |
-| `models:listForServer` / `models:loadedForServer` | invoke    | Same, for one saved server profile (per-conversation Server picker) |
-| `health:check`                                    | invoke    | Ping `/models`                                                      |
-| `personas:list`                                   | invoke    | Built-in personas                                                   |
-| `chat:send` / `chat:cancel(conversationId)`       | invoke    | Start / abort completion for one conversation                       |
-| `chat:token` / `chat:done` / `chat:error`         | event     | Streaming lifecycle                                                 |
-| `conversations:*`                                 | invoke    | list/create/rename/setModel/setServer/delete/get                    |
-| `messages:list`                                   | invoke    | Load thread                                                         |
-| `folders:list`                                    | invoke    | List opened folders                                                 |
-| `folders:open`                                    | invoke    | Native folder picker + register in `folders`                        |
-| `workspace:op`                                    | event     | Tool progress (list/read/write/delete/generate_image)               |
-| `images:generate`                                 | invoke    | Generate + persist message                                          |
-| `images:getDataUrl`                               | invoke    | Preview cached PNG                                                  |
-| `images:download`                                 | invoke    | Save-as dialog                                                      |
-| `images:saveToWorkspace`                          | invoke    | Copy into bound folder                                              |
+| Channel                                           | Direction | Purpose                                                                         |
+| ------------------------------------------------- | --------- | ------------------------------------------------------------------------------- |
+| `settings:get` / `settings:set`                   | invoke    | Read/update app settings                                                        |
+| `models:list` / `models:loaded`                   | invoke    | List/loaded-status from the active connection                                   |
+| `models:listForServer` / `models:loadedForServer` | invoke    | Same, for one saved server profile (per-conversation Server picker)             |
+| `health:check`                                    | invoke    | Ping `/models`                                                                  |
+| `personas:list`                                   | invoke    | Built-in personas                                                               |
+| `chat:send` / `chat:cancel(conversationId)`       | invoke    | Start / abort completion for one conversation                                   |
+| `chat:token` / `chat:done` / `chat:error`         | event     | Streaming lifecycle                                                             |
+| `conversations:*`                                 | invoke    | list/create/rename/setModel/setServer/delete/get/export                         |
+| `messages:list` / `messages:deleteFrom`           | invoke    | Load thread / truncate from a message onward (edit & regenerate)                |
+| `folders:list`                                    | invoke    | List opened folders                                                             |
+| `folders:open`                                    | invoke    | Native folder picker + register in `folders`                                    |
+| `workspace:op`                                    | event     | Tool progress (list/read/write/delete/generate_image)                           |
+| `checkpoints:diff` / `checkpoints:revert`         | invoke    | Diff a `write_file`/`delete_file` op against current disk content, or revert it |
+| `search:query`                                    | invoke    | Search conversation titles + message content                                    |
+| `images:generate`                                 | invoke    | Generate + persist message                                                      |
+| `images:getDataUrl`                               | invoke    | Preview cached PNG                                                              |
+| `images:download`                                 | invoke    | Save-as dialog                                                                  |
+| `images:saveToWorkspace`                          | invoke    | Copy into bound folder                                                          |
 
 ---
 
@@ -276,6 +279,14 @@ When a workspace is set, `ChatService` may:
 
 **Safety:** all paths are resolved under the workspace root; escaping (`..`) is rejected. Certain directories are ignored in trees (`node_modules`, `.git`, `dist`, …). Size limits apply to reads/writes.
 
+### Diff & undo for AI file writes
+
+Every successful `write_file`/`delete_file` tool call captures a **checkpoint** — the file's content immediately before the op (`ChatService.runToolAndEmit`, via `WorkspaceService.tryReadFile`, a `readFile` variant that returns `null` instead of throwing for a missing file) — persisted to the `file_checkpoints` table and attached to that op's `workspace:op` event as `checkpointId`.
+
+- The tool-activity line for that op (rendered under the assistant's message, and — unlike other workspace-op lines — left visible after streaming finishes, not just during it) gets **View diff** / **Revert** buttons.
+- **View diff** (`checkpoints:diff`) computes a line diff (`diffLines` from the `diff` package) between the checkpoint's `previousContent` and the file's current content on disk, shown in a modal.
+- **Revert** (`checkpoints:revert`) restores the file to `previousContent`, or deletes it if the checkpoint's `previousExisted` is `false` (the op created the file from scratch). One-shot — there's no redo stack.
+
 ### Image sessions
 
 **New image** creates a conversation with `kind: 'image'`. The main pane shows **Image Generator** (steps, CFG, width/height, seed, prompt, model chip).
@@ -296,6 +307,25 @@ Progress is shown in a status banner (`orchestrator:step` events). An orchestrat
 ### Optional title
 
 When creating a session, an optional **Title** field is available. If empty, defaults to `New chat` / `New image` / `New orchestrator` (then may auto-update from the first user prompt).
+
+### Message edit & regenerate
+
+Both reduce to the same primitive, `chatStore.editAndResend(messageId, content)`: delete the given message and everything after it in the conversation (`messages:deleteFrom`, ordered by SQLite `rowid` rather than `createdAt` so same-millisecond messages can't tie), then send `content` as a new turn through the normal `sendMessage` path — no separate backend send-path needed.
+
+- **Edit** (pencil icon, any user message, hidden while streaming/generating): turns the bubble into a textarea; saving truncates the conversation from that message onward and resends the edited text.
+- **Regenerate** (↻, only under the last message when it's from the assistant): truncates from the last user message (inclusive) onward and resends its original content unchanged — a fresh generation, not a branch/version history.
+
+### Conversation & message search
+
+The sidebar's **Search** button opens a modal that queries `ConversationStore.search(term)` (`search:query`) — a `LIKE` match (SQLite special characters escaped) against `conversations.title` first, then `messages.content` for a snippet, capped at 30 results, deduped by conversation. Selecting a result calls the normal `selectConversation`.
+
+### Export a conversation
+
+Each conversation's `⋯` menu (in the sidebar) offers **Export as Markdown** / **Export as JSON** (`conversations:export`, `electron/services/exportFormat.ts`). Markdown renders each message as `**Role:**` + content (image messages become a one-line `_Generated image: prompt_` note); JSON is `{ conversation, messages }`. A native save dialog suggests a slugified-title filename.
+
+### Context/token usage indicator
+
+A small `~N tokens · last M messages` line under the composer (`ContextUsage.tsx`), using a `chars / 4` approximation (`shared/tokenEstimate.ts`) over the active persona's system prompt plus the same message window `ChatService`/`OrchestratorService` would actually send (capped to the bound server profile's `maxHistory`, or the global default). It's a rough heuristic, not a real tokenizer — there's no bundled tokenizer, and one would need to be model-specific anyway across the range of local models this app supports — colored neutral/accent/danger past 4,000 / 8,000 estimated tokens purely to give an early warning before a `context_exceeded` error, not to enforce anything.
 
 ---
 
@@ -464,4 +494,3 @@ macOS isn't packaged yet — beyond adding a `build.mac` target, it needs code s
 - Image edit / variations / upscale modes (UI placeholders only; generate is implemented)
 - Parallel specialist execution (specialists still run one at a time)
 - Write/delete/generate-image tools inside orchestrator sessions (specialists are read-only; only workspace chats can modify files)
-- Concurrent generation across split-view panes (`ChatService`/`OrchestratorService` each track one in-flight request; the UI blocks Send/Generate in the idle pane instead)

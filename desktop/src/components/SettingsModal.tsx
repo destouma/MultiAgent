@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { ProviderType, ServerProfile, ThemeMode } from '../../../shared/types';
 import { useSettingsStore } from '../store/settingsStore';
+import { ServerStatusDot } from './ServerStatusDot';
 
 const THEME_OPTIONS: Array<{ value: ThemeMode; label: string }> = [
   { value: 'light', label: 'Light' },
@@ -144,7 +145,10 @@ export function SettingsModal() {
               return (
                 <div key={server.id} className={`server-row ${isActive ? 'active' : ''}`}>
                   <div className="server-row-meta">
-                    <span className="server-row-name">{server.name}</span>
+                    <span className="server-row-name">
+                      <ServerStatusDot serverId={server.id} />
+                      {server.name}
+                    </span>
                     <span className="server-row-detail">
                       <span className="models-tag">{providerLabel(server.providerType)}</span>
                       <span className="server-row-url">{server.baseUrl}</span>
@@ -152,7 +156,7 @@ export function SettingsModal() {
                   </div>
                   <div className="server-row-actions">
                     {isActive ? (
-                      <span className="server-row-active-label">Active</span>
+                      <span className="server-row-active-label">Default</span>
                     ) : (
                       <button
                         type="button"
@@ -160,7 +164,7 @@ export function SettingsModal() {
                         disabled={switchingId === server.id}
                         onClick={() => void onUse(server.id)}
                       >
-                        {switchingId === server.id ? 'Switching…' : 'Use'}
+                        {switchingId === server.id ? 'Setting…' : 'Set as default'}
                       </button>
                     )}
                     <button

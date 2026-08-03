@@ -24,6 +24,7 @@ type SettingsState = {
   personas: Persona[];
   settingsOpen: boolean;
   modelsOpen: boolean;
+  searchOpen: boolean;
   loading: boolean;
   loadingModelId: string | null;
   load: () => Promise<void>;
@@ -35,6 +36,7 @@ type SettingsState = {
   setTheme: (theme: ThemeMode) => Promise<void>;
   setSettingsOpen: (open: boolean) => void;
   setModelsOpen: (open: boolean) => void;
+  setSearchOpen: (open: boolean) => void;
   imageModels: () => ModelInfo[];
   addServer: (profile: Omit<ServerProfile, 'id'>) => Promise<void>;
   updateServerProfile: (id: string, patch: Partial<Omit<ServerProfile, 'id'>>) => Promise<void>;
@@ -71,6 +73,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   personas: [],
   settingsOpen: false,
   modelsOpen: false,
+  searchOpen: false,
   loading: false,
   loadingModelId: null,
 
@@ -181,6 +184,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
 
   setSettingsOpen: (open) => set({ settingsOpen: open }),
   setModelsOpen: (open) => set({ modelsOpen: open }),
+  setSearchOpen: (open) => set({ searchOpen: open }),
 
   imageModels: () => get().models,
 

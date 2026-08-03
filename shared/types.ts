@@ -28,6 +28,7 @@ export type Conversation = {
   workspacePath: string | null;
   kind: ConversationKind;
   model: string | null;
+  serverId: string | null;
 };
 
 export type CreateConversationRequest = {

@@ -13,6 +13,7 @@ import type {
   ChatTokenEvent,
   OrchestratorStepEvent,
   Persona,
+  ServerProfile,
   WorkspaceOpEvent,
 } from '../../../shared/types';
 import { ProviderError, type LlmClient } from '../../../shared/llm/types';
@@ -37,25 +38,28 @@ const readOnlyWorkspaceTools = workspaceTools.filter((tool) =>
 ) as ChatCompletionTool[];
 
 export class OrchestratorService {
-  private abortController: AbortController | null = null;
+  private abortControllers = new Map<string, AbortController>();
   private activeMessageId: string | null = null;
   private workspace = new WorkspaceService();
 
   constructor(
-    private getClient: () => LlmClient,
+    private getClientFor: (serverId: string | null) => LlmClient,
     private store: ConversationStore,
     private personas: PersonaRegistry,
     private getSettings: () => AppSettings,
     private getWindow: () => BrowserWindow | null,
   ) {}
 
+  private resolveProfile(serverId: string | null): ServerProfile | null {
+    if (!serverId) return null;
+    return this.getSettings().servers.find((server) => server.id === serverId) ?? null;
+  }
+
   async send(
     request: ChatSendRequest,
   ): Promise<{ userMessageId: string; assistantMessageId: string }> {
-    if (this.abortController) {
-      this.abortController.abort();
-    }
-    this.abortController = null;
+    this.abortControllers.get(request.conversationId)?.abort();
+    this.abortControllers.delete(request.conversationId);
 
     const conversation = this.store.getConversation(request.conversationId);
     if (!conversation) {
@@ -63,6 +67,8 @@ export class OrchestratorService {
     }
 
     const settings = this.getSettings();
+    const profile = this.resolveProfile(conversation.serverId);
+    const client = this.getClientFor(conversation.serverId);
     const orchestrator =
       this.personas.get('orchestrator') ?? this.personas.get('general') ?? this.personas.list()[0];
     const model = orchestrator.defaultModel || conversation.model || settings.model;
@@ -83,13 +89,13 @@ export class OrchestratorService {
     const assistantMessageId = randomUUID();
     this.activeMessageId = assistantMessageId;
     const myController = new AbortController();
-    this.abortController = myController;
+    this.abortControllers.set(request.conversationId, myController);
     const signal = myController.signal;
 
     let fullContent = '';
 
     try {
-      await this.getClient().ensureModelLoaded(model, {
+      await client.ensureModelLoaded(model, {
         signal,
         onStatus: (message) => emitModelStatus(this.getWindow, model, message),
       });
@@ -112,7 +118,7 @@ export class OrchestratorService {
       });
 
       const history = this.store.getMessages(request.conversationId);
-      const capped = history.slice(-Math.max(1, settings.maxHistory));
+      const capped = history.slice(-Math.max(1, profile?.maxHistory ?? settings.maxHistory));
       const priorContext = capped
         .filter((message) => message.role === 'user' || message.role === 'assistant')
         .map((message) => {
@@ -127,6 +133,7 @@ export class OrchestratorService {
         .join('\n\n');
 
       const plan = await this.planSpecialists({
+        client,
         orchestrator,
         model,
         userContent: request.content,
@@ -154,6 +161,7 @@ export class OrchestratorService {
         });
 
         const specialistContent = await this.runSpecialist({
+          client,
           persona,
           model,
           userContent: request.content,
@@ -184,6 +192,7 @@ export class OrchestratorService {
       });
 
       fullContent = await this.synthesize({
+        client,
         orchestrator,
         model,
         userContent: request.content,
@@ -250,8 +259,8 @@ export class OrchestratorService {
 
       return { userMessageId: userMessage.id, assistantMessageId };
     } finally {
-      if (this.abortController === myController) {
-        this.abortController = null;
+      if (this.abortControllers.get(request.conversationId) === myController) {
+        this.abortControllers.delete(request.conversationId);
       }
       if (this.activeMessageId === assistantMessageId) {
         this.activeMessageId = null;
@@ -260,6 +269,7 @@ export class OrchestratorService {
   }
 
   private async planSpecialists(input: {
+    client: LlmClient;
     orchestrator: Persona;
     model: string;
     userContent: string;
@@ -306,13 +316,14 @@ export class OrchestratorService {
       },
     ];
 
-    const completion = await this.getClient().completeChat(messages, input.model, {
+    const completion = await input.client.completeChat(messages, input.model, {
       signal: input.signal,
     });
     return parsePlan(completion.content || '', SPECIALIST_IDS);
   }
 
   private async runSpecialist(input: {
+    client: LlmClient;
     persona: Persona;
     model: string;
     userContent: string;
@@ -356,13 +367,13 @@ export class OrchestratorService {
       },
     ];
 
-    await this.getClient().ensureModelLoaded(specialistModel, {
+    await input.client.ensureModelLoaded(specialistModel, {
       signal: input.signal,
       onStatus: (message) => emitModelStatus(this.getWindow, specialistModel, message),
     });
 
     if (!input.workspacePath) {
-      const completion = await this.getClient().completeChat(messages, specialistModel, {
+      const completion = await input.client.completeChat(messages, specialistModel, {
         signal: input.signal,
       });
       const content = (completion.content || '').trim();
@@ -370,6 +381,7 @@ export class OrchestratorService {
     }
 
     return this.runSpecialistWithTools({
+      client: input.client,
       messages,
       model: specialistModel,
       workspacePath: input.workspacePath,
@@ -381,6 +393,7 @@ export class OrchestratorService {
   }
 
   private async runSpecialistWithTools(input: {
+    client: LlmClient;
     messages: ChatCompletionMessageParam[];
     model: string;
     workspacePath: string;
@@ -399,14 +412,14 @@ export class OrchestratorService {
 
       let completion;
       try {
-        completion = await this.getClient().completeChat(messages, input.model, {
+        completion = await input.client.completeChat(messages, input.model, {
           tools: toolsEnabled ? readOnlyWorkspaceTools : undefined,
           signal: input.signal,
         });
       } catch (error) {
         if (toolsEnabled) {
           toolsEnabled = false;
-          completion = await this.getClient().completeChat(messages, input.model, {
+          completion = await input.client.completeChat(messages, input.model, {
             signal: input.signal,
           });
         } else {
@@ -511,6 +524,7 @@ export class OrchestratorService {
   }
 
   private async synthesize(input: {
+    client: LlmClient;
     orchestrator: Persona;
     model: string;
     userContent: string;
@@ -558,7 +572,7 @@ export class OrchestratorService {
     ];
 
     let full = '';
-    for await (const delta of this.getClient().streamChat(messages, input.model, input.signal)) {
+    for await (const delta of input.client.streamChat(messages, input.model, input.signal)) {
       full += delta;
       this.emitToken(input.conversationId, input.messageId, delta);
     }
@@ -583,10 +597,11 @@ export class OrchestratorService {
     this.getWindow()?.webContents.send('chat:messagesUpdated', event);
   }
 
-  cancel(): boolean {
-    if (!this.abortController) return false;
-    this.abortController.abort();
-    this.abortController = null;
+  cancel(conversationId: string): boolean {
+    const controller = this.abortControllers.get(conversationId);
+    if (!controller) return false;
+    controller.abort();
+    this.abortControllers.delete(conversationId);
     return true;
   }
 

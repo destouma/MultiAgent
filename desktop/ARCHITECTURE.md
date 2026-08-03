@@ -1,6 +1,6 @@
 # MultiAgent — Architecture & User Guide
 
-MultiAgent is a desktop app (Electron + React) for chatting with local models — packaged as a Windows installer and a Linux AppImage today, with macOS not yet packaged. It connects to **Lemonade**, any other **OpenAI-compatible server** (NoLlama, LM Studio, vLLM, real OpenAI, ...), or a **native Ollama server** — save multiple named connections in Settings and switch between them without restarting. It supports switchable agent personas, folder-bound workspace chats with read/write tools, dedicated image sessions, **orchestrator** sessions that route work across specialists, and a **side-by-side split view** for comparing two conversations from the same folder.
+MultiAgent is a desktop app (Electron + React) for chatting with local models — packaged as a Windows installer and a Linux AppImage today, with macOS not yet packaged. It connects to **Lemonade**, any other **OpenAI-compatible server** (NoLlama, LM Studio, vLLM, real OpenAI, ...), or a **native Ollama server** — save multiple named connections in Settings and switch between them without restarting. It supports switchable agent personas, folder-bound workspace chats with read/write tools, dedicated image sessions, **orchestrator** sessions that route work across specialists, and a **side-by-side split view** for comparing two conversations from the same folder — each conversation can be pinned to its own saved server connection and generates independently, so two servers can be in active use at the same time.
 
 ---
 
@@ -41,7 +41,7 @@ MultiAgent is a desktop app (Electron + React) for chatting with local models �
 - **`LemonadeClient`** (`shared/llm/lemonadeClient.ts`) — `extends OpenAiClient`, adding Lemonade's non-standard `/health` + `/load` extension on top of the inherited chat/completion behavior: `listLoadedModelNames()` parses `/health`'s `all_models_loaded` array, `supportsLoadStatus()` reflects whether that probe actually returned real data, and `ensureModelLoaded` explicitly calls `/load` then polls until the model shows as loaded (or times out).
 - **`OllamaClient`** (`shared/llm/ollamaClient.ts`) — native Ollama protocol: `POST /api/chat` (NDJSON streaming, not SSE), `GET /api/tags` for model listing, `GET /api/ps` for currently-loaded models (best-effort — not every Ollama-compatible server implements it; falls back to an empty list and `supportsLoadStatus() === false`), `POST /api/generate` with no prompt to trigger on-demand loading. Ollama assigns no id to tool calls and sends `arguments` as an object rather than a JSON string, so `completeChat` synthesizes an id and re-serializes arguments to match the shape `OpenAiClient` produces. **Has no image-generation endpoint** — `generateImage` always rejects with a `'unsupported'` `ProviderError`, and `ImageStudio` disables the Generate button with an explanation when this provider is active.
 
-`createLlmClient(providerType, settings)` (`shared/llm/createLlmClient.ts`) picks the implementation. `handlers.ts` holds the active client behind a `getClient()`/`setClient()` pair (mirroring the `getSettings`/`getWindow` getter pattern already used elsewhere) and rebuilds it on every `settings:set`, so switching provider type in Settings takes effect immediately without restarting the app.
+`createLlmClient(providerType, settings)` (`shared/llm/createLlmClient.ts`) picks the implementation. `handlers.ts` caches one `LlmClient` per resolved server behind `getClientFor(serverId)` — `serverId: null` resolves to the app's single active connection (`AppSettings.providerType`/`baseUrl`/`apiKey`), a non-null id resolves to that `ServerProfile` — and drops the whole cache on every `settings:set`, so editing a profile or switching provider type takes effect immediately without restarting the app. This is what lets two conversations be bound to two different saved servers and each get their own live `LlmClient` instance rather than sharing one app-wide connection (see **Two servers at once**, below).
 
 > **Compatibility note:** [NoLlama](https://github.com/aweussom/NoLlama) exposes both an OpenAI-compatible endpoint (port 8000, its primary/recommended interface) and an Ollama-compatible one (port 11434). As of testing, NoLlama's Ollama-compat `/api/chat` and `/api/generate` don't reliably honor the requested `model`/`prompt` — verified independently of this app via raw HTTP requests. Prefer the OpenAI-compatible provider pointed at NoLlama's port 8000 rather than the Ollama provider pointed at port 11434.
 
@@ -179,7 +179,7 @@ MultiAgent/
 | `servers`        | `[]`                            | Saved `ServerProfile[]` (name, providerType, baseUrl, apiKey, maxHistory)         |
 | `activeServerId` | `null`                          | Id of the `servers` entry currently copied into the fields above                  |
 
-`providerType`/`baseUrl`/`apiKey`/`maxHistory` are the _active connection_ — switching servers in Settings copies the selected profile's fields into these rather than every consumer reading `servers[activeServerId]` directly, so `getClient()`/`setClient()` keep working unchanged. `ensureDefaultServer()` (`electron/config.ts`) seeds one profile from these fields on first run if `servers` is empty, so existing configs aren't lost.
+`providerType`/`baseUrl`/`apiKey`/`maxHistory` are the _active connection_ — switching servers in Settings copies the selected profile's fields into these rather than every consumer reading `servers[activeServerId]` directly, so a conversation with no server of its own (`serverId: null`) keeps resolving through `getClientFor(null)` unchanged. `ensureDefaultServer()` (`electron/config.ts`) seeds one profile from these fields on first run if `servers` is empty, so existing configs aren't lost.
 
 Path: `%APPDATA%/MultiAgent/config.json`
 
@@ -187,9 +187,10 @@ Path: `%APPDATA%/MultiAgent/config.json`
 
 Tables:
 
-- `conversations(id, title, createdAt, updatedAt, workspacePath, kind, model)`
+- `conversations(id, title, createdAt, updatedAt, workspacePath, kind, model, serverId)`
   - `kind`: `'chat'` | `'image'` | `'orchestrator'`
   - `model`: the model id used for this conversation specifically, or `null` to fall back to the global default (`AppSettings.model` / `imageModel`). Set independently per conversation via the top-bar/toolbar model picker — changing it in one chat never affects another chat, an orchestrator, or an image session, even within the same folder.
+  - `serverId`: id of a saved `ServerProfile` this conversation is pinned to, or `null` to fall back to the active connection. Set via the top-bar Server picker; see **Two servers at once**, below.
 - `messages(id, conversationId, role, content, personaId, createdAt)`
 - `folders(path, addedAt)` — folders opened via **Open folder**; also backfilled once from any pre-existing `conversations.workspacePath`
 
@@ -204,23 +205,24 @@ Path: `%APPDATA%/MultiAgent/chats.db`
 
 ## 5. IPC contract
 
-| Channel                                   | Direction | Purpose                                               |
-| ----------------------------------------- | --------- | ----------------------------------------------------- |
-| `settings:get` / `settings:set`           | invoke    | Read/update app settings                              |
-| `models:list`                             | invoke    | List models from the active provider                  |
-| `health:check`                            | invoke    | Ping `/models`                                        |
-| `personas:list`                           | invoke    | Built-in personas                                     |
-| `chat:send` / `chat:cancel`               | invoke    | Start / abort completion                              |
-| `chat:token` / `chat:done` / `chat:error` | event     | Streaming lifecycle                                   |
-| `conversations:*`                         | invoke    | list/create/rename/setModel/delete/get                |
-| `messages:list`                           | invoke    | Load thread                                           |
-| `folders:list`                            | invoke    | List opened folders                                   |
-| `folders:open`                            | invoke    | Native folder picker + register in `folders`          |
-| `workspace:op`                            | event     | Tool progress (list/read/write/delete/generate_image) |
-| `images:generate`                         | invoke    | Generate + persist message                            |
-| `images:getDataUrl`                       | invoke    | Preview cached PNG                                    |
-| `images:download`                         | invoke    | Save-as dialog                                        |
-| `images:saveToWorkspace`                  | invoke    | Copy into bound folder                                |
+| Channel                                           | Direction | Purpose                                                             |
+| ------------------------------------------------- | --------- | ------------------------------------------------------------------- |
+| `settings:get` / `settings:set`                   | invoke    | Read/update app settings                                            |
+| `models:list` / `models:loaded`                   | invoke    | List/loaded-status from the active connection                       |
+| `models:listForServer` / `models:loadedForServer` | invoke    | Same, for one saved server profile (per-conversation Server picker) |
+| `health:check`                                    | invoke    | Ping `/models`                                                      |
+| `personas:list`                                   | invoke    | Built-in personas                                                   |
+| `chat:send` / `chat:cancel(conversationId)`       | invoke    | Start / abort completion for one conversation                       |
+| `chat:token` / `chat:done` / `chat:error`         | event     | Streaming lifecycle                                                 |
+| `conversations:*`                                 | invoke    | list/create/rename/setModel/setServer/delete/get                    |
+| `messages:list`                                   | invoke    | Load thread                                                         |
+| `folders:list`                                    | invoke    | List opened folders                                                 |
+| `folders:open`                                    | invoke    | Native folder picker + register in `folders`                        |
+| `workspace:op`                                    | event     | Tool progress (list/read/write/delete/generate_image)               |
+| `images:generate`                                 | invoke    | Generate + persist message                                          |
+| `images:getDataUrl`                               | invoke    | Preview cached PNG                                                  |
+| `images:download`                                 | invoke    | Save-as dialog                                                      |
+| `images:saveToWorkspace`                          | invoke    | Copy into bound folder                                              |
 
 ---
 
@@ -250,8 +252,17 @@ Right-click a folder with 2+ conversations → **Side by side** opens a picker (
 
 - **State:** `src/store/chatStore.ts` exports a `createChatStore()` factory; `useChatStore` (left/primary pane) and `useSecondaryChatStore` (right pane) are two separate instances of it. Both register themselves in a small in-module sibling list so a create/delete/rename in either pane pushes the refreshed `conversations`/`folders` list into the other immediately (and into the sidebar, which is always bound to the primary instance) — otherwise the second pane's mutations would only surface in the sidebar on the sidebar's own next unrelated action.
 - **Streaming isolation:** IPC events (`chat:token`, `chat:done`, `chat:error`, `workspace:op`, `orchestrator:step`) are dispatched to both store instances from `App.tsx`; each store's own reducer ignores events whose `conversationId` doesn't match its own `activeConversationId`, so tokens/errors/tool-ops never leak from one pane into the other.
-- **Generation is still serialized backend-wide:** `ChatService`/`OrchestratorService` each track a single in-flight `AbortController`, so only one generation (one chat/image, or one orchestrator run) can be in flight at a time even with two panes open. `Composer`/`ImageStudio` disable Send/Generate (with an explanatory tooltip) whenever the _other_ pane is streaming or generating, rather than silently cancelling it the way a second `chat:send` would.
-- **Layout:** the connection badge, Models, and Settings buttons live in a `.global-topbar` above both panes (not inside either pane's own topbar), since they're connection-level, not per-conversation. Each pane's own topbar only holds persona/model — this is also what keeps the two panes' topbar rows the same height and visually aligned regardless of which conversation kinds are shown side by side. A "× Close split" button appears in the global topbar while split view is open; closing it hides the second pane without deleting its conversation.
+- **Generation runs concurrently, per conversation:** `ChatService`/`OrchestratorService` each keep a `Map<conversationId, AbortController>` rather than a single field, so sending in both panes at once starts two independent generations instead of the second cancelling the first. `chat:cancel` takes a `conversationId` end-to-end (`preload.cancelChat` → `chat.cancel()`/`orchestrator.cancel()`) so Stop in one pane only aborts that pane's request.
+- **Layout:** the connection badge, Models, and Settings buttons live in a `.global-topbar` above both panes (not inside either pane's own topbar), since they're connection-level, not per-conversation. Each pane's own topbar holds persona/server/model — this is also what keeps the two panes' topbar rows the same height and visually aligned regardless of which conversation kinds are shown side by side. A "× Close split" button appears in the global topbar while split view is open; closing it hides the second pane without deleting its conversation.
+
+### Two servers at once
+
+Any conversation — not just in split view — can be pinned to a specific saved server profile via the **Server** picker in the topbar (next to the model picker), independent of the app's single "active connection." Picking "Default" (the default for every existing conversation) keeps falling back to the active connection as before.
+
+- **Binding:** `Conversation.serverId` (nullable, mirrors the existing per-conversation `model` field exactly — same migration pattern, same `set*`/IPC/store plumbing). `null` resolves through `getClientFor(null)` (the active connection); a saved profile's id resolves to that profile's own `LlmClient`, cached and reused across sends.
+- **History cap:** when a conversation is pinned to a profile, that profile's own `maxHistory` is used for capping the sent history instead of the global `AppSettings.maxHistory`.
+- **Model lists are per-server too:** the topbar's model picker normally reads from the global `useSettingsStore` (`models`/`loadedModels`, fetched against the active connection). For a conversation pinned to a specific server, `ModelPicker` instead fetches that server's own list via `models:listForServer`/`models:loadedForServer` (`handlers.ts`, using the same `getClientFor(serverId)` cache) and keeps it in local component state — otherwise a pane bound to server B would show server A's models.
+- **Practical use:** open split view on a folder with two conversations, pin the left pane to one saved server and the right pane to another, and send in both — each pane streams from its own server, showing its own models, independently and at the same time.
 
 ### Workspace chats
 

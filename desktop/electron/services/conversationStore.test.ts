@@ -237,3 +237,71 @@ describe('ConversationStore per-conversation model', () => {
     expect(store.getConversation(image.id)?.model).toBe('image-model');
   });
 });
+
+describe('ConversationStore per-conversation server', () => {
+  let dbPath: string;
+  let store: InstanceType<typeof ConversationStore>;
+
+  beforeEach(() => {
+    dbPath = tmpDbPath();
+  });
+
+  afterEach(() => {
+    store?.close();
+    for (const candidate of [dbPath, `${dbPath}.${process.pid}.tmp`]) {
+      fs.rmSync(candidate, { force: true });
+    }
+  });
+
+  it('starts with no server set', async () => {
+    store = new ConversationStore(dbPath);
+    await store.ensureReady();
+
+    const conversation = store.createConversation({ kind: 'chat' });
+    expect(conversation.serverId).toBeNull();
+    expect(store.getConversation(conversation.id)?.serverId).toBeNull();
+  });
+
+  it('setConversationServer updates and persists the server', async () => {
+    store = new ConversationStore(dbPath);
+    await store.ensureReady();
+
+    const conversation = store.createConversation({ kind: 'chat' });
+    const updated = store.setConversationServer(conversation.id, 'server-a');
+
+    expect(updated?.serverId).toBe('server-a');
+    expect(store.getConversation(conversation.id)?.serverId).toBe('server-a');
+    expect(store.listConversations().find((c) => c.id === conversation.id)?.serverId).toBe(
+      'server-a',
+    );
+  });
+
+  it('can clear a conversation server back to null', async () => {
+    store = new ConversationStore(dbPath);
+    await store.ensureReady();
+
+    const conversation = store.createConversation({ kind: 'chat' });
+    store.setConversationServer(conversation.id, 'server-a');
+    const cleared = store.setConversationServer(conversation.id, null);
+
+    expect(cleared?.serverId).toBeNull();
+  });
+
+  it('keeps each conversation server independent', async () => {
+    store = new ConversationStore(dbPath);
+    await store.ensureReady();
+
+    const left = store.createConversation({ kind: 'chat' });
+    const right = store.createConversation({ kind: 'chat' });
+
+    store.setConversationServer(left.id, 'server-a');
+    store.setConversationServer(right.id, 'server-b');
+
+    expect(store.getConversation(left.id)?.serverId).toBe('server-a');
+    expect(store.getConversation(right.id)?.serverId).toBe('server-b');
+
+    store.setConversationServer(left.id, 'server-c');
+    expect(store.getConversation(left.id)?.serverId).toBe('server-c');
+    expect(store.getConversation(right.id)?.serverId).toBe('server-b');
+  });
+});

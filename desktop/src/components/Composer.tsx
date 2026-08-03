@@ -1,5 +1,5 @@
 import { useState, type KeyboardEvent } from 'react';
-import { useChatStore, useSecondaryChatStore, type ChatStoreHook } from '../store/chatStore';
+import { useChatStore, type ChatStoreHook } from '../store/chatStore';
 
 type Props = {
   store?: ChatStoreHook;
@@ -13,9 +13,6 @@ export function Composer({ store = useChatStore }: Props) {
   const error = store((state) => state.error);
   const modelStatus = store((state) => state.modelStatus);
 
-  const otherStore = store === useChatStore ? useSecondaryChatStore : useChatStore;
-  const otherBusy = otherStore((state) => state.isStreaming || state.generatingImage);
-
   const onSend = async () => {
     const content = value;
     setValue('');
@@ -25,7 +22,7 @@ export function Composer({ store = useChatStore }: Props) {
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
-      if (!isStreaming && !otherBusy && value.trim()) {
+      if (!isStreaming && value.trim()) {
         void onSend();
       }
     }
@@ -41,7 +38,7 @@ export function Composer({ store = useChatStore }: Props) {
           onChange={(event) => setValue(event.target.value)}
           onKeyDown={onKeyDown}
           placeholder="Message the local LLM… (Enter to send, Shift+Enter for newline)"
-          disabled={isStreaming || otherBusy}
+          disabled={isStreaming}
         />
         <div className="composer-actions">
           {isStreaming ? (
@@ -52,10 +49,7 @@ export function Composer({ store = useChatStore }: Props) {
             <button
               type="button"
               className="btn btn-primary"
-              disabled={!value.trim() || otherBusy}
-              title={
-                otherBusy ? 'Only one response can generate at a time across split view' : undefined
-              }
+              disabled={!value.trim()}
               onClick={() => void onSend()}
             >
               Send

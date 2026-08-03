@@ -16,8 +16,8 @@ import { PersonaRegistry } from '../services/personaRegistry';
 import { IpcChannels } from './channels';
 
 export type AppServices = {
-  getClient: () => LlmClient;
-  setClient: (next: LlmClient) => void;
+  getClientFor: (serverId: string | null) => LlmClient;
+  invalidateClients: () => void;
   store: ConversationStore;
   personas: PersonaRegistry;
   chat: ChatService;
@@ -25,44 +25,63 @@ export type AppServices = {
 };
 
 export async function createServices(getWindow: () => BrowserWindow | null): Promise<AppServices> {
-  const settings = ensureDefaultServer();
-  let client = createLlmClient(settings.providerType, settings);
-  const getClient = () => client;
-  const setClient = (next: LlmClient) => {
-    client = next;
+  ensureDefaultServer();
+
+  const clients = new Map<string, LlmClient>();
+  const getClientFor = (serverId: string | null): LlmClient => {
+    const settings = getSettings();
+    const profile = serverId ? settings.servers.find((server) => server.id === serverId) : null;
+    const key = profile?.id ?? '__active__';
+    const effective = profile ?? settings;
+    let client = clients.get(key);
+    if (!client) {
+      client = createLlmClient(effective.providerType, effective);
+      clients.set(key, client);
+    }
+    return client;
+  };
+  const invalidateClients = () => {
+    clients.clear();
   };
 
   const store = new ConversationStore();
   await store.ensureReady();
   const personas = new PersonaRegistry();
   personas.load();
-  const images = new ImageService(getClient, () => getSettings().imageModel, getWindow);
+  const images = new ImageService(getClientFor, () => getSettings().imageModel, getWindow);
 
-  const chat = new ChatService(getClient, store, personas, images, () => getSettings(), getWindow);
+  const chat = new ChatService(
+    getClientFor,
+    store,
+    personas,
+    images,
+    () => getSettings(),
+    getWindow,
+  );
 
-  return { getClient, setClient, store, personas, chat, images };
+  return { getClientFor, invalidateClients, store, personas, chat, images };
 }
 
 export function registerIpcHandlers(
   services: AppServices,
   getWindow: () => BrowserWindow | null,
 ): void {
-  const { getClient, setClient, store, personas, chat, images } = services;
+  const { getClientFor, invalidateClients, store, personas, chat, images } = services;
 
   ipcMain.handle(IpcChannels.settingsGet, () => getSettings());
 
   ipcMain.handle(IpcChannels.settingsSet, (_event, partial: Partial<AppSettings>) => {
     const next = setSettings(partial);
-    // Provider type or connection details may have changed; simplest and
-    // safest is to always build a fresh client rather than track exactly
-    // which fields changed.
-    setClient(createLlmClient(next.providerType, next));
+    // Provider type, connection details, or a saved server profile may have
+    // changed; simplest and safest is to always drop every cached client
+    // rather than track exactly which fields/profiles changed.
+    invalidateClients();
     return next;
   });
 
   ipcMain.handle(IpcChannels.modelsList, async () => {
     try {
-      return await getClient().listModels();
+      return await getClientFor(null).listModels();
     } catch (error) {
       throw serializeError(error);
     }
@@ -70,8 +89,8 @@ export function registerIpcHandlers(
 
   ipcMain.handle(IpcChannels.modelsLoaded, async () => {
     try {
-      const names = await getClient().listLoadedModelNames();
-      return { names, supported: getClient().supportsLoadStatus() };
+      const names = await getClientFor(null).listLoadedModelNames();
+      return { names, supported: getClientFor(null).supportsLoadStatus() };
     } catch (error) {
       throw serializeError(error);
     }
@@ -80,7 +99,7 @@ export function registerIpcHandlers(
   ipcMain.handle(IpcChannels.modelsLoad, async (_event, model: string) => {
     try {
       const win = getWindow();
-      await getClient().ensureModelLoaded(model, {
+      await getClientFor(null).ensureModelLoaded(model, {
         onStatus: (message) => {
           const lower = message.toLowerCase();
           const phase = lower.includes('ready')
@@ -97,7 +116,25 @@ export function registerIpcHandlers(
     }
   });
 
-  ipcMain.handle(IpcChannels.healthCheck, async () => getClient().checkHealth());
+  ipcMain.handle(IpcChannels.modelsListForServer, async (_event, serverId: string | null) => {
+    try {
+      return await getClientFor(serverId).listModels();
+    } catch (error) {
+      throw serializeError(error);
+    }
+  });
+
+  ipcMain.handle(IpcChannels.modelsLoadedForServer, async (_event, serverId: string | null) => {
+    try {
+      const client = getClientFor(serverId);
+      const names = await client.listLoadedModelNames();
+      return { names, supported: client.supportsLoadStatus() };
+    } catch (error) {
+      throw serializeError(error);
+    }
+  });
+
+  ipcMain.handle(IpcChannels.healthCheck, async () => getClientFor(null).checkHealth());
 
   ipcMain.handle(IpcChannels.personasList, () => personas.list());
 
@@ -109,7 +146,9 @@ export function registerIpcHandlers(
     }
   });
 
-  ipcMain.handle(IpcChannels.chatCancel, () => chat.cancel());
+  ipcMain.handle(IpcChannels.chatCancel, (_event, conversationId: string) =>
+    chat.cancel(conversationId),
+  );
 
   ipcMain.handle(IpcChannels.conversationsList, () => store.listConversations());
 
@@ -129,6 +168,11 @@ export function registerIpcHandlers(
 
   ipcMain.handle(IpcChannels.conversationsSetModel, (_event, id: string, model: string | null) =>
     store.setConversationModel(id, model),
+  );
+
+  ipcMain.handle(
+    IpcChannels.conversationsSetServer,
+    (_event, id: string, serverId: string | null) => store.setConversationServer(id, serverId),
   );
 
   ipcMain.handle(IpcChannels.conversationsDelete, (_event, id: string) =>
@@ -163,6 +207,7 @@ export function registerIpcHandlers(
       const info = await images.generate(
         { ...request, model: request.model || conversation.model || undefined },
         conversation.workspacePath,
+        conversation.serverId,
       );
 
       store.addMessage({

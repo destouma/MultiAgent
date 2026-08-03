@@ -41,6 +41,7 @@ export type ChatState = {
   ) => Promise<void>;
   deleteConversation: (id: string) => Promise<void>;
   setConversationModel: (model: string | null) => Promise<void>;
+  setConversationServer: (serverId: string | null) => Promise<void>;
   setActivePersona: (personaId: string) => void;
   setNewChatOpen: (open: boolean, kind?: ConversationKind, folderPath?: string | null) => void;
   sendMessage: (content: string) => Promise<void>;
@@ -255,6 +256,17 @@ function createChatStore(): ChatStoreHook {
       await window.api.setConversationModel(conversationId, model);
     },
 
+    setConversationServer: async (serverId) => {
+      const conversationId = get().activeConversationId;
+      if (!conversationId) return;
+      const conversations = get().conversations.map((item) =>
+        item.id === conversationId ? { ...item, serverId } : item,
+      );
+      set({ conversations });
+      pushConversationsToAllPanes(conversations);
+      await window.api.setConversationServer(conversationId, serverId);
+    },
+
     setActivePersona: (personaId) => set({ activePersonaId: personaId }),
     setNewChatOpen: (open, kind = 'chat', folderPath = null) =>
       set({ newChatOpen: open, newChatKind: kind, newChatFolder: open ? folderPath : null }),
@@ -354,7 +366,9 @@ function createChatStore(): ChatStoreHook {
     },
 
     cancelStream: async () => {
-      await window.api.cancelChat();
+      const conversationId = get().activeConversationId;
+      if (!conversationId) return;
+      await window.api.cancelChat(conversationId);
     },
 
     appendToken: (conversationId, messageId, delta) => {

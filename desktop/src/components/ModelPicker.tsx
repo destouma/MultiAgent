@@ -1,4 +1,6 @@
-import { isLikelyImageModel } from '../../../shared/types';
+import { useEffect, useState } from 'react';
+import { isLikelyImageModel, type ModelInfo } from '../../../shared/types';
+import { cleanErrorMessage } from '../lib/errors';
 import { useChatStore, type ChatStoreHook } from '../store/chatStore';
 import { useSettingsStore } from '../store/settingsStore';
 import { ModelSelect } from './ModelSelect';
@@ -9,18 +11,66 @@ type Props = {
 };
 
 export function ModelPicker({ kind = 'chat', store = useChatStore }: Props) {
-  const models = useSettingsStore((state) => state.models);
-  const modelsError = useSettingsStore((state) => state.modelsError);
-  const loadedModels = useSettingsStore((state) => state.loadedModels);
-  const loadStatusSupported = useSettingsStore((state) => state.loadStatusSupported);
-  const refreshModels = useSettingsStore((state) => state.refreshModels);
-  const refreshLoadedModels = useSettingsStore((state) => state.refreshLoadedModels);
+  const globalModels = useSettingsStore((state) => state.models);
+  const globalModelsError = useSettingsStore((state) => state.modelsError);
+  const globalLoadedModels = useSettingsStore((state) => state.loadedModels);
+  const globalLoadStatusSupported = useSettingsStore((state) => state.loadStatusSupported);
+  const refreshGlobalModels = useSettingsStore((state) => state.refreshModels);
+  const refreshGlobalLoadedModels = useSettingsStore((state) => state.refreshLoadedModels);
   const settings = useSettingsStore((state) => state.settings);
   const conversations = store((state) => state.conversations);
   const activeConversationId = store((state) => state.activeConversationId);
   const setConversationModel = store((state) => state.setConversationModel);
 
   const active = conversations.find((item) => item.id === activeConversationId);
+  const serverId = active?.serverId ?? null;
+
+  // A conversation pinned to a specific saved server has its own model list,
+  // independent of the global active-connection list the rest of the app
+  // (Settings/Models modal, connection badge) reads from.
+  const [serverModels, setServerModels] = useState<ModelInfo[]>([]);
+  const [serverModelsError, setServerModelsError] = useState<string | null>(null);
+  const [serverLoadedModels, setServerLoadedModels] = useState<string[]>([]);
+  const [serverLoadStatusSupported, setServerLoadStatusSupported] = useState(true);
+
+  const refreshServerModels = (id: string) => {
+    void window.api
+      .listModelsForServer(id)
+      .then((result) => {
+        setServerModels(result);
+        setServerModelsError(null);
+      })
+      .catch((err) => {
+        setServerModels([]);
+        setServerModelsError(cleanErrorMessage(err, 'Failed to load models'));
+      });
+  };
+
+  const refreshServerLoadedModels = (id: string) => {
+    void window.api
+      .listLoadedModelsForServer(id)
+      .then((result) => {
+        setServerLoadedModels(result.names);
+        setServerLoadStatusSupported(result.supported);
+      })
+      .catch(() => setServerLoadedModels([]));
+  };
+
+  useEffect(() => {
+    if (!serverId) return;
+    refreshServerModels(serverId);
+    refreshServerLoadedModels(serverId);
+  }, [serverId]);
+
+  const models = serverId ? serverModels : globalModels;
+  const modelsError = serverId ? serverModelsError : globalModelsError;
+  const loadedModels = serverId ? serverLoadedModels : globalLoadedModels;
+  const loadStatusSupported = serverId ? serverLoadStatusSupported : globalLoadStatusSupported;
+  const refreshModels = () =>
+    serverId ? refreshServerModels(serverId) : void refreshGlobalModels();
+  const refreshLoadedModels = () =>
+    serverId ? refreshServerLoadedModels(serverId) : void refreshGlobalLoadedModels();
+
   const filtered =
     kind === 'image'
       ? (() => {
@@ -47,15 +97,15 @@ export function ModelPicker({ kind = 'chat', store = useChatStore }: Props) {
         loadStatusSupported={loadStatusSupported}
         disabled={!filtered.length}
         onChange={(modelId) => void setConversationModel(modelId)}
-        onOpen={() => void refreshLoadedModels()}
+        onOpen={() => refreshLoadedModels()}
       />
       <button
         type="button"
         className="btn model-picker-refresh"
         title={modelsError ? `Refresh models — ${modelsError}` : 'Refresh models'}
         onClick={() => {
-          void refreshModels();
-          void refreshLoadedModels();
+          refreshModels();
+          refreshLoadedModels();
         }}
       >
         {modelsError ? '⚠ Retry' : '⟳'}

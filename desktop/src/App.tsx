@@ -8,6 +8,7 @@ import { ModelPicker } from './components/ModelPicker';
 import { ModelsModal } from './components/ModelsModal';
 import { NewChatModal } from './components/NewChatModal';
 import { PersonaSwitcher } from './components/PersonaSwitcher';
+import { ServerPicker } from './components/ServerPicker';
 import { SettingsModal } from './components/SettingsModal';
 import { SplitPane } from './components/SplitPane';
 import { SplitPickerModal } from './components/SplitPickerModal';
@@ -127,16 +128,19 @@ export default function App() {
                 {isImageSession ? (
                   <>
                     <div className="brand-inline">Image session</div>
+                    <ServerPicker />
                     <ModelPicker kind="image" />
                   </>
                 ) : isOrchestratorSession ? (
                   <>
                     <div className="brand-inline">Orchestrator</div>
+                    <ServerPicker />
                     <ModelPicker kind="chat" />
                   </>
                 ) : (
                   <>
                     <PersonaSwitcher />
+                    <ServerPicker />
                     <ModelPicker kind="chat" />
                   </>
                 )}

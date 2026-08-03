@@ -10,6 +10,7 @@ import type {
   ChatErrorEvent,
   ChatSendRequest,
   ChatTokenEvent,
+  ServerProfile,
   WorkspaceOpEvent,
 } from '../../../shared/types';
 import { ProviderError, type LlmClient } from '../../../shared/llm/types';
@@ -28,20 +29,31 @@ import { emitModelStatus } from './modelStatus';
 const MAX_TOOL_ROUNDS = 8;
 
 export class ChatService {
-  private abortController: AbortController | null = null;
+  private abortControllers = new Map<string, AbortController>();
   private activeMessageId: string | null = null;
   private workspace = new WorkspaceService();
   private orchestrator: OrchestratorService;
 
   constructor(
-    private getClient: () => LlmClient,
+    private getClientFor: (serverId: string | null) => LlmClient,
     private store: ConversationStore,
     private personas: PersonaRegistry,
     private images: ImageService,
     private getSettings: () => AppSettings,
     private getWindow: () => BrowserWindow | null,
   ) {
-    this.orchestrator = new OrchestratorService(getClient, store, personas, getSettings, getWindow);
+    this.orchestrator = new OrchestratorService(
+      getClientFor,
+      store,
+      personas,
+      getSettings,
+      getWindow,
+    );
+  }
+
+  private resolveProfile(serverId: string | null): ServerProfile | null {
+    if (!serverId) return null;
+    return this.getSettings().servers.find((server) => server.id === serverId) ?? null;
   }
 
   async send(
@@ -49,17 +61,13 @@ export class ChatService {
   ): Promise<{ userMessageId: string; assistantMessageId: string }> {
     const existing = this.store.getConversation(request.conversationId);
     if (existing?.kind === 'orchestrator') {
-      if (this.abortController) {
-        this.abortController.abort();
-        this.abortController = null;
-      }
+      this.abortControllers.get(request.conversationId)?.abort();
+      this.abortControllers.delete(request.conversationId);
       return this.orchestrator.send(request);
     }
 
-    if (this.abortController) {
-      this.abortController.abort();
-      this.abortController = null;
-    }
+    this.abortControllers.get(request.conversationId)?.abort();
+    this.abortControllers.delete(request.conversationId);
 
     const conversation = existing;
     if (!conversation) {
@@ -67,6 +75,7 @@ export class ChatService {
     }
 
     const settings = this.getSettings();
+    const profile = this.resolveProfile(conversation.serverId);
     const persona = this.personas.get(request.personaId) ?? this.personas.list()[0];
     const model = persona.defaultModel || conversation.model || settings.model;
 
@@ -87,7 +96,7 @@ export class ChatService {
     this.activeMessageId = assistantMessageId;
 
     const history = this.store.getMessages(request.conversationId);
-    const capped = history.slice(-Math.max(1, settings.maxHistory));
+    const capped = history.slice(-Math.max(1, profile?.maxHistory ?? settings.maxHistory));
     const workspacePath = conversation.workspacePath;
 
     const systemParts = [persona.systemPrompt];
@@ -128,11 +137,12 @@ export class ChatService {
 
     const win = this.getWindow();
     const myController = new AbortController();
-    this.abortController = myController;
+    this.abortControllers.set(request.conversationId, myController);
+    const client = this.getClientFor(conversation.serverId);
     let fullContent = '';
 
     try {
-      await this.getClient().ensureModelLoaded(model, {
+      await client.ensureModelLoaded(model, {
         signal: myController.signal,
         onStatus: (message) => emitModelStatus(this.getWindow, model, message),
       });
@@ -145,13 +155,10 @@ export class ChatService {
           conversationId: request.conversationId,
           messageId: assistantMessageId,
           signal: myController.signal,
+          serverId: conversation.serverId,
         });
       } else {
-        for await (const delta of this.getClient().streamChat(
-          openaiMessages,
-          model,
-          myController.signal,
-        )) {
+        for await (const delta of client.streamChat(openaiMessages, model, myController.signal)) {
           fullContent += delta;
           this.emitToken(request.conversationId, assistantMessageId, delta);
         }
@@ -204,8 +211,8 @@ export class ChatService {
 
       return { userMessageId: userMessage.id, assistantMessageId };
     } finally {
-      if (this.abortController === myController) {
-        this.abortController = null;
+      if (this.abortControllers.get(request.conversationId) === myController) {
+        this.abortControllers.delete(request.conversationId);
       }
       if (this.activeMessageId === assistantMessageId) {
         this.activeMessageId = null;
@@ -220,7 +227,9 @@ export class ChatService {
     conversationId: string;
     messageId: string;
     signal: AbortSignal;
+    serverId: string | null;
   }): Promise<string> {
+    const client = this.getClientFor(input.serverId);
     const messages = [...input.messages];
     let finalText = '';
     let toolsEnabled = true;
@@ -232,14 +241,14 @@ export class ChatService {
 
       let completion;
       try {
-        completion = await this.getClient().completeChat(messages, input.model, {
+        completion = await client.completeChat(messages, input.model, {
           tools: toolsEnabled ? (workspaceTools as ChatCompletionTool[]) : undefined,
           signal: input.signal,
         });
       } catch (error) {
         if (toolsEnabled) {
           toolsEnabled = false;
-          completion = await this.getClient().completeChat(messages, input.model, {
+          completion = await client.completeChat(messages, input.model, {
             signal: input.signal,
           });
         } else {
@@ -266,6 +275,7 @@ export class ChatService {
             messageId: input.messageId,
             name: call.name,
             rawArgs: call.arguments,
+            serverId: input.serverId,
           });
           messages.push({
             role: 'tool',
@@ -291,6 +301,7 @@ export class ChatService {
             messageId: input.messageId,
             name: action.name,
             rawArgs: JSON.stringify(action.args),
+            serverId: input.serverId,
           });
           results.push(`[${action.name}] ${result}`);
         }
@@ -323,6 +334,7 @@ export class ChatService {
     messageId: string;
     name: string;
     rawArgs: string;
+    serverId: string | null;
   }): Promise<string> {
     let args: Record<string, unknown>;
     try {
@@ -351,6 +363,7 @@ export class ChatService {
           relativePath: relPath,
           size: args.size ? String(args.size) : undefined,
           conversationId: input.conversationId,
+          serverId: input.serverId,
         });
       } else {
         result = this.workspace.executeTool(input.workspacePath, input.name, args);
@@ -388,11 +401,12 @@ export class ChatService {
     this.getWindow()?.webContents.send('workspace:op', event);
   }
 
-  cancel(): boolean {
-    const orchCancelled = this.orchestrator.cancel();
-    if (!this.abortController) return orchCancelled;
-    this.abortController.abort();
-    this.abortController = null;
+  cancel(conversationId: string): boolean {
+    const orchCancelled = this.orchestrator.cancel(conversationId);
+    const controller = this.abortControllers.get(conversationId);
+    if (!controller) return orchCancelled;
+    controller.abort();
+    this.abortControllers.delete(conversationId);
     return true;
   }
 

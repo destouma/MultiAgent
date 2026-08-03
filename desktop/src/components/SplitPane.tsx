@@ -3,6 +3,7 @@ import { Composer } from './Composer';
 import { ImageStudio } from './ImageStudio';
 import { ModelPicker } from './ModelPicker';
 import { PersonaSwitcher } from './PersonaSwitcher';
+import { ServerPicker } from './ServerPicker';
 import { useSecondaryChatStore } from '../store/chatStore';
 
 export function SplitPane() {
@@ -21,16 +22,19 @@ export function SplitPane() {
           {isImageSession ? (
             <>
               <div className="brand-inline">Image session</div>
+              <ServerPicker store={useSecondaryChatStore} />
               <ModelPicker kind="image" store={useSecondaryChatStore} />
             </>
           ) : isOrchestratorSession ? (
             <>
               <div className="brand-inline">Orchestrator</div>
+              <ServerPicker store={useSecondaryChatStore} />
               <ModelPicker kind="chat" store={useSecondaryChatStore} />
             </>
           ) : (
             <>
               <PersonaSwitcher store={useSecondaryChatStore} />
+              <ServerPicker store={useSecondaryChatStore} />
               <ModelPicker kind="chat" store={useSecondaryChatStore} />
             </>
           )}

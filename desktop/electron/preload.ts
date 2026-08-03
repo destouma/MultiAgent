@@ -29,6 +29,10 @@ const api = {
   listModels: (): Promise<ModelInfo[]> => ipcRenderer.invoke('models:list'),
   listLoadedModels: (): Promise<LoadedModelsResult> => ipcRenderer.invoke('models:loaded'),
   loadModel: (model: string): Promise<boolean> => ipcRenderer.invoke('models:load', model),
+  listModelsForServer: (serverId: string | null): Promise<ModelInfo[]> =>
+    ipcRenderer.invoke('models:listForServer', serverId),
+  listLoadedModelsForServer: (serverId: string | null): Promise<LoadedModelsResult> =>
+    ipcRenderer.invoke('models:loadedForServer', serverId),
   checkHealth: (): Promise<HealthStatus> => ipcRenderer.invoke('health:check'),
   listPersonas: (): Promise<Persona[]> => ipcRenderer.invoke('personas:list'),
 
@@ -36,7 +40,8 @@ const api = {
     request: ChatSendRequest,
   ): Promise<{ userMessageId: string; assistantMessageId: string }> =>
     ipcRenderer.invoke('chat:send', request),
-  cancelChat: (): Promise<boolean> => ipcRenderer.invoke('chat:cancel'),
+  cancelChat: (conversationId: string): Promise<boolean> =>
+    ipcRenderer.invoke('chat:cancel', conversationId),
 
   listConversations: (): Promise<Conversation[]> => ipcRenderer.invoke('conversations:list'),
   createConversation: (request?: CreateConversationRequest | string): Promise<Conversation> =>
@@ -45,6 +50,8 @@ const api = {
     ipcRenderer.invoke('conversations:rename', id, title),
   setConversationModel: (id: string, model: string | null): Promise<Conversation | null> =>
     ipcRenderer.invoke('conversations:setModel', id, model),
+  setConversationServer: (id: string, serverId: string | null): Promise<Conversation | null> =>
+    ipcRenderer.invoke('conversations:setServer', id, serverId),
   deleteConversation: (id: string): Promise<boolean> =>
     ipcRenderer.invoke('conversations:delete', id),
   getConversation: (id: string): Promise<Conversation | null> =>

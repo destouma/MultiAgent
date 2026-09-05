@@ -1,0 +1,163 @@
+package com.multiagent.desktop.llm;
+
+import com.fasterxml.jackson.databind.JsonNode;
+
+import java.io.IOException;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Set;
+import java.util.function.Consumer;
+
+/**
+ * Client for Lemonade Server specifically. Inherits the standard OpenAI chat/completion
+ * behavior from OpenAiClient and adds Lemonade's non-standard /health + /load extension on
+ * top, for real load-status reporting and explicit model preloading before inference.
+ * Mirrors shared/llm/lemonadeClient.ts.
+ */
+public class LemonadeClient extends OpenAiClient {
+
+    private static final long MODEL_LOAD_TIMEOUT_MS = 10 * 60 * 1000L;
+    private static final long MODEL_POLL_INTERVAL_MS = 1500L;
+
+    // Optimistic until a probe proves the server is unreachable, so the UI doesn't flash
+    // "unknown" before the first check completes.
+    private volatile boolean loadStatusSupported = true;
+
+    public LemonadeClient(ProviderSettings settings) {
+        super(settings);
+    }
+
+    private JsonNode tryGetServerHealth(CancellationToken token) {
+        try {
+            HttpRequest request = requestBuilder("/health").GET().build();
+            HttpResponse<String> response = HTTP.send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                return null;
+            }
+            return MAPPER.readTree(response.body());
+        } catch (IOException | InterruptedException e) {
+            return null;
+        }
+    }
+
+    @Override
+    public List<String> listLoadedModelNames() {
+        JsonNode health = tryGetServerHealth(null);
+        JsonNode loaded = health == null ? null : health.path("all_models_loaded");
+        loadStatusSupported = loaded != null && loaded.isArray();
+        if (!loadStatusSupported) {
+            return List.of();
+        }
+        Set<String> names = new LinkedHashSet<>();
+        for (JsonNode entry : loaded) {
+            String name = entry.path("model_name").asText("").trim();
+            if (!name.isEmpty()) {
+                names.add(name);
+            }
+        }
+        return new ArrayList<>(names);
+    }
+
+    @Override
+    public boolean supportsLoadStatus() {
+        return loadStatusSupported;
+    }
+
+    private void loadModel(String model, CancellationToken token) {
+        try {
+            HttpRequest request = requestBuilder("/load")
+                    .POST(HttpRequest.BodyPublishers.ofString(
+                            MAPPER.createObjectNode().put("model_name", model).toString()))
+                    .build();
+            HttpResponse<String> response = HTTP.send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                throw new ProviderException(ErrorCode.MODEL_NOT_LOADED,
+                        "Failed to load model \"" + model + "\" (" + response.statusCode() + "): "
+                                + response.body());
+            }
+        } catch (IOException | InterruptedException e) {
+            throw ProviderException.classify(e);
+        }
+    }
+
+    /** Lemonade needs an explicit /load call and polling before a model is ready for inference. */
+    @Override
+    public void ensureModelLoaded(String model, Consumer<String> onStatus, CancellationToken token) {
+        String name = model == null ? "" : model.trim();
+        if (name.isEmpty()) {
+            throw new ProviderException(ErrorCode.MODEL_NOT_LOADED, "No model selected.");
+        }
+
+        if (onStatus != null) {
+            onStatus.accept("Checking if " + name + " is loaded...");
+        }
+
+        JsonNode health = tryGetServerHealth(token);
+        JsonNode loaded = health == null ? null : health.path("all_models_loaded");
+        if (loaded == null || !loaded.isArray()) {
+            if (onStatus != null) {
+                onStatus.accept(name + " ready");
+            }
+            return;
+        }
+
+        if (isLoaded(listLoadedModelNames(), name)) {
+            if (onStatus != null) {
+                onStatus.accept(name + " is ready");
+            }
+            return;
+        }
+
+        if (onStatus != null) {
+            onStatus.accept("Loading " + name + "...");
+        }
+        loadModel(name, token);
+
+        if (isLoaded(listLoadedModelNames(), name)) {
+            if (onStatus != null) {
+                onStatus.accept(name + " is ready");
+            }
+            return;
+        }
+
+        long deadline = System.currentTimeMillis() + MODEL_LOAD_TIMEOUT_MS;
+        while (System.currentTimeMillis() < deadline) {
+            if (token != null && token.isCancelled()) {
+                throw new ProviderException(ErrorCode.CANCELLED, "Generation cancelled");
+            }
+            if (onStatus != null) {
+                onStatus.accept("Waiting for " + name + " to become available...");
+            }
+            sleep(MODEL_POLL_INTERVAL_MS, token);
+            if (isLoaded(listLoadedModelNames(), name)) {
+                if (onStatus != null) {
+                    onStatus.accept(name + " is ready");
+                }
+                return;
+            }
+        }
+
+        throw new ProviderException(ErrorCode.MODEL_NOT_LOADED,
+                "Timed out waiting for model \"" + name + "\" to load. Check the server and try again.");
+    }
+
+    private static boolean isLoaded(List<String> names, String model) {
+        return names.stream().anyMatch(name -> name.equalsIgnoreCase(model));
+    }
+
+    private static void sleep(long ms, CancellationToken token) {
+        try {
+            Thread.sleep(Duration.ofMillis(ms));
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new ProviderException(ErrorCode.CANCELLED, "Generation cancelled", e);
+        }
+        if (token != null && token.isCancelled()) {
+            throw new ProviderException(ErrorCode.CANCELLED, "Generation cancelled");
+        }
+    }
+}

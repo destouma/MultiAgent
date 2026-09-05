@@ -6,6 +6,7 @@ export const IpcChannels = {
   modelsLoad: 'models:load',
   modelsListForServer: 'models:listForServer',
   modelsLoadedForServer: 'models:loadedForServer',
+  modelsLoadForServer: 'models:loadForServer',
   healthCheck: 'health:check',
   healthCheckForServer: 'health:checkForServer',
   personasList: 'personas:list',

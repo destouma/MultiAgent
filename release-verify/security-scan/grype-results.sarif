@@ -1,0 +1,433 @@
+{
+  "version": "2.1.0",
+  "$schema": "https://docs.oasis-open.org/sarif/sarif/v2.1.0/errata01/os/schemas/sarif-schema-2.1.0.json",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "grype",
+          "version": "0.115.0",
+          "informationUri": "https://github.com/anchore/grype",
+          "rules": [
+            {
+              "id": "GHSA-rmj7-2vxq-3g9f-jackson-databind",
+              "name": "JavaMatcherExactDirectMatch",
+              "shortDescription": {
+                "text": "GHSA-rmj7-2vxq-3g9f high vulnerability for jackson-databind package"
+              },
+              "fullDescription": {
+                "text": "jackson-databind has an array subtype allowlist bypass in BasicPolymorphicTypeValidator (allowIfSubTypeIsArray)"
+              },
+              "helpUri": "https://github.com/advisories/GHSA-rmj7-2vxq-3g9f",
+              "help": {
+                "text": "Vulnerability GHSA-rmj7-2vxq-3g9f\nSeverity: high\nPackage: jackson-databind\nVersion: 2.18.2\nFix Version: 2.18.8\nType: java-archive\nLocation: \nData Namespace: github:language:java\nLink: [GHSA-rmj7-2vxq-3g9f](https://github.com/advisories/GHSA-rmj7-2vxq-3g9f)",
+                "markdown": "**Vulnerability GHSA-rmj7-2vxq-3g9f**\n| Severity | Package | Version | Fix Version | Type | Location | Data Namespace | Link |\n| --- | --- | --- | --- | --- | --- | --- | --- |\n| high  | jackson-databind  | 2.18.2  | 2.18.8  | java-archive  |   | github:language:java  | [GHSA-rmj7-2vxq-3g9f](https://github.com/advisories/GHSA-rmj7-2vxq-3g9f)  |\n"
+              },
+              "properties": {
+                "purls": [
+                  "pkg:maven/com.fasterxml.jackson.core/jackson-databind@2.18.2?type=jar"
+                ],
+                "security-severity": "8.1"
+              }
+            },
+            {
+              "id": "GHSA-j3rv-43j4-c7qm-jackson-databind",
+              "name": "JavaMatcherExactDirectMatch",
+              "shortDescription": {
+                "text": "GHSA-j3rv-43j4-c7qm high vulnerability for jackson-databind package"
+              },
+              "fullDescription": {
+                "text": "jackson-databind has a PolymorphicTypeValidator bypass via generic type parameters that allows arbitrary class instantiation"
+              },
+              "helpUri": "https://github.com/advisories/GHSA-j3rv-43j4-c7qm",
+              "help": {
+                "text": "Vulnerability GHSA-j3rv-43j4-c7qm\nSeverity: high\nPackage: jackson-databind\nVersion: 2.18.2\nFix Version: 2.18.8\nType: java-archive\nLocation: \nData Namespace: github:language:java\nLink: [GHSA-j3rv-43j4-c7qm](https://github.com/advisories/GHSA-j3rv-43j4-c7qm)",
+                "markdown": "**Vulnerability GHSA-j3rv-43j4-c7qm**\n| Severity | Package | Version | Fix Version | Type | Location | Data Namespace | Link |\n| --- | --- | --- | --- | --- | --- | --- | --- |\n| high  | jackson-databind  | 2.18.2  | 2.18.8  | java-archive  |   | github:language:java  | [GHSA-j3rv-43j4-c7qm](https://github.com/advisories/GHSA-j3rv-43j4-c7qm)  |\n"
+              },
+              "properties": {
+                "purls": [
+                  "pkg:maven/com.fasterxml.jackson.core/jackson-databind@2.18.2?type=jar"
+                ],
+                "security-severity": "8.1"
+              }
+            },
+            {
+              "id": "GHSA-5gvw-p9qm-jgwh-jackson-databind",
+              "name": "JavaMatcherExactDirectMatch",
+              "shortDescription": {
+                "text": "GHSA-5gvw-p9qm-jgwh medium vulnerability for jackson-databind package"
+              },
+              "fullDescription": {
+                "text": "jackson-databind: @JsonView bypassed for @JsonUnwrapped container properties on deserialization"
+              },
+              "helpUri": "https://github.com/advisories/GHSA-5gvw-p9qm-jgwh",
+              "help": {
+                "text": "Vulnerability GHSA-5gvw-p9qm-jgwh\nSeverity: medium\nPackage: jackson-databind\nVersion: 2.18.2\nFix Version: 2.18.9\nType: java-archive\nLocation: \nData Namespace: github:language:java\nLink: [GHSA-5gvw-p9qm-jgwh](https://github.com/advisories/GHSA-5gvw-p9qm-jgwh)",
+                "markdown": "**Vulnerability GHSA-5gvw-p9qm-jgwh**\n| Severity | Package | Version | Fix Version | Type | Location | Data Namespace | Link |\n| --- | --- | --- | --- | --- | --- | --- | --- |\n| medium  | jackson-databind  | 2.18.2  | 2.18.9  | java-archive  |   | github:language:java  | [GHSA-5gvw-p9qm-jgwh](https://github.com/advisories/GHSA-5gvw-p9qm-jgwh)  |\n"
+              },
+              "properties": {
+                "purls": [
+                  "pkg:maven/com.fasterxml.jackson.core/jackson-databind@2.18.2?type=jar"
+                ],
+                "security-severity": "6.5"
+              }
+            },
+            {
+              "id": "GHSA-hgj6-7826-r7m5-jackson-databind",
+              "name": "JavaMatcherExactDirectMatch",
+              "shortDescription": {
+                "text": "GHSA-hgj6-7826-r7m5 medium vulnerability for jackson-databind package"
+              },
+              "fullDescription": {
+                "text": "jackson-databind: InetSocketAddress deserialization triggers eager DNS resolution (SSRF)"
+              },
+              "helpUri": "https://github.com/advisories/GHSA-hgj6-7826-r7m5",
+              "help": {
+                "text": "Vulnerability GHSA-hgj6-7826-r7m5\nSeverity: medium\nPackage: jackson-databind\nVersion: 2.18.2\nFix Version: 2.18.8\nType: java-archive\nLocation: \nData Namespace: github:language:java\nLink: [GHSA-hgj6-7826-r7m5](https://github.com/advisories/GHSA-hgj6-7826-r7m5)",
+                "markdown": "**Vulnerability GHSA-hgj6-7826-r7m5**\n| Severity | Package | Version | Fix Version | Type | Location | Data Namespace | Link |\n| --- | --- | --- | --- | --- | --- | --- | --- |\n| medium  | jackson-databind  | 2.18.2  | 2.18.8  | java-archive  |   | github:language:java  | [GHSA-hgj6-7826-r7m5](https://github.com/advisories/GHSA-hgj6-7826-r7m5)  |\n"
+              },
+              "properties": {
+                "purls": [
+                  "pkg:maven/com.fasterxml.jackson.core/jackson-databind@2.18.2?type=jar"
+                ],
+                "security-severity": "5.3"
+              }
+            },
+            {
+              "id": "GHSA-72hv-8253-57qq-jackson-core",
+              "name": "JavaMatcherExactDirectMatch",
+              "shortDescription": {
+                "text": "GHSA-72hv-8253-57qq medium vulnerability for jackson-core package"
+              },
+              "fullDescription": {
+                "text": "jackson-core: Number Length Constraint Bypass in Async Parser Leads to Potential DoS Condition"
+              },
+              "helpUri": "https://github.com/advisories/GHSA-72hv-8253-57qq",
+              "help": {
+                "text": "Vulnerability GHSA-72hv-8253-57qq\nSeverity: medium\nPackage: jackson-core\nVersion: 2.18.2\nFix Version: 2.18.6\nType: java-archive\nLocation: \nData Namespace: github:language:java\nLink: [GHSA-72hv-8253-57qq](https://github.com/advisories/GHSA-72hv-8253-57qq)",
+                "markdown": "**Vulnerability GHSA-72hv-8253-57qq**\n| Severity | Package | Version | Fix Version | Type | Location | Data Namespace | Link |\n| --- | --- | --- | --- | --- | --- | --- | --- |\n| medium  | jackson-core  | 2.18.2  | 2.18.6  | java-archive  |   | github:language:java  | [GHSA-72hv-8253-57qq](https://github.com/advisories/GHSA-72hv-8253-57qq)  |\n"
+              },
+              "properties": {
+                "purls": [
+                  "pkg:maven/com.fasterxml.jackson.core/jackson-core@2.18.2?type=jar"
+                ],
+                "security-severity": "6.9"
+              }
+            },
+            {
+              "id": "GHSA-5jmj-h7xm-6q6v-jackson-databind",
+              "name": "JavaMatcherExactDirectMatch",
+              "shortDescription": {
+                "text": "GHSA-5jmj-h7xm-6q6v medium vulnerability for jackson-databind package"
+              },
+              "fullDescription": {
+                "text": "jackson-databind has case-insensitive deserialization bypasses per-property @JsonIgnoreProperties"
+              },
+              "helpUri": "https://github.com/advisories/GHSA-5jmj-h7xm-6q6v",
+              "help": {
+                "text": "Vulnerability GHSA-5jmj-h7xm-6q6v\nSeverity: medium\nPackage: jackson-databind\nVersion: 2.18.2\nFix Version: 2.18.9\nType: java-archive\nLocation: \nData Namespace: github:language:java\nLink: [GHSA-5jmj-h7xm-6q6v](https://github.com/advisories/GHSA-5jmj-h7xm-6q6v)",
+                "markdown": "**Vulnerability GHSA-5jmj-h7xm-6q6v**\n| Severity | Package | Version | Fix Version | Type | Location | Data Namespace | Link |\n| --- | --- | --- | --- | --- | --- | --- | --- |\n| medium  | jackson-databind  | 2.18.2  | 2.18.9  | java-archive  |   | github:language:java  | [GHSA-5jmj-h7xm-6q6v](https://github.com/advisories/GHSA-5jmj-h7xm-6q6v)  |\n"
+              },
+              "properties": {
+                "purls": [
+                  "pkg:maven/com.fasterxml.jackson.core/jackson-databind@2.18.2?type=jar"
+                ],
+                "security-severity": "5.3"
+              }
+            },
+            {
+              "id": "GHSA-3pjw-73gf-8qr5-jackson-databind",
+              "name": "JavaMatcherExactDirectMatch",
+              "shortDescription": {
+                "text": "GHSA-3pjw-73gf-8qr5 medium vulnerability for jackson-databind package"
+              },
+              "fullDescription": {
+                "text": "jackson-databind: @JsonIgnore on a Record property is bypassed with a PropertyNamingStrategy"
+              },
+              "helpUri": "https://github.com/advisories/GHSA-3pjw-73gf-8qr5",
+              "help": {
+                "text": "Vulnerability GHSA-3pjw-73gf-8qr5\nSeverity: medium\nPackage: jackson-databind\nVersion: 2.18.2\nFix Version: 2.18.8\nType: java-archive\nLocation: \nData Namespace: github:language:java\nLink: [GHSA-3pjw-73gf-8qr5](https://github.com/advisories/GHSA-3pjw-73gf-8qr5)",
+                "markdown": "**Vulnerability GHSA-3pjw-73gf-8qr5**\n| Severity | Package | Version | Fix Version | Type | Location | Data Namespace | Link |\n| --- | --- | --- | --- | --- | --- | --- | --- |\n| medium  | jackson-databind  | 2.18.2  | 2.18.8  | java-archive  |   | github:language:java  | [GHSA-3pjw-73gf-8qr5](https://github.com/advisories/GHSA-3pjw-73gf-8qr5)  |\n"
+              },
+              "properties": {
+                "purls": [
+                  "pkg:maven/com.fasterxml.jackson.core/jackson-databind@2.18.2?type=jar"
+                ],
+                "security-severity": "6.5"
+              }
+            },
+            {
+              "id": "GHSA-r7wm-3cxj-wff9-jackson-core",
+              "name": "JavaMatcherExactDirectMatch",
+              "shortDescription": {
+                "text": "GHSA-r7wm-3cxj-wff9 high vulnerability for jackson-core package"
+              },
+              "fullDescription": {
+                "text": "jackson-core: Async parser maxNumberLength bypass via chunked digit accumulation (incomplete fix for GHSA-72hv-8253-57qq)"
+              },
+              "helpUri": "https://github.com/advisories/GHSA-r7wm-3cxj-wff9",
+              "help": {
+                "text": "Vulnerability GHSA-r7wm-3cxj-wff9\nSeverity: high\nPackage: jackson-core\nVersion: 2.18.2\nFix Version: 2.18.8\nType: java-archive\nLocation: \nData Namespace: github:language:java\nLink: [GHSA-r7wm-3cxj-wff9](https://github.com/advisories/GHSA-r7wm-3cxj-wff9)",
+                "markdown": "**Vulnerability GHSA-r7wm-3cxj-wff9**\n| Severity | Package | Version | Fix Version | Type | Location | Data Namespace | Link |\n| --- | --- | --- | --- | --- | --- | --- | --- |\n| high  | jackson-core  | 2.18.2  | 2.18.8  | java-archive  |   | github:language:java  | [GHSA-r7wm-3cxj-wff9](https://github.com/advisories/GHSA-r7wm-3cxj-wff9)  |\n"
+              },
+              "properties": {
+                "purls": [
+                  "pkg:maven/com.fasterxml.jackson.core/jackson-core@2.18.2?type=jar"
+                ],
+                "security-severity": "8.7"
+              }
+            },
+            {
+              "id": "GHSA-mhm7-754m-9p8w-jackson-databind",
+              "name": "JavaMatcherExactDirectMatch",
+              "shortDescription": {
+                "text": "GHSA-mhm7-754m-9p8w medium vulnerability for jackson-databind package"
+              },
+              "fullDescription": {
+                "text": "jackson-databind: `@JsonView` bypass for creator properties with `@JsonTypeInfo(include=As.EXTERNAL_PROPERTY)`"
+              },
+              "helpUri": "https://github.com/advisories/GHSA-mhm7-754m-9p8w",
+              "help": {
+                "text": "Vulnerability GHSA-mhm7-754m-9p8w\nSeverity: medium\nPackage: jackson-databind\nVersion: 2.18.2\nFix Version: 2.18.9\nType: java-archive\nLocation: \nData Namespace: github:language:java\nLink: [GHSA-mhm7-754m-9p8w](https://github.com/advisories/GHSA-mhm7-754m-9p8w)",
+                "markdown": "**Vulnerability GHSA-mhm7-754m-9p8w**\n| Severity | Package | Version | Fix Version | Type | Location | Data Namespace | Link |\n| --- | --- | --- | --- | --- | --- | --- | --- |\n| medium  | jackson-databind  | 2.18.2  | 2.18.9  | java-archive  |   | github:language:java  | [GHSA-mhm7-754m-9p8w](https://github.com/advisories/GHSA-mhm7-754m-9p8w)  |\n"
+              },
+              "properties": {
+                "purls": [
+                  "pkg:maven/com.fasterxml.jackson.core/jackson-databind@2.18.2?type=jar"
+                ],
+                "security-severity": "6.5"
+              }
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "GHSA-rmj7-2vxq-3g9f-jackson-databind",
+          "level": "error",
+          "message": {
+            "text": "A high vulnerability in java-archive package: jackson-databind, version 2.18.2 was found "
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": ""
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 1,
+                  "endColumn": 1
+                }
+              }
+            }
+          ],
+          "partialFingerprints": {
+            "primaryLocationLineHash": "9dec4390bc9f5fd6e6521397013494270ee27b67a3159561cee38fb46191f2bb:1"
+          }
+        },
+        {
+          "ruleId": "GHSA-j3rv-43j4-c7qm-jackson-databind",
+          "level": "error",
+          "message": {
+            "text": "A high vulnerability in java-archive package: jackson-databind, version 2.18.2 was found "
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": ""
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 1,
+                  "endColumn": 1
+                }
+              }
+            }
+          ],
+          "partialFingerprints": {
+            "primaryLocationLineHash": "9dec4390bc9f5fd6e6521397013494270ee27b67a3159561cee38fb46191f2bb:1"
+          }
+        },
+        {
+          "ruleId": "GHSA-5gvw-p9qm-jgwh-jackson-databind",
+          "level": "warning",
+          "message": {
+            "text": "A medium vulnerability in java-archive package: jackson-databind, version 2.18.2 was found "
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": ""
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 1,
+                  "endColumn": 1
+                }
+              }
+            }
+          ],
+          "partialFingerprints": {
+            "primaryLocationLineHash": "9dec4390bc9f5fd6e6521397013494270ee27b67a3159561cee38fb46191f2bb:1"
+          }
+        },
+        {
+          "ruleId": "GHSA-hgj6-7826-r7m5-jackson-databind",
+          "level": "warning",
+          "message": {
+            "text": "A medium vulnerability in java-archive package: jackson-databind, version 2.18.2 was found "
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": ""
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 1,
+                  "endColumn": 1
+                }
+              }
+            }
+          ],
+          "partialFingerprints": {
+            "primaryLocationLineHash": "9dec4390bc9f5fd6e6521397013494270ee27b67a3159561cee38fb46191f2bb:1"
+          }
+        },
+        {
+          "ruleId": "GHSA-72hv-8253-57qq-jackson-core",
+          "level": "warning",
+          "message": {
+            "text": "A medium vulnerability in java-archive package: jackson-core, version 2.18.2 was found "
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": ""
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 1,
+                  "endColumn": 1
+                }
+              }
+            }
+          ],
+          "partialFingerprints": {
+            "primaryLocationLineHash": "a3c29a569ca6e674977331e388a118b29714d51cbcbd98846a4e2aa2648a27c0:1"
+          }
+        },
+        {
+          "ruleId": "GHSA-5jmj-h7xm-6q6v-jackson-databind",
+          "level": "warning",
+          "message": {
+            "text": "A medium vulnerability in java-archive package: jackson-databind, version 2.18.2 was found "
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": ""
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 1,
+                  "endColumn": 1
+                }
+              }
+            }
+          ],
+          "partialFingerprints": {
+            "primaryLocationLineHash": "9dec4390bc9f5fd6e6521397013494270ee27b67a3159561cee38fb46191f2bb:1"
+          }
+        },
+        {
+          "ruleId": "GHSA-3pjw-73gf-8qr5-jackson-databind",
+          "level": "warning",
+          "message": {
+            "text": "A medium vulnerability in java-archive package: jackson-databind, version 2.18.2 was found "
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": ""
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 1,
+                  "endColumn": 1
+                }
+              }
+            }
+          ],
+          "partialFingerprints": {
+            "primaryLocationLineHash": "9dec4390bc9f5fd6e6521397013494270ee27b67a3159561cee38fb46191f2bb:1"
+          }
+        },
+        {
+          "ruleId": "GHSA-r7wm-3cxj-wff9-jackson-core",
+          "level": "error",
+          "message": {
+            "text": "A high vulnerability in java-archive package: jackson-core, version 2.18.2 was found "
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": ""
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 1,
+                  "endColumn": 1
+                }
+              }
+            }
+          ],
+          "partialFingerprints": {
+            "primaryLocationLineHash": "a3c29a569ca6e674977331e388a118b29714d51cbcbd98846a4e2aa2648a27c0:1"
+          }
+        },
+        {
+          "ruleId": "GHSA-mhm7-754m-9p8w-jackson-databind",
+          "level": "warning",
+          "message": {
+            "text": "A medium vulnerability in java-archive package: jackson-databind, version 2.18.2 was found "
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": ""
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 1,
+                  "endColumn": 1
+                }
+              }
+            }
+          ],
+          "partialFingerprints": {
+            "primaryLocationLineHash": "9dec4390bc9f5fd6e6521397013494270ee27b67a3159561cee38fb46191f2bb:1"
+          }
+        }
+      ]
+    }
+  ]
+}

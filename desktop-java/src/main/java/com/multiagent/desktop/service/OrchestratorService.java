@@ -1,0 +1,371 @@
+package com.multiagent.desktop.service;
+
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.multiagent.desktop.llm.CancellationToken;
+import com.multiagent.desktop.llm.ChatCompletionResult;
+import com.multiagent.desktop.llm.ChatRequestMessage;
+import com.multiagent.desktop.llm.ErrorCode;
+import com.multiagent.desktop.llm.LlmClient;
+import com.multiagent.desktop.llm.ProviderException;
+import com.multiagent.desktop.llm.ToolCall;
+import com.multiagent.desktop.llm.ToolDefinition;
+import com.multiagent.desktop.model.ChatMessage;
+import com.multiagent.desktop.model.Conversation;
+import com.multiagent.desktop.model.MessageRole;
+import com.multiagent.desktop.model.Persona;
+import com.multiagent.desktop.persistence.ConversationStore;
+import com.multiagent.desktop.workspace.WorkspaceService;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.stream.Collectors;
+
+/**
+ * Plan -> specialists -> synthesize workflow for kind == orchestrator conversations,
+ * mirroring desktop/electron/services/orchestratorService.ts. Each user message: (1) asks
+ * the orchestrator persona which specialists (researcher/coder/critic) should help, (2)
+ * runs each chosen specialist in turn - read-only workspace tools only, via
+ * MAX_SPECIALIST_TOOL_ROUNDS - persisting each note as its own message as it completes,
+ * then (3) streams a final synthesized answer from the notes. Intentionally its own
+ * service (like ChatService) rather than sharing ToolLoopRunner directly, since
+ * specialists need a read-only-filtered tool set and per-specialist note bookkeeping that
+ * doesn't fit ToolLoopRunner's single-final-answer shape - though both build on the same
+ * WorkspaceService/ChatRequestMessage primitives, avoiding the ~150-line duplication the
+ * TS version has between chatService.ts and orchestratorService.ts at the tool-execution
+ * layer (executeSpecialistTool here is a deliberately small, read-only-only sibling of
+ * ToolLoopRunner's runToolAndEmit, not a copy of its write/delete handling).
+ */
+public class OrchestratorService {
+    private static final List<String> SPECIALIST_IDS = List.of("researcher", "coder", "critic");
+    private static final int MAX_SPECIALIST_TOOL_ROUNDS = 4;
+    private static final Set<String> READ_ONLY_TOOL_NAMES = Set.of("list_dir", "read_file");
+
+    private static final List<ToolDefinition> READ_ONLY_TOOLS = WorkspaceService.workspaceTools().stream()
+            .filter(tool -> READ_ONLY_TOOL_NAMES.contains(tool.name()))
+            .toList();
+
+    private record SpecialistNote(Persona persona, String content) {
+    }
+
+    private final ConversationStore store;
+    private final PersonaRegistry personas;
+    private final WorkspaceService workspace = new WorkspaceService();
+    private final ObjectMapper mapper = new ObjectMapper();
+    private final Map<String, CancellationToken> activeTokens = new ConcurrentHashMap<>();
+    private final ExecutorService executor = Executors.newCachedThreadPool(runnable -> {
+        Thread thread = new Thread(runnable, "orchestrator-service-worker");
+        thread.setDaemon(true);
+        return thread;
+    });
+
+    public OrchestratorService(ConversationStore store, PersonaRegistry personas) {
+        this.store = store;
+        this.personas = personas;
+    }
+
+    public void send(LlmClient client, Conversation conversation, String content, String fallbackModel,
+                      int maxHistory, ChatService.Listener listener) {
+        store.addMessage(conversation.getId(), MessageRole.USER, content, null);
+
+        Persona orchestrator = personas.get("orchestrator")
+                .or(() -> personas.get("general"))
+                .orElseGet(() -> personas.list().get(0));
+        String model = orchestrator.getDefaultModel() != null && !orchestrator.getDefaultModel().isBlank()
+                ? orchestrator.getDefaultModel() : fallbackModel;
+
+        CancellationToken token = new CancellationToken();
+        activeTokens.put(conversation.getId(), token);
+        String assistantMessageId = UUID.randomUUID().toString();
+
+        executor.submit(() -> {
+            try {
+                client.ensureModelLoaded(model, status -> { }, token);
+
+                String workspacePath = conversation.getWorkspacePath();
+                String workspaceTree = null;
+                if (workspacePath != null && !workspacePath.isBlank()) {
+                    try {
+                        workspaceTree = workspace.buildTree(workspacePath);
+                    } catch (RuntimeException e) {
+                        workspaceTree = e.getMessage();
+                    }
+                }
+
+                listener.onStep(conversation.getId(), "planning", orchestrator.getId(),
+                        "Planning which specialists to use...");
+
+                List<ChatMessage> history = store.getMessages(conversation.getId());
+                int from = Math.max(0, history.size() - maxHistory);
+                String priorContext = history.subList(from, history.size()).stream()
+                        .filter(m -> m.getRole() == MessageRole.USER || m.getRole() == MessageRole.ASSISTANT)
+                        .map(m -> {
+                            String who = m.getRole() == MessageRole.USER ? "User"
+                                    : (m.getPersonaId() != null ? "Assistant(" + m.getPersonaId() + ")" : "Assistant");
+                            return who + ": " + m.getContent();
+                        })
+                        .collect(Collectors.joining("\n\n"));
+
+                PlanParser.PlanResult plan = planSpecialists(client, orchestrator, model, content, priorContext,
+                        workspacePath, workspaceTree, token);
+
+                List<SpecialistNote> notes = new ArrayList<>();
+                for (String specialistId : plan.specialists()) {
+                    token.throwIfCancelled();
+                    Optional<Persona> maybePersona = personas.get(specialistId);
+                    if (maybePersona.isEmpty()) {
+                        continue;
+                    }
+                    Persona persona = maybePersona.get();
+
+                    listener.onStep(conversation.getId(), "specialist", persona.getId(),
+                            persona.getName() + " is working...");
+
+                    String specialistContent = runSpecialist(client, persona, model, content, priorContext,
+                            plan.rationale(), workspacePath, workspaceTree, conversation.getId(), assistantMessageId,
+                            token, listener);
+
+                    store.addMessage(conversation.getId(), MessageRole.ASSISTANT, specialistContent, persona.getId());
+                    listener.onMessagesUpdated(conversation.getId());
+                    notes.add(new SpecialistNote(persona, specialistContent));
+                }
+
+                listener.onStep(conversation.getId(), "synthesizing", orchestrator.getId(),
+                        "Synthesizing final answer...");
+
+                StringBuilder full = new StringBuilder();
+                synthesize(client, orchestrator, model, content, plan.rationale(), notes, workspacePath,
+                        workspaceTree, token, delta -> {
+                            full.append(delta);
+                            listener.onToken(conversation.getId(), assistantMessageId, delta);
+                        });
+                String finalText = full.toString().trim();
+                if (finalText.isEmpty()) {
+                    finalText = "I could not produce a final answer from the specialist notes.";
+                }
+
+                listener.onStep(conversation.getId(), "done", orchestrator.getId(), "Done");
+
+                ChatMessage saved = store.addMessage(conversation.getId(), MessageRole.ASSISTANT, finalText,
+                        orchestrator.getId());
+                listener.onDone(conversation.getId(), saved);
+            } catch (ProviderException e) {
+                listener.onError(conversation.getId(), assistantMessageId, e.code(), e.getMessage());
+            } catch (Exception e) {
+                listener.onError(conversation.getId(), assistantMessageId, ErrorCode.UNKNOWN,
+                        e.getMessage() != null ? e.getMessage() : e.toString());
+            } finally {
+                activeTokens.remove(conversation.getId());
+            }
+        });
+    }
+
+    private PlanParser.PlanResult planSpecialists(LlmClient client, Persona orchestrator, String model,
+                                                    String userContent, String priorContext, String workspacePath,
+                                                    String workspaceTree, CancellationToken token) {
+        String available = SPECIALIST_IDS.stream().filter(id -> personas.get(id).isPresent())
+                .collect(Collectors.joining(", "));
+
+        List<String> systemLines = new ArrayList<>(List.of(
+                orchestrator.getSystemPrompt(),
+                "",
+                "Your job now is ONLY to choose which specialists should help with the user request.",
+                "Available specialist ids: " + available,
+                "Respond with JSON only, no markdown:",
+                "{\"specialists\":[\"researcher\"],\"rationale\":\"why these were chosen\"}",
+                "Rules:",
+                "- specialists must be a subset of the available ids",
+                "- pick 1-3 specialists; omit any that are not useful",
+                "- if the request is simple, pick one specialist or an empty array",
+                "- do not answer the user yet"));
+        if (workspaceTree != null) {
+            systemLines.addAll(List.of("",
+                    "A read-only workspace folder is bound to this conversation: " + workspacePath,
+                    "Specialists you pick will be able to list and read files in it.",
+                    "Workspace tree:", workspaceTree));
+        }
+
+        String userBlock = (priorContext != null && !priorContext.isBlank() ? "Conversation so far:\n" + priorContext + "\n" : "")
+                + "Latest user request:\n" + userContent;
+
+        List<ChatRequestMessage> messages = List.of(
+                ChatRequestMessage.system(String.join("\n", systemLines)),
+                ChatRequestMessage.user(userBlock));
+
+        ChatCompletionResult completion = client.completeChat(messages, model, List.of(), token);
+        return PlanParser.parsePlan(completion.content(), SPECIALIST_IDS);
+    }
+
+    private String runSpecialist(LlmClient client, Persona persona, String model, String userContent,
+                                  String priorContext, String planRationale, String workspacePath,
+                                  String workspaceTree, String conversationId, String messageId,
+                                  CancellationToken token, ChatService.Listener listener) {
+        String specialistModel = persona.getDefaultModel() != null && !persona.getDefaultModel().isBlank()
+                ? persona.getDefaultModel() : model;
+
+        List<String> systemLines = new ArrayList<>(List.of(
+                persona.getSystemPrompt(), "",
+                "You are contributing as a specialist inside a multi-agent workflow.",
+                "Focus on your specialty. Do not pretend to be the final answer for the user.",
+                "Be concrete and useful; the orchestrator will synthesize your notes.",
+                "Orchestrator rationale for involving you: " + planRationale));
+        if (workspacePath != null && workspaceTree != null) {
+            systemLines.addAll(List.of("",
+                    "You have read-only access to a workspace folder bound to this conversation: " + workspacePath,
+                    "Use the list_dir and read_file tools to inspect actual files before answering - "
+                            + "do not guess at contents from the tree alone.",
+                    "Workspace tree:", workspaceTree));
+        }
+
+        String userBlock = (priorContext != null && !priorContext.isBlank() ? "Conversation so far:\n" + priorContext + "\n" : "")
+                + "User request:\n" + userContent;
+
+        List<ChatRequestMessage> messages = new ArrayList<>(List.of(
+                ChatRequestMessage.system(String.join("\n", systemLines)),
+                ChatRequestMessage.user(userBlock)));
+
+        client.ensureModelLoaded(specialistModel, status -> { }, token);
+
+        if (workspacePath == null || workspacePath.isBlank()) {
+            ChatCompletionResult completion = client.completeChat(messages, specialistModel, List.of(), token);
+            String result = completion.content() == null ? "" : completion.content().trim();
+            return result.isEmpty() ? "(" + persona.getName() + " returned an empty response.)" : result;
+        }
+
+        return runSpecialistWithTools(client, messages, specialistModel, workspacePath, persona, conversationId,
+                messageId, token, listener);
+    }
+
+    private String runSpecialistWithTools(LlmClient client, List<ChatRequestMessage> initialMessages, String model,
+                                           String workspacePath, Persona persona, String conversationId,
+                                           String messageId, CancellationToken token, ChatService.Listener listener) {
+        List<ChatRequestMessage> messages = new ArrayList<>(initialMessages);
+        boolean toolsEnabled = true;
+
+        for (int round = 0; round < MAX_SPECIALIST_TOOL_ROUNDS; round++) {
+            token.throwIfCancelled();
+
+            ChatCompletionResult completion;
+            try {
+                completion = client.completeChat(messages, model, toolsEnabled ? READ_ONLY_TOOLS : List.of(), token);
+            } catch (RuntimeException e) {
+                if (toolsEnabled) {
+                    toolsEnabled = false;
+                    completion = client.completeChat(messages, model, List.of(), token);
+                } else {
+                    throw e;
+                }
+            }
+
+            List<ToolCall> calls = completion.toolCalls();
+            if (calls == null || calls.isEmpty()) {
+                String result = completion.content() == null ? "" : completion.content().trim();
+                return result.isEmpty() ? "(" + persona.getName() + " returned an empty response.)" : result;
+            }
+
+            String assistantContent = completion.content() != null && !completion.content().isEmpty()
+                    ? completion.content() : null;
+            messages.add(ChatRequestMessage.assistantWithToolCalls(assistantContent, calls));
+
+            for (ToolCall call : calls) {
+                String result = executeSpecialistTool(workspacePath, conversationId, messageId, call.name(),
+                        call.arguments(), listener);
+                messages.add(ChatRequestMessage.tool(call.id(), result));
+            }
+        }
+
+        return "(" + persona.getName() + " stopped after exploring the workspace - try a more specific question.)";
+    }
+
+    private String executeSpecialistTool(String workspacePath, String conversationId, String messageId, String name,
+                                          String rawArgsJson, ChatService.Listener listener) {
+        Map<String, Object> args;
+        try {
+            args = mapper.readValue(rawArgsJson == null || rawArgsJson.isBlank() ? "{}" : rawArgsJson,
+                    new TypeReference<Map<String, Object>>() { });
+        } catch (Exception e) {
+            args = Map.of();
+        }
+
+        String relPath = args.get("path") != null ? String.valueOf(args.get("path")) : ".";
+        if (listener != null) {
+            listener.onWorkspaceOp(conversationId, messageId, name, relPath, "running", null, null);
+        }
+
+        if (!READ_ONLY_TOOL_NAMES.contains(name)) {
+            String message = "Tool \"" + name + "\" is not available to specialists (read-only access).";
+            if (listener != null) {
+                listener.onWorkspaceOp(conversationId, messageId, name, relPath, "error", message, null);
+            }
+            return "Error: " + message;
+        }
+
+        try {
+            // Specialists only ever get list_dir/read_file, never write_file/delete_file, so
+            // there's no checkpoint to capture here - unlike ToolLoopRunner's runToolAndEmit.
+            String result = workspace.executeTool(workspacePath, name, args);
+            if (listener != null) {
+                listener.onWorkspaceOp(conversationId, messageId, name, relPath, "ok",
+                        result.length() > 240 ? result.substring(0, 240) : result, null);
+            }
+            return result;
+        } catch (RuntimeException e) {
+            String message = e.getMessage() != null ? e.getMessage() : e.toString();
+            if (listener != null) {
+                listener.onWorkspaceOp(conversationId, messageId, name, relPath, "error", message, null);
+            }
+            return "Error: " + message;
+        }
+    }
+
+    private void synthesize(LlmClient client, Persona orchestrator, String model, String userContent,
+                             String planRationale, List<SpecialistNote> notes, String workspacePath,
+                             String workspaceTree, CancellationToken token, java.util.function.Consumer<String> onDelta) {
+        String notesBlock = notes.isEmpty()
+                ? "(No specialists were consulted.)"
+                : notes.stream().map(note -> "### " + note.persona().getName() + "\n" + note.content())
+                        .collect(Collectors.joining("\n\n"));
+
+        List<String> systemLines = new ArrayList<>(List.of(
+                orchestrator.getSystemPrompt(), "",
+                "Synthesize a final answer for the user from the specialist notes.",
+                "Lead with the answer, resolve disagreements, and keep it clear.",
+                "Do not mention internal planning JSON or that you are an orchestrator unless useful.",
+                "Plan rationale: " + planRationale));
+        if (workspaceTree != null) {
+            systemLines.addAll(List.of("",
+                    "Workspace folder bound to this conversation: " + workspacePath,
+                    "Workspace tree (for reference; specialist notes already reflect its actual contents):",
+                    workspaceTree));
+        }
+
+        String userBlock = "User request:\n" + userContent + "\n\nSpecialist notes:\n" + notesBlock;
+        List<ChatRequestMessage> messages = List.of(
+                ChatRequestMessage.system(String.join("\n", systemLines)),
+                ChatRequestMessage.user(userBlock));
+
+        client.streamChat(messages, model, onDelta, token);
+    }
+
+    public void cancel(String conversationId) {
+        CancellationToken token = activeTokens.get(conversationId);
+        if (token != null) {
+            token.cancel();
+        }
+    }
+
+    public boolean isActive(String conversationId) {
+        return activeTokens.containsKey(conversationId);
+    }
+
+    public void shutdown() {
+        executor.shutdownNow();
+    }
+}

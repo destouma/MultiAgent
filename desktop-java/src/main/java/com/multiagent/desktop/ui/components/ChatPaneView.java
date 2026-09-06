@@ -39,7 +39,8 @@ public class ChatPaneView extends BorderPane {
         getStyleClass().add("chat-panel");
         setTop(buildConversationTopBar());
         setCenter(buildCenterColumn());
-        setBottom(new Composer(viewModel));
+        VBox bottom = new VBox(new ContextUsageBar(viewModel), new Composer(viewModel));
+        setBottom(bottom);
     }
 
     private javafx.scene.Node buildCenterColumn() {

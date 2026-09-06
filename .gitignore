@@ -19,3 +19,6 @@ desktop-java/target/
 # SBOM/Grype/CodeQL scan output (SARIF, SBOM JSON, the raw CodeQL extraction
 # database) - regenerated on demand, not meant to be version-controlled.
 release-verify/security-scan/
+# Local WiX Toolset extension cache - lands here if `wix extension add` is ever
+# run without -g/--global from the repo root; machine-local tooling state.
+.wix/

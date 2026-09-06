@@ -15,8 +15,10 @@ import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
 import javafx.scene.control.Label;
 import javafx.scene.control.ScrollPane;
+import javafx.scene.control.TextArea;
 import javafx.scene.input.Clipboard;
 import javafx.scene.input.ClipboardContent;
+import javafx.scene.input.KeyCode;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
@@ -52,6 +54,9 @@ public class ChatThread extends ScrollPane {
     private final Timeline thinkingAnimation;
     private int dotTick;
 
+    /** Id of the message currently showing its edit textarea instead of normal content, or null. An instance field (not local UI state) because render() rebuilds the whole column from scratch on every relevant change, so this has to survive that rebuild the same way dotTick/thinkingAnimation already do. Only one message editable at a time - simpler than the alternative and edit always truncates everything after it anyway, so editing two at once wouldn't make sense regardless. */
+    private String editingMessageId;
+
     public ChatThread(ChatViewModel viewModel) {
         this.viewModel = viewModel;
         setFitToWidth(true);
@@ -74,14 +79,18 @@ public class ChatThread extends ScrollPane {
         viewModel.modelStatusProperty().addListener((obs, old, val) -> render());
         viewModel.generationStartedAtProperty().addListener((obs, old, val) -> render());
         viewModel.workspaceOps().addListener((javafx.collections.ListChangeListener<WorkspaceOpEntry>) c -> render());
-        viewModel.activeConversationProperty().addListener((obs, old, val) -> render());
+        viewModel.activeConversationProperty().addListener((obs, old, val) -> {
+            editingMessageId = null;
+            render();
+        });
         render();
     }
 
     private void render() {
         column.getChildren().clear();
-        for (ChatMessage message : viewModel.messages()) {
-            column.getChildren().add(bubble(message.getRole(), message.getContent()));
+        var messages = viewModel.messages();
+        for (int i = 0; i < messages.size(); i++) {
+            column.getChildren().add(messageBubble(messages.get(i), i == messages.size() - 1));
         }
         // Left visible after streaming finishes, not just during it - that's what makes
         // View diff/Revert usable once the turn is done, mirroring the Electron app.
@@ -91,7 +100,9 @@ public class ChatThread extends ScrollPane {
         boolean streaming = viewModel.streamingProperty().get();
         boolean nothingStreamedYet = viewModel.streamingContentProperty().get().isEmpty();
         if (streaming && !nothingStreamedYet) {
-            column.getChildren().add(bubble(MessageRole.ASSISTANT, viewModel.streamingContentProperty().get()));
+            // Not a persisted ChatMessage yet (still streaming in), so no id to edit/
+            // regenerate against - plainBubble skips the trigger row entirely.
+            column.getChildren().add(plainBubble(MessageRole.ASSISTANT, viewModel.streamingContentProperty().get()));
         }
         // Show the "working" bubble in the gaps with no other signal: before the first token,
         // and (for workspace chats) before the first tool call and during the final synthesis.
@@ -190,18 +201,127 @@ public class ChatThread extends ScrollPane {
         alert.showAndWait();
     }
 
-    private HBox bubble(MessageRole role, String content) {
+    /** The synthetic in-progress streaming bubble - no persisted ChatMessage/id exists yet, so no Edit/Regenerate trigger row makes sense here. */
+    private HBox plainBubble(MessageRole role, String content) {
         boolean fromUser = role == MessageRole.USER;
-
-        VBox container = buildMessageContent(content == null ? "" : content);
-        container.setMaxWidth(560);
-        container.setPadding(new Insets(8, 12, 8, 12));
-        container.getStyleClass().add(fromUser ? "bubble-user" : "bubble-assistant");
-
+        VBox container = styledContainer(content, fromUser);
         HBox row = new HBox(container);
         row.setAlignment(fromUser ? Pos.CENTER_RIGHT : Pos.CENTER_LEFT);
         HBox.setHgrow(row, Priority.ALWAYS);
         return row;
+    }
+
+    private VBox styledContainer(String content, boolean fromUser) {
+        VBox container = buildMessageContent(content == null ? "" : content);
+        container.setMaxWidth(560);
+        container.setPadding(new Insets(8, 12, 8, 12));
+        container.getStyleClass().add(fromUser ? "bubble-user" : "bubble-assistant");
+        return container;
+    }
+
+    /**
+     * A real, persisted message: normal bubble content, or - if this is the message
+     * currently being edited (editingMessageId) - the edit textarea in its place, plus a
+     * trigger row below the bubble (mirroring MessageBubble.tsx's placement outside/below
+     * the colored bubble, not inside it): "Edit" on any user message when idle, "Regenerate"
+     * only on the last message when it's from the assistant and idle - matching
+     * ChatThread.tsx's editable/canRegenerate gating exactly (minus generatingImage, which
+     * has no equivalent here since image generation isn't ported).
+     */
+    private HBox messageBubble(ChatMessage message, boolean isLast) {
+        boolean fromUser = message.getRole() == MessageRole.USER;
+        boolean editingThis = message.getId().equals(editingMessageId);
+        boolean streaming = viewModel.streamingProperty().get();
+
+        VBox wrapper = new VBox(4);
+        wrapper.setMaxWidth(560);
+
+        if (editingThis) {
+            wrapper.getChildren().add(editBox(message));
+        } else {
+            VBox container = styledContainer(message.getContent(), fromUser);
+            wrapper.getChildren().add(container);
+
+            boolean editable = fromUser && !streaming;
+            boolean canRegenerate = isLast && !fromUser && !streaming;
+            if (editable || canRegenerate) {
+                HBox triggerRow = new HBox(8);
+                triggerRow.setAlignment(fromUser ? Pos.CENTER_RIGHT : Pos.CENTER_LEFT);
+                if (editable) {
+                    Button editTrigger = new Button("✎ Edit");
+                    editTrigger.setOnAction(e -> {
+                        editingMessageId = message.getId();
+                        render();
+                    });
+                    triggerRow.getChildren().add(editTrigger);
+                }
+                if (canRegenerate) {
+                    Button regenTrigger = new Button("↻ Regenerate");
+                    regenTrigger.setOnAction(e -> regenerate());
+                    triggerRow.getChildren().add(regenTrigger);
+                }
+                wrapper.getChildren().add(triggerRow);
+            }
+        }
+
+        HBox row = new HBox(wrapper);
+        row.setAlignment(fromUser ? Pos.CENTER_RIGHT : Pos.CENTER_LEFT);
+        HBox.setHgrow(row, Priority.ALWAYS);
+        return row;
+    }
+
+    /** Edit-in-place: a textarea pre-filled with the message's current content, Cancel/Save & resend, Enter-to-save (Shift+Enter for a newline), Escape-to-cancel - mirroring MessageBubble.tsx's edit mode. */
+    private VBox editBox(ChatMessage message) {
+        TextArea draftArea = new TextArea(message.getContent());
+        draftArea.setWrapText(true);
+        draftArea.setPrefRowCount(4);
+
+        Button cancel = new Button("Cancel");
+        cancel.setOnAction(e -> {
+            editingMessageId = null;
+            render();
+        });
+
+        Button saveAndResend = new Button("Save & resend");
+        saveAndResend.disableProperty().bind(draftArea.textProperty().isEmpty());
+        Runnable save = () -> {
+            String trimmed = draftArea.getText() == null ? "" : draftArea.getText().trim();
+            editingMessageId = null;
+            if (!trimmed.isEmpty() && !trimmed.equals(message.getContent())) {
+                viewModel.editAndResend(message.getId(), trimmed);
+            } else {
+                render();
+            }
+        };
+        saveAndResend.setOnAction(e -> save.run());
+
+        draftArea.setOnKeyPressed(event -> {
+            if (event.getCode() == KeyCode.ENTER && !event.isShiftDown()) {
+                event.consume();
+                save.run();
+            } else if (event.getCode() == KeyCode.ESCAPE) {
+                cancel.fire();
+            }
+        });
+
+        HBox actions = new HBox(8, cancel, saveAndResend);
+        actions.setAlignment(Pos.CENTER_RIGHT);
+
+        VBox box = new VBox(6, draftArea, actions);
+        box.setPadding(new Insets(8, 12, 8, 12));
+        return box;
+    }
+
+    /** Truncates from the last user message (inclusive) onward and resends its original content unchanged - a fresh generation, not a branch/version history, matching ChatThread.tsx's onRegenerate. */
+    private void regenerate() {
+        var messages = viewModel.messages();
+        for (int i = messages.size() - 1; i >= 0; i--) {
+            ChatMessage candidate = messages.get(i);
+            if (candidate.getRole() == MessageRole.USER) {
+                viewModel.editAndResend(candidate.getId(), candidate.getContent());
+                return;
+            }
+        }
     }
 
     /**

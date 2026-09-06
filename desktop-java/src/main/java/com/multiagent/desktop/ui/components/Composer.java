@@ -8,7 +8,9 @@ import javafx.geometry.Pos;
 import javafx.scene.control.Button;
 import javafx.scene.control.Label;
 import javafx.scene.control.TextArea;
+import javafx.scene.input.Dragboard;
 import javafx.scene.input.KeyCode;
+import javafx.scene.input.TransferMode;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
@@ -25,11 +27,12 @@ import java.nio.file.Files;
 /**
  * Text input + Send/Stop, mirroring Composer.tsx: Enter sends, Shift+Enter inserts a
  * newline, the button toggles to Stop (calling cancelStreaming) while streaming. Also
- * carries the one-file-at-a-time text-attachment feature - see attach()/buildMessageWith
- * Attachment(): an attached file is folded into the same plain-text message the composer
- * always sent, as a ```filename\ncontent``` fence, so it renders/downloads/copies through
- * ChatThread's existing codeBox() with no new rendering path, and reaches ChatService/
- * ConversationStore as ordinary message content with no schema change at all.
+ * carries the one-file-at-a-time text-attachment feature - see loadAttachment()/
+ * buildMessageWithAttachment(): an attached file (via the Attach button or dropped onto
+ * this composer) is folded into the same plain-text message the composer always sent, as a
+ * ```filename\ncontent``` fence, so it renders/downloads/copies through ChatThread's
+ * existing codeBox() with no new rendering path, and reaches ChatService/ConversationStore
+ * as ordinary message content with no schema change at all.
  */
 public class Composer extends VBox {
     /** Bigger than WorkspaceService's per-turn agent read cap (this is one explicit user action, not a tool call), but still small enough not to blow a small local model's context on its own. */
@@ -122,23 +125,52 @@ public class Composer extends VBox {
         BorderPane.setMargin(row, new Insets(0));
 
         getChildren().addAll(error, attachError, attachmentChip, row);
+
+        // Drag-and-drop is a second way in to the exact same one-attachment pipeline the
+        // Attach button uses - not a separate feature. Dropping more than one file just
+        // takes the first, matching the one-attachment-at-a-time design.
+        setOnDragOver(event -> {
+            if (event.getGestureSource() != this && event.getDragboard().hasFiles()) {
+                event.acceptTransferModes(TransferMode.COPY);
+            }
+            event.consume();
+        });
+        setOnDragEntered(event -> {
+            if (event.getDragboard().hasFiles()) {
+                getStyleClass().add("composer-drag-over");
+            }
+        });
+        setOnDragExited(event -> getStyleClass().remove("composer-drag-over"));
+        setOnDragDropped(event -> {
+            Dragboard dragboard = event.getDragboard();
+            boolean accepted = dragboard.hasFiles() && !dragboard.getFiles().isEmpty();
+            if (accepted) {
+                loadAttachment(dragboard.getFiles().get(0), attachError, attachmentLabel, attachmentChip);
+            }
+            getStyleClass().remove("composer-drag-over");
+            event.setDropCompleted(accepted);
+            event.consume();
+        });
     }
 
-    /**
-     * Reads the picked file (size-checked before reading, so a huge file is rejected
-     * without ever loading it) and stashes it as the pending attachment, or shows a clear
-     * inline error - never a popup - for the two ways this can fail: too large, or not
-     * valid UTF-8 text (the "binary files are harder, later" boundary from the feature
-     * request). Picking a new file while one is already pending silently replaces it,
-     * matching the one-attachment-at-a-time design.
-     */
     private void attach(Window window, Label attachError, Label attachmentLabel, HBox attachmentChip) {
         FileChooser chooser = new FileChooser();
         chooser.setTitle("Attach file");
         File file = chooser.showOpenDialog(window);
-        if (file == null) {
-            return;
+        if (file != null) {
+            loadAttachment(file, attachError, attachmentLabel, attachmentChip);
         }
+    }
+
+    /**
+     * Reads the given file (size-checked before reading, so a huge file is rejected without
+     * ever loading it) and stashes it as the pending attachment, or shows a clear inline
+     * error - never a popup - for the two ways this can fail: too large, or not valid UTF-8
+     * text (the "binary files are harder, later" boundary from the feature request). A new
+     * file - via the Attach button or a drop - silently replaces any already-pending one,
+     * matching the one-attachment-at-a-time design.
+     */
+    private void loadAttachment(File file, Label attachError, Label attachmentLabel, HBox attachmentChip) {
         try {
             long size = Files.size(file.toPath());
             if (size > MAX_ATTACHMENT_BYTES) {

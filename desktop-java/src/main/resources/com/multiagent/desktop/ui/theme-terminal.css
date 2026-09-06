@@ -52,6 +52,11 @@
     -fx-border-width: 1 0 0 0;
 }
 
+.composer-drag-over {
+    -fx-border-color: #33ff33;
+    -fx-border-width: 2;
+}
+
 .composer .text-area, .composer .text-area .content {
     -fx-background-color: #000000;
     -fx-text-fill: #33ff33;

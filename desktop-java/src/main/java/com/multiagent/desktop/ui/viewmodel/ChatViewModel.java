@@ -384,6 +384,24 @@ public class ChatViewModel {
         notifySiblings();
     }
 
+    /**
+     * The one primitive both Edit and Regenerate reduce to (ChatThread.java): delete the
+     * given message and everything after it in the active conversation (rowid order, so
+     * same-millisecond messages can't tie - see ConversationStore.deleteMessagesFrom), then
+     * send newContent as a fresh turn through the normal sendMessage() path. Edit calls this
+     * with the user's edited text; Regenerate calls it with the last user message's own
+     * content unchanged - a fresh generation, not a branch/version history.
+     */
+    public boolean editAndResend(String messageId, String newContent) {
+        Conversation conversation = activeConversation.get();
+        if (conversation == null || newContent == null || newContent.isBlank()) {
+            return false;
+        }
+        store.deleteMessagesFrom(conversation.getId(), messageId);
+        refreshMessages(conversation.getId());
+        return sendMessage(newContent);
+    }
+
     public List<SearchResult> search(String term) {
         return store.search(term);
     }

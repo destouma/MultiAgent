@@ -49,6 +49,11 @@
     -fx-border-width: 1 0 0 0;
 }
 
+.composer-drag-over {
+    -fx-border-color: #14b8a6;
+    -fx-border-width: 2;
+}
+
 .error-banner {
     -fx-text-fill: #f87171;
 }

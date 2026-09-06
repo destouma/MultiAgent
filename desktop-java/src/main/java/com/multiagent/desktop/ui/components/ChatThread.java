@@ -271,28 +271,64 @@ public class ChatThread extends ScrollPane {
      * model may only have shown it, or a workspace write may have been declined at the
      * approval gate), so gating either button on that was more confusing than helpful.
      */
+    // Past this many lines (or this many characters, for a single very long line - a
+    // minified JSON blob has no line breaks to collapse by) a code box starts collapsed,
+    // so one large file (an attachment, or something a model wrote out in full) doesn't
+    // turn the whole thread into one long scroll of a single message.
+    private static final int COLLAPSE_LINE_THRESHOLD = 25;
+    private static final int COLLAPSE_PREVIEW_LINES = 15;
+    private static final int COLLAPSE_CHAR_THRESHOLD = 4000;
+
     private VBox codeBox(String language, String code) {
+        String trimmedCode = code.stripTrailing();
+
         Label langLabel = new Label(language.isBlank() ? "code" : language);
         langLabel.getStyleClass().add("code-box-lang");
 
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
         Button copy = new Button("Copy");
-        copy.setOnAction(e -> copyToClipboard(code, copy));
+        copy.setOnAction(e -> copyToClipboard(trimmedCode, copy));
         Button download = new Button("Download");
-        download.setOnAction(e -> downloadSnippet(language, code));
+        download.setOnAction(e -> downloadSnippet(language, trimmedCode));
         HBox header = new HBox(6, langLabel, spacer, copy, download);
         header.setAlignment(Pos.CENTER_LEFT);
         header.getStyleClass().add("code-box-header");
 
-        Text codeText = new Text(code.stripTrailing());
+        Text codeText = new Text();
         codeText.getStyleClass().add("code-block");
-        TextFlow body = new TextFlow(codeText);
-        body.getStyleClass().add("code-box-body");
+        TextFlow textFlow = new TextFlow(codeText);
+        VBox bodyBox = new VBox(6, textFlow);
+        bodyBox.getStyleClass().add("code-box-body");
 
-        VBox box = new VBox(header, body);
+        int totalLines = trimmedCode.isEmpty() ? 0 : (int) trimmedCode.lines().count();
+        boolean isLong = totalLines > COLLAPSE_LINE_THRESHOLD || trimmedCode.length() > COLLAPSE_CHAR_THRESHOLD;
+        if (isLong) {
+            String preview = collapsedPreview(trimmedCode);
+            codeText.setText(preview);
+            Button toggle = new Button("Show full file (" + totalLines + " lines)");
+            boolean[] expanded = {false};
+            toggle.setOnAction(e -> {
+                expanded[0] = !expanded[0];
+                codeText.setText(expanded[0] ? trimmedCode : preview);
+                toggle.setText(expanded[0] ? "Show less" : "Show full file (" + totalLines + " lines)");
+            });
+            bodyBox.getChildren().add(toggle);
+        } else {
+            codeText.setText(trimmedCode);
+        }
+
+        VBox box = new VBox(header, bodyBox);
         box.getStyleClass().add("code-box");
         return box;
+    }
+
+    /** First COLLAPSE_PREVIEW_LINES lines, further capped by character count in case even those few lines are enormous (one giant minified line, say). */
+    private String collapsedPreview(String code) {
+        String[] lines = code.split("\n", -1);
+        int previewLineCount = Math.min(COLLAPSE_PREVIEW_LINES, lines.length);
+        String preview = String.join("\n", java.util.Arrays.copyOfRange(lines, 0, previewLineCount));
+        return preview.length() > COLLAPSE_CHAR_THRESHOLD ? preview.substring(0, COLLAPSE_CHAR_THRESHOLD) : preview;
     }
 
     /** Puts the snippet on the system clipboard and flashes the button's label as brief feedback, then reverts it. */
@@ -311,7 +347,11 @@ public class ChatThread extends ScrollPane {
     private void downloadSnippet(String language, String code) {
         FileChooser chooser = new FileChooser();
         chooser.setTitle("Save code snippet");
-        chooser.setInitialFileName("snippet." + CodeBlockExtensions.extensionFor(language));
+        // A fence label that's already a real filename (e.g. an attached "notes.txt", vs. a
+        // model-generated fence's plain language tag like "python") gets suggested verbatim
+        // instead of a generic "snippet.*" one.
+        chooser.setInitialFileName(language.contains(".")
+                ? language : "snippet." + CodeBlockExtensions.extensionFor(language));
 
         Window window = getScene() != null ? getScene().getWindow() : null;
         File file = chooser.showSaveDialog(window);

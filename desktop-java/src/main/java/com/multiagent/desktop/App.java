@@ -7,6 +7,7 @@ import com.multiagent.desktop.service.ConfigService;
 import com.multiagent.desktop.service.OrchestratorService;
 import com.multiagent.desktop.service.PersonaRegistry;
 import com.multiagent.desktop.ui.MainWindow;
+import com.multiagent.desktop.ui.components.DialogActionApprover;
 import com.multiagent.desktop.ui.viewmodel.ChatViewModel;
 
 import javafx.application.Application;
@@ -50,6 +51,11 @@ public class App extends Application {
 
         stage.setTitle("MultiAgent (Java)");
         stage.show();
+
+        // Installed after the Stage is showing, since the approver parents its confirmation
+        // dialog on it - real usage always has this; a null approver (the default) only
+        // ever applies to tests that construct ChatService directly with no UI at all.
+        chatService.setActionApprover(new DialogActionApprover(stage));
     }
 
     @Override

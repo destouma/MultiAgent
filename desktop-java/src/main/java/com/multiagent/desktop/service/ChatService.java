@@ -1,5 +1,6 @@
 package com.multiagent.desktop.service;
 
+import com.multiagent.desktop.action.ActionApprover;
 import com.multiagent.desktop.llm.CancellationToken;
 import com.multiagent.desktop.llm.ChatRequestMessage;
 import com.multiagent.desktop.llm.ErrorCode;
@@ -12,6 +13,8 @@ import com.multiagent.desktop.model.Persona;
 import com.multiagent.desktop.persistence.ConversationStore;
 import com.multiagent.desktop.workspace.WorkspaceService;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -44,6 +47,11 @@ public class ChatService {
         this.toolLoopRunner = new ToolLoopRunner(store);
     }
 
+    /** Installs the "ask before writing/deleting/renaming a file" gate - see ToolLoopRunner's javadoc for why a null approver auto-approves (tests only). */
+    public void setActionApprover(ActionApprover approver) {
+        toolLoopRunner.setActionApprover(approver);
+    }
+
     public interface Listener {
         void onToken(String conversationId, String messageId, String delta);
 
@@ -58,6 +66,10 @@ public class ChatService {
 
         /** Orchestrator-only: phase is "planning" | "specialist" | "synthesizing" | "done". */
         default void onStep(String conversationId, String phase, String personaId, String label) {
+        }
+
+        /** Model load/availability progress before generation starts, e.g. "Loading qwen2.5-coder...". No-op default. */
+        default void onModelStatus(String conversationId, String status) {
         }
 
         /** Orchestrator-only: fired after each specialist note is persisted, so the UI can show it before the final synthesis arrives. */
@@ -88,7 +100,8 @@ public class ChatService {
 
         executor.submit(() -> {
             try {
-                client.ensureModelLoaded(model, status -> { }, token);
+                client.ensureModelLoaded(model,
+                        status -> listener.onModelStatus(conversation.getId(), status), token);
 
                 if (workspacePath != null && !workspacePath.isBlank()) {
                     String finalText = toolLoopRunner.run(client, model, messages, workspacePath,
@@ -131,20 +144,46 @@ public class ChatService {
             } catch (RuntimeException e) {
                 tree = e.getMessage();
             }
-            parts.add(String.join("\n",
+            List<String> lines = new ArrayList<>(List.of(
                     "You have a writable workspace folder bound to this chat: " + workspacePath,
                     "You may inspect and modify files inside this folder only.",
                     "Prefer tools when available. If tools are unavailable, emit exact XML actions:",
                     "<list_dir path=\".\" />",
-                    "<read_file path=\"relative/path.ext\" />",
+                    "<read_file path=\"relative/path.ext\" />  (add offset=\"1\" limit=\"200\" to read only a line range)",
                     "<write_file path=\"relative/path.ext\">FULL FILE CONTENT</write_file>",
                     "<delete_file path=\"relative/path.ext\" />",
-                    "<generate_image path=\"images/out.png\" prompt=\"a red circle\" size=\"512x512\" />",
-                    "After file work, give a short summary of what changed.",
-                    "Current workspace tree:",
-                    tree));
+                    "<rename_file path=\"relative/old.ext\" newPath=\"relative/new.ext\" />",
+                    "<generate_image path=\"images/out.png\" prompt=\"a red circle\" size=\"512x512\" />"));
+
+            if (isGitRepo(workspacePath)) {
+                lines.add("This workspace is a git repository. You also have git tools (XML forms shown for fallback):");
+                lines.add("<git_status />");
+                lines.add("<git_diff patch=\"true\" staged=\"true\" path=\"relative/path.ext\" />  (omit patch for a diffstat only)");
+                lines.add("<git_log count=\"15\" />");
+                lines.add("<git_show ref=\"HEAD\" patch=\"true\" />");
+                lines.add("<git_branch />");
+                lines.add("<git_add path=\"relative/path.ext\" />");
+                lines.add("<git_commit message=\"Short summary of the change\" all=\"true\" />");
+            }
+
+            lines.add("Changes to files and git_add/git_commit require the user's approval and may be declined - "
+                    + "if a tool result says the user declined, respect that and don't retry the same action.");
+            lines.add("After file work, give a short summary of what changed.");
+            lines.add("Workspace tree (top levels only; a trailing \"…\" means use list_dir to see inside):");
+            lines.add(tree);
+            parts.add(String.join("\n", lines));
         }
         return String.join("\n\n", parts);
+    }
+
+    /** A cheap ".git present?" check so the prompt only advertises git tools when they'd actually work. */
+    private boolean isGitRepo(String workspacePath) {
+        try {
+            Path dotGit = Path.of(workspacePath).resolve(".git");
+            return Files.isDirectory(dotGit) || Files.isRegularFile(dotGit);
+        } catch (RuntimeException e) {
+            return false;
+        }
     }
 
     public void cancel(String conversationId) {

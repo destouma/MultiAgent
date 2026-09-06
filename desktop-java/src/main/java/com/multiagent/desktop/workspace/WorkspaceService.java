@@ -27,11 +27,25 @@ import java.util.stream.Stream;
 public class WorkspaceService {
     private static final Set<String> IGNORE_DIRS = Set.of(
             "node_modules", ".git", "dist", "dist-electron", "release",
-            ".next", "coverage", "__pycache__", ".venv", "venv");
+            ".next", "coverage", "__pycache__", ".venv", "venv",
+            // Build output / IDE metadata - noise in the tree, and huge in real repos.
+            "target", "build", ".gradle", ".mvn", ".idea", ".vscode", ".settings",
+            ".tox", ".mypy_cache", ".pytest_cache", ".cache");
 
-    private static final int MAX_TREE_ENTRIES = 400;
-    private static final long MAX_READ_BYTES = 120_000;
+    // These are sized for small local context windows (some Lemonade setups are 4-8k tokens).
+    // The tree goes in the system prompt every turn; keep it shallow and let the model
+    // list_dir into deeper folders. A whole-file read is capped low too - the model pages
+    // large files with read_file offset/limit. Diverges deliberately from the TS original's
+    // looser limits (shared/workspace/workspaceService.ts).
+    private static final int MAX_TREE_ENTRIES = 200;
+    private static final int MAX_TREE_DEPTH = 2;
+    private static final long MAX_READ_BYTES = 40_000;
     private static final long MAX_WRITE_BYTES = 500_000;
+
+    // Ranged reads (offset/limit): defaults and hard ceilings.
+    private static final int DEFAULT_RANGE_LINES = 160;
+    private static final int MAX_RANGE_LINES = 2_000;
+    private static final long MAX_RANGED_FILE_BYTES = 10_000_000;
 
     public Path resolveSafe(String workspaceRoot, String relativePath) {
         Path root = Path.of(workspaceRoot).toAbsolutePath().normalize();
@@ -98,11 +112,11 @@ public class WorkspaceService {
         List<String> lines = new ArrayList<>();
         Path name = root.getFileName();
         lines.add((name != null ? name.toString() : root.toString()) + "/");
-        walk(root, root, lines, new int[]{0});
+        walk(root, root, lines, new int[]{0}, 1);
         return String.join("\n", lines);
     }
 
-    private void walk(Path root, Path dir, List<String> lines, int[] count) {
+    private void walk(Path root, Path dir, List<String> lines, int[] count, int depth) {
         if (count[0] >= MAX_TREE_ENTRIES) {
             return;
         }
@@ -138,11 +152,25 @@ public class WorkspaceService {
             count[0] += 1;
             String rel = root.relativize(entry).toString().replace('\\', '/');
             if (isDir) {
-                lines.add(rel + "/");
-                walk(root, entry, lines, count);
+                if (depth < MAX_TREE_DEPTH) {
+                    lines.add(rel + "/");
+                    walk(root, entry, lines, count, depth + 1);
+                } else {
+                    // At the depth cap: list the folder but don't descend. The trailing "…"
+                    // tells the model to list_dir into it if it needs to see the contents.
+                    lines.add(rel + "/" + (isNonEmptyDir(entry) ? " …" : ""));
+                }
             } else {
                 lines.add(rel);
             }
+        }
+    }
+
+    private boolean isNonEmptyDir(Path dir) {
+        try (Stream<Path> stream = Files.list(dir)) {
+            return stream.findFirst().isPresent();
+        } catch (IOException e) {
+            return false;
         }
     }
 
@@ -162,20 +190,69 @@ public class WorkspaceService {
     }
 
     public String readFile(String workspaceRoot, String relativePath) {
+        return readFile(workspaceRoot, relativePath, null, null);
+    }
+
+    /**
+     * Reads a UTF-8 text file. With {@code startLine}/{@code maxLines} both null this is a
+     * whole-file read capped at {@link #MAX_READ_BYTES} (unchanged behaviour). Passing either
+     * one returns just that window of lines, prefixed with a {@code (lines X-Y of N)} header -
+     * the way to pull a slice out of a file that's too big to read whole on a small context.
+     */
+    public String readFile(String workspaceRoot, String relativePath, Integer startLine, Integer maxLines) {
         Path target = resolveSafe(workspaceRoot, relativePath);
         if (!Files.isRegularFile(target)) {
             throw new WorkspaceException("File not found: " + relativePath);
         }
+        boolean ranged = startLine != null || maxLines != null;
         try {
             long size = Files.size(target);
-            if (size > MAX_READ_BYTES) {
-                throw new WorkspaceException(
-                        "File too large to read (" + size + " bytes). Max is " + MAX_READ_BYTES + ".");
+            if (!ranged) {
+                if (size > MAX_READ_BYTES) {
+                    throw new WorkspaceException(
+                            "File too large to read (" + size + " bytes). Max is " + MAX_READ_BYTES
+                                    + ". Pass offset/limit to read a range of lines instead.");
+                }
+                return Files.readString(target, StandardCharsets.UTF_8);
             }
-            return Files.readString(target, StandardCharsets.UTF_8);
+            if (size > MAX_RANGED_FILE_BYTES) {
+                throw new WorkspaceException("File too large even for a ranged read (" + size + " bytes).");
+            }
+            return readLineRange(target, startLine, maxLines);
         } catch (IOException e) {
             throw new WorkspaceException("Failed to read file: " + e.getMessage());
         }
+    }
+
+    private String readLineRange(Path target, Integer startLine, Integer maxLines) throws IOException {
+        int from = startLine == null ? 1 : Math.max(1, startLine);
+        int count = maxLines == null
+                ? DEFAULT_RANGE_LINES
+                : Math.max(1, Math.min(maxLines, MAX_RANGE_LINES));
+
+        List<String> all;
+        try (Stream<String> lines = Files.lines(target, StandardCharsets.UTF_8)) {
+            all = lines.toList();
+        }
+        int total = all.size();
+        if (from > total) {
+            return "(file has " + total + " line" + (total == 1 ? "" : "s") + "; offset " + from + " is past the end)";
+        }
+        int end = Math.min(total, from - 1 + count);
+
+        StringBuilder out = new StringBuilder();
+        out.append("(lines ").append(from).append('-').append(end).append(" of ").append(total).append(")\n");
+        long bytes = 0;
+        for (int i = from - 1; i < end; i++) {
+            String line = all.get(i);
+            bytes += line.length() + 1L;
+            if (bytes > MAX_READ_BYTES) {
+                out.append("... (range truncated at ").append(MAX_READ_BYTES).append(" bytes)");
+                return out.toString();
+            }
+            out.append(line).append('\n');
+        }
+        return out.toString();
     }
 
     /** Like readFile, but returns null instead of throwing - used for checkpoint snapshots where "doesn't exist" is expected. */
@@ -204,6 +281,27 @@ public class WorkspaceService {
         return "Wrote " + relativePath.replace('\\', '/') + " (" + bytes.length + " bytes)";
     }
 
+    /** New capability (not in the TS original): renames/moves a file within the workspace. Refuses to overwrite an existing destination. */
+    public String renameFile(String workspaceRoot, String relativePath, String newRelativePath) {
+        Path source = resolveSafe(workspaceRoot, relativePath);
+        Path destination = resolveSafe(workspaceRoot, newRelativePath);
+        if (!Files.isRegularFile(source)) {
+            throw new WorkspaceException("File not found: " + relativePath);
+        }
+        if (Files.exists(destination)) {
+            throw new WorkspaceException("A file already exists at: " + newRelativePath);
+        }
+        try {
+            if (destination.getParent() != null) {
+                Files.createDirectories(destination.getParent());
+            }
+            Files.move(source, destination);
+        } catch (IOException e) {
+            throw new WorkspaceException("Failed to rename file: " + e.getMessage());
+        }
+        return "Renamed " + relativePath.replace('\\', '/') + " to " + newRelativePath.replace('\\', '/');
+    }
+
     public String deleteFile(String workspaceRoot, String relativePath) {
         Path target = resolveSafe(workspaceRoot, relativePath);
         if (!Files.exists(target)) {
@@ -223,9 +321,11 @@ public class WorkspaceService {
     public String executeTool(String workspaceRoot, String name, Map<String, Object> args) {
         return switch (name) {
             case "list_dir" -> listDir(workspaceRoot, stringArg(args, "path", "."));
-            case "read_file" -> readFile(workspaceRoot, stringArg(args, "path", ""));
+            case "read_file" -> readFile(workspaceRoot, stringArg(args, "path", ""),
+                    intArg(args, "offset"), intArg(args, "limit"));
             case "write_file" -> writeFile(workspaceRoot, stringArg(args, "path", ""), stringArg(args, "content", ""));
             case "delete_file" -> deleteFile(workspaceRoot, stringArg(args, "path", ""));
+            case "rename_file" -> renameFile(workspaceRoot, stringArg(args, "path", ""), stringArg(args, "newPath", ""));
             case "generate_image" -> throw new WorkspaceException(
                     "generate_image must be executed by ImageService, not WorkspaceService");
             default -> throw new WorkspaceException("Unknown tool: " + name);
@@ -235,6 +335,22 @@ public class WorkspaceService {
     private static String stringArg(Map<String, Object> args, String key, String fallback) {
         Object value = args.get(key);
         return value == null ? fallback : String.valueOf(value);
+    }
+
+    /** Reads an int-ish tool arg (JSON numbers arrive as Integer/Long/Double; models sometimes send a string). Null/blank/garbage -> null. */
+    private static Integer intArg(Map<String, Object> args, String key) {
+        Object value = args.get(key);
+        if (value instanceof Number number) {
+            return number.intValue();
+        }
+        if (value == null) {
+            return null;
+        }
+        try {
+            return Integer.valueOf(String.valueOf(value).trim());
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 
     /** OpenAI-format tool definitions for list_dir/read_file/write_file/delete_file/generate_image. */
@@ -248,8 +364,13 @@ public class WorkspaceService {
                         List.of())));
 
         tools.add(new ToolDefinition("read_file",
-                "Read a UTF-8 text file from the workspace.",
-                schema(mapper, Map.of("path", prop(mapper, "string", "Relative file path")), List.of("path"))));
+                "Read a UTF-8 text file from the workspace. Omit offset/limit to read the whole file; "
+                        + "pass them to read only a line range (needed for files too large to read whole).",
+                schema(mapper, Map.of(
+                        "path", prop(mapper, "string", "Relative file path"),
+                        "offset", prop(mapper, "integer", "1-based line to start at (optional)"),
+                        "limit", prop(mapper, "integer", "Max lines to return from offset (optional, default 200)")),
+                        List.of("path"))));
 
         tools.add(new ToolDefinition("write_file",
                 "Create or overwrite a UTF-8 text file in the workspace. Creates parent folders as needed.",
@@ -262,6 +383,13 @@ public class WorkspaceService {
                 "Delete a single file in the workspace (not directories).",
                 schema(mapper, Map.of("path", prop(mapper, "string", "Relative file path")), List.of("path"))));
 
+        tools.add(new ToolDefinition("rename_file",
+                "Rename or move a single file within the workspace. Fails if the destination already exists.",
+                schema(mapper, Map.of(
+                        "path", prop(mapper, "string", "Current relative file path"),
+                        "newPath", prop(mapper, "string", "New relative file path")),
+                        List.of("path", "newPath"))));
+
         tools.add(new ToolDefinition("generate_image",
                 "Generate an image with the local image model and save it into the workspace as a PNG.",
                 schema(mapper, Map.of(
@@ -273,14 +401,15 @@ public class WorkspaceService {
         return tools;
     }
 
-    private static JsonNode prop(ObjectMapper mapper, String type, String description) {
+    // Package-private (not private) so GitService can build its own tool schemas the same way.
+    static JsonNode prop(ObjectMapper mapper, String type, String description) {
         ObjectNode node = mapper.createObjectNode();
         node.put("type", type);
         node.put("description", description);
         return node;
     }
 
-    private static JsonNode schema(ObjectMapper mapper, Map<String, JsonNode> properties, List<String> required) {
+    static JsonNode schema(ObjectMapper mapper, Map<String, JsonNode> properties, List<String> required) {
         ObjectNode node = mapper.createObjectNode();
         node.put("type", "object");
         ObjectNode propsNode = node.putObject("properties");

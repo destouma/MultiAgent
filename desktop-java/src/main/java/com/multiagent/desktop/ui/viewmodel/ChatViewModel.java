@@ -25,8 +25,10 @@ import com.multiagent.desktop.service.PersonaRegistry;
 
 import javafx.application.Platform;
 import javafx.beans.property.BooleanProperty;
+import javafx.beans.property.LongProperty;
 import javafx.beans.property.ObjectProperty;
 import javafx.beans.property.SimpleBooleanProperty;
+import javafx.beans.property.SimpleLongProperty;
 import javafx.beans.property.SimpleObjectProperty;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.beans.property.StringProperty;
@@ -67,6 +69,10 @@ public class ChatViewModel {
         boolean streaming = false;
         String errorMessage = "";
         String orchestratorStatus = "";
+        /** Model load/availability message shown before the first token; "" once generation is under way. */
+        String modelStatus = "";
+        /** System.currentTimeMillis() when this turn's send() started, for the "Thinking… Ns" timer. 0 when idle. */
+        long generationStartedAtMillis = 0;
     }
 
     private final Map<String, ConversationSession> sessions = new ConcurrentHashMap<>();
@@ -91,6 +97,8 @@ public class ChatViewModel {
     private final BooleanProperty streaming = new SimpleBooleanProperty(false);
     private final StringProperty errorMessage = new SimpleStringProperty("");
     private final StringProperty orchestratorStatus = new SimpleStringProperty("");
+    private final StringProperty modelStatus = new SimpleStringProperty("");
+    private final LongProperty generationStartedAt = new SimpleLongProperty(0);
     private final ObjectProperty<HealthStatus> health = new SimpleObjectProperty<>();
 
     /**
@@ -307,6 +315,8 @@ public class ChatViewModel {
         streaming.set(session.streaming);
         streamingContent.set(session.streaming ? session.streamingBuffer.toString() : "");
         orchestratorStatus.set(session.orchestratorStatus);
+        modelStatus.set(session.streaming ? session.modelStatus : "");
+        generationStartedAt.set(session.streaming ? session.generationStartedAtMillis : 0);
 
         refreshForActiveConversation();
     }
@@ -326,6 +336,8 @@ public class ChatViewModel {
                 streaming.set(false);
                 streamingContent.set("");
                 orchestratorStatus.set("");
+                modelStatus.set("");
+                generationStartedAt.set(0);
                 refreshForActiveConversation();
             }
         }
@@ -455,6 +467,8 @@ public class ChatViewModel {
         session.workspaceOps.clear();
         session.streaming = true;
         session.orchestratorStatus = "";
+        session.modelStatus = "";
+        session.generationStartedAtMillis = System.currentTimeMillis();
         // This send is always for the currently active conversation (see the resolution
         // comment above), so it's safe to mirror straight into the visible properties too.
         errorMessage.set("");
@@ -462,6 +476,8 @@ public class ChatViewModel {
         workspaceOps.clear();
         streaming.set(true);
         orchestratorStatus.set("");
+        modelStatus.set("");
+        generationStartedAt.set(session.generationStartedAtMillis);
 
         ChatService.Listener listener = new ChatService.Listener() {
             // Every callback writes into THIS conversation's own session first - that's
@@ -474,8 +490,10 @@ public class ChatViewModel {
                 Platform.runLater(() -> {
                     ConversationSession session = sessionFor(conversationId);
                     session.streamingBuffer.append(delta);
+                    session.modelStatus = "";
                     if (isActiveConversation(conversationId)) {
                         streamingContent.set(session.streamingBuffer.toString());
+                        modelStatus.set("");
                     }
                 });
             }
@@ -486,9 +504,13 @@ public class ChatViewModel {
                     ConversationSession session = sessionFor(conversationId);
                     session.streaming = false;
                     session.streamingBuffer.setLength(0);
+                    session.modelStatus = "";
+                    session.generationStartedAtMillis = 0;
                     if (isActiveConversation(conversationId)) {
                         streaming.set(false);
                         streamingContent.set("");
+                        modelStatus.set("");
+                        generationStartedAt.set(0);
                         refreshMessages(conversationId);
                     }
                     touchConversationOrder(conversationId);
@@ -501,10 +523,14 @@ public class ChatViewModel {
                     ConversationSession session = sessionFor(conversationId);
                     session.streaming = false;
                     session.streamingBuffer.setLength(0);
+                    session.modelStatus = "";
+                    session.generationStartedAtMillis = 0;
                     session.errorMessage = message;
                     if (isActiveConversation(conversationId)) {
                         streaming.set(false);
                         streamingContent.set("");
+                        modelStatus.set("");
+                        generationStartedAt.set(0);
                         errorMessage.set(message);
                         refreshMessages(conversationId);
                     }
@@ -518,8 +544,21 @@ public class ChatViewModel {
                     ConversationSession session = sessionFor(conversationId);
                     WorkspaceOpEntry entry = new WorkspaceOpEntry(op, path, status, detail, checkpointId);
                     session.workspaceOps.add(entry);
+                    session.modelStatus = "";
                     if (isActiveConversation(conversationId)) {
                         workspaceOps.add(entry);
+                        modelStatus.set("");
+                    }
+                });
+            }
+
+            @Override
+            public void onModelStatus(String conversationId, String status) {
+                Platform.runLater(() -> {
+                    ConversationSession session = sessionFor(conversationId);
+                    session.modelStatus = status == null ? "" : status;
+                    if (isActiveConversation(conversationId)) {
+                        modelStatus.set(session.modelStatus);
                     }
                 });
             }
@@ -642,6 +681,16 @@ public class ChatViewModel {
 
     public StringProperty orchestratorStatusProperty() {
         return orchestratorStatus;
+    }
+
+    /** Model load/availability message while a turn is starting up ("Loading …"); "" once tokens/tool ops flow. */
+    public StringProperty modelStatusProperty() {
+        return modelStatus;
+    }
+
+    /** System.currentTimeMillis() when the in-flight turn began, for the "Thinking… Ns" timer; 0 when idle. */
+    public LongProperty generationStartedAtProperty() {
+        return generationStartedAt;
     }
 
     public ObjectProperty<HealthStatus> healthProperty() {

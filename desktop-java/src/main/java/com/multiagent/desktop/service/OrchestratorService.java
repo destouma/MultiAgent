@@ -15,8 +15,11 @@ import com.multiagent.desktop.model.Conversation;
 import com.multiagent.desktop.model.MessageRole;
 import com.multiagent.desktop.model.Persona;
 import com.multiagent.desktop.persistence.ConversationStore;
+import com.multiagent.desktop.workspace.GitService;
 import com.multiagent.desktop.workspace.WorkspaceService;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -27,28 +30,33 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 /**
  * Plan -> specialists -> synthesize workflow for kind == orchestrator conversations,
  * mirroring desktop/electron/services/orchestratorService.ts. Each user message: (1) asks
  * the orchestrator persona which specialists (researcher/coder/critic) should help, (2)
- * runs each chosen specialist in turn - read-only workspace tools only, via
- * MAX_SPECIALIST_TOOL_ROUNDS - persisting each note as its own message as it completes,
+ * runs each chosen specialist in turn - read-only workspace tools plus the read-only git
+ * tools, via MAX_SPECIALIST_TOOL_ROUNDS - persisting each note as its own message as it completes,
  * then (3) streams a final synthesized answer from the notes. Intentionally its own
  * service (like ChatService) rather than sharing ToolLoopRunner directly, since
  * specialists need a read-only-filtered tool set and per-specialist note bookkeeping that
  * doesn't fit ToolLoopRunner's single-final-answer shape - though both build on the same
  * WorkspaceService/ChatRequestMessage primitives, avoiding the ~150-line duplication the
  * TS version has between chatService.ts and orchestratorService.ts at the tool-execution
- * layer (executeSpecialistTool here is a deliberately small, read-only-only sibling of
- * ToolLoopRunner's runToolAndEmit, not a copy of its write/delete handling).
+ * layer (executeSpecialistTool here is a deliberately small, read-only sibling of
+ * ToolLoopRunner's runToolAndEmit, not a copy of its write/delete or git_add/git_commit handling).
  */
 public class OrchestratorService {
     private static final List<String> SPECIALIST_IDS = List.of("researcher", "coder", "critic");
     private static final int MAX_SPECIALIST_TOOL_ROUNDS = 4;
-    private static final Set<String> READ_ONLY_TOOL_NAMES = Set.of("list_dir", "read_file");
+    // list_dir/read_file plus GitService's read-only git_* tools - never write_file/delete_file/rename_file or git_add/git_commit.
+    private static final Set<String> READ_ONLY_TOOL_NAMES = Stream.concat(
+            Stream.of("list_dir", "read_file"), GitService.READ_ONLY_TOOLS.stream())
+            .collect(Collectors.toUnmodifiableSet());
 
-    private static final List<ToolDefinition> READ_ONLY_TOOLS = WorkspaceService.workspaceTools().stream()
+    private static final List<ToolDefinition> READ_ONLY_TOOLS = Stream.concat(
+            WorkspaceService.workspaceTools().stream(), GitService.gitTools().stream())
             .filter(tool -> READ_ONLY_TOOL_NAMES.contains(tool.name()))
             .toList();
 
@@ -58,6 +66,7 @@ public class OrchestratorService {
     private final ConversationStore store;
     private final PersonaRegistry personas;
     private final WorkspaceService workspace = new WorkspaceService();
+    private final GitService git = new GitService();
     private final ObjectMapper mapper = new ObjectMapper();
     private final Map<String, CancellationToken> activeTokens = new ConcurrentHashMap<>();
     private final ExecutorService executor = Executors.newCachedThreadPool(runnable -> {
@@ -87,7 +96,8 @@ public class OrchestratorService {
 
         executor.submit(() -> {
             try {
-                client.ensureModelLoaded(model, status -> { }, token);
+                client.ensureModelLoaded(model,
+                        status -> listener.onModelStatus(conversation.getId(), status), token);
 
                 String workspacePath = conversation.getWorkspacePath();
                 String workspaceTree = null;
@@ -189,7 +199,7 @@ public class OrchestratorService {
             systemLines.addAll(List.of("",
                     "A read-only workspace folder is bound to this conversation: " + workspacePath,
                     "Specialists you pick will be able to list and read files in it.",
-                    "Workspace tree:", workspaceTree));
+                    "Workspace tree (top levels only; \"…\" means there is more under that folder):", workspaceTree));
         }
 
         String userBlock = (priorContext != null && !priorContext.isBlank() ? "Conversation so far:\n" + priorContext + "\n" : "")
@@ -220,8 +230,15 @@ public class OrchestratorService {
             systemLines.addAll(List.of("",
                     "You have read-only access to a workspace folder bound to this conversation: " + workspacePath,
                     "Use the list_dir and read_file tools to inspect actual files before answering - "
-                            + "do not guess at contents from the tree alone.",
-                    "Workspace tree:", workspaceTree));
+                            + "do not guess at contents from the tree alone. The tree shows only the top "
+                            + "levels; list_dir into any folder marked with a trailing \"…\". For a large file, "
+                            + "read_file with offset/limit to page through it."));
+            if (isGitRepo(workspacePath)) {
+                systemLines.add("This workspace is a git repository: git_status, git_diff, git_log, git_show and "
+                        + "git_branch are available for inspecting history and pending changes (read-only - you "
+                        + "cannot stage or commit).");
+            }
+            systemLines.addAll(List.of("Workspace tree:", workspaceTree));
         }
 
         String userBlock = (priorContext != null && !priorContext.isBlank() ? "Conversation so far:\n" + priorContext + "\n" : "")
@@ -231,7 +248,8 @@ public class OrchestratorService {
                 ChatRequestMessage.system(String.join("\n", systemLines)),
                 ChatRequestMessage.user(userBlock)));
 
-        client.ensureModelLoaded(specialistModel, status -> { }, token);
+        client.ensureModelLoaded(specialistModel,
+                status -> listener.onModelStatus(conversationId, status), token);
 
         if (workspacePath == null || workspacePath.isBlank()) {
             ChatCompletionResult completion = client.completeChat(messages, specialistModel, List.of(), token);
@@ -251,6 +269,7 @@ public class OrchestratorService {
 
         for (int round = 0; round < MAX_SPECIALIST_TOOL_ROUNDS; round++) {
             token.throwIfCancelled();
+            ContextTrimmer.elideOldToolOutput(messages);
 
             ChatCompletionResult completion;
             try {
@@ -284,6 +303,16 @@ public class OrchestratorService {
         return "(" + persona.getName() + " stopped after exploring the workspace - try a more specific question.)";
     }
 
+    /** Cheap ".git present?" check so a specialist's prompt only mentions git tools when the workspace is actually a repo. */
+    private boolean isGitRepo(String workspacePath) {
+        try {
+            Path dotGit = Path.of(workspacePath).resolve(".git");
+            return Files.isDirectory(dotGit) || Files.isRegularFile(dotGit);
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
     private String executeSpecialistTool(String workspacePath, String conversationId, String messageId, String name,
                                           String rawArgsJson, ChatService.Listener listener) {
         Map<String, Object> args;
@@ -294,7 +323,9 @@ public class OrchestratorService {
             args = Map.of();
         }
 
-        String relPath = args.get("path") != null ? String.valueOf(args.get("path")) : ".";
+        String relPath = args.get("path") != null
+                ? String.valueOf(args.get("path"))
+                : (name.startsWith("git_") ? "" : ".");
         if (listener != null) {
             listener.onWorkspaceOp(conversationId, messageId, name, relPath, "running", null, null);
         }
@@ -308,9 +339,12 @@ public class OrchestratorService {
         }
 
         try {
-            // Specialists only ever get list_dir/read_file, never write_file/delete_file, so
-            // there's no checkpoint to capture here - unlike ToolLoopRunner's runToolAndEmit.
-            String result = workspace.executeTool(workspacePath, name, args);
+            // Specialists only ever get read-only tools (list_dir/read_file + read-only git_*),
+            // never write_file/delete_file or git_add/git_commit, so there's no checkpoint to
+            // capture here - unlike ToolLoopRunner's runToolAndEmit.
+            String result = name.startsWith("git_")
+                    ? git.executeTool(workspacePath, name, args)
+                    : workspace.executeTool(workspacePath, name, args);
             if (listener != null) {
                 listener.onWorkspaceOp(conversationId, messageId, name, relPath, "ok",
                         result.length() > 240 ? result.substring(0, 240) : result, null);

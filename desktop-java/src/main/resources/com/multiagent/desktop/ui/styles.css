@@ -48,6 +48,11 @@
     -fx-background-radius: 10;
 }
 
+.thinking-text {
+    -fx-text-fill: #6b7280;
+    -fx-font-style: italic;
+}
+
 .code-block {
     -fx-font-family: "Consolas", "Menlo", monospace;
 }

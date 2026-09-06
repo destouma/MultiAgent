@@ -73,6 +73,39 @@ class WorkspaceServiceTest {
     }
 
     @Test
+    void readFileWithOffsetAndLimitReturnsOnlyThatLineRange() throws IOException {
+        Files.writeString(root.resolve("many.txt"), "l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9\nl10\n");
+
+        String window = workspace.readFile(root.toString(), "many.txt", 3, 4);
+
+        assertTrue(window.startsWith("(lines 3-6 of 10)\n"), window);
+        assertTrue(window.contains("l3\nl4\nl5\nl6\n"), window);
+        assertTrue(!window.contains("l2"), window);
+        assertTrue(!window.contains("l7"), window);
+    }
+
+    @Test
+    void readFileWithOffsetPastTheEndSaysSo() throws IOException {
+        Files.writeString(root.resolve("short.txt"), "only\ntwo\n");
+        String result = workspace.readFile(root.toString(), "short.txt", 50, 10);
+        assertTrue(result.contains("past the end"), result);
+    }
+
+    @Test
+    void readFileWithoutOffsetOrLimitStillReturnsTheWholeFile() {
+        assertEquals("hello", workspace.readFile(root.toString(), "readme.txt", null, null));
+    }
+
+    @Test
+    void executeToolPassesOffsetAndLimitThroughToReadFile() throws IOException {
+        Files.writeString(root.resolve("many.txt"), "a\nb\nc\nd\ne\n");
+        String window = workspace.executeTool(root.toString(), "read_file",
+                Map.of("path", "many.txt", "offset", 2, "limit", 2));
+        assertTrue(window.startsWith("(lines 2-3 of 5)\n"), window);
+        assertTrue(window.contains("b\nc\n"), window);
+    }
+
+    @Test
     void tryReadFileReturnsNullInsteadOfThrowingForAMissingFile() {
         assertEquals(null, workspace.tryReadFile(root.toString(), "missing.txt"));
         assertEquals("hello", workspace.tryReadFile(root.toString(), "readme.txt"));
@@ -101,6 +134,8 @@ class WorkspaceServiceTest {
         Files.writeString(root.resolve(".hidden"), "secret");
         Files.createDirectories(root.resolve("node_modules"));
         Files.writeString(root.resolve("node_modules").resolve("pkg.json"), "{}");
+        Files.createDirectories(root.resolve("target").resolve("classes"));
+        Files.writeString(root.resolve("target").resolve("classes").resolve("App.class"), "x");
 
         String tree = workspace.buildTree(root.toString());
 
@@ -108,6 +143,22 @@ class WorkspaceServiceTest {
         assertTrue(tree.contains("sub/"));
         assertTrue(!tree.contains(".hidden"));
         assertTrue(!tree.contains("node_modules"));
+        assertTrue(!tree.contains("target"), "build-output dirs should be pruned from the tree");
+    }
+
+    @Test
+    void buildTreeStopsAtTheDepthCapAndMarksFoldersWithMoreInside() throws IOException {
+        // root/deep/one/two/three.txt - deeper than MAX_TREE_DEPTH (2).
+        Files.createDirectories(root.resolve("deep").resolve("one").resolve("two"));
+        Files.writeString(root.resolve("deep").resolve("one").resolve("two").resolve("three.txt"), "x");
+
+        String tree = workspace.buildTree(root.toString());
+
+        assertTrue(tree.contains("deep/"), tree);
+        assertTrue(tree.contains("deep/one/"), tree);
+        assertTrue(tree.contains("deep/one/ …"), "a folder with hidden contents should be marked with …\n" + tree);
+        assertTrue(!tree.contains("two"), "contents below the depth cap must not be listed\n" + tree);
+        assertTrue(!tree.contains("three.txt"), tree);
     }
 
     @Test
@@ -129,10 +180,46 @@ class WorkspaceServiceTest {
     }
 
     @Test
-    void workspaceToolsDefinesTheFiveExpectedTools() {
+    void workspaceToolsDefinesTheExpectedTools() {
         List<String> names = WorkspaceService.workspaceTools().stream()
                 .map(tool -> tool.name())
                 .toList();
-        assertEquals(List.of("list_dir", "read_file", "write_file", "delete_file", "generate_image"), names);
+        assertEquals(List.of("list_dir", "read_file", "write_file", "delete_file", "rename_file", "generate_image"),
+                names);
+    }
+
+    @Test
+    void renameFileMovesTheFileToTheNewPath() {
+        String result = workspace.renameFile(root.toString(), "readme.txt", "renamed.txt");
+        assertTrue(result.contains("readme.txt"));
+        assertTrue(result.contains("renamed.txt"));
+        assertEquals("hello", workspace.readFile(root.toString(), "renamed.txt"));
+        assertThrows(WorkspaceException.class, () -> workspace.readFile(root.toString(), "readme.txt"));
+    }
+
+    @Test
+    void renameFileCreatesDestinationParentDirectories() {
+        workspace.renameFile(root.toString(), "readme.txt", "docs/renamed.txt");
+        assertEquals("hello", workspace.readFile(root.toString(), "docs/renamed.txt"));
+    }
+
+    @Test
+    void renameFileRefusesToOverwriteAnExistingDestination() {
+        assertThrows(WorkspaceException.class,
+                () -> workspace.renameFile(root.toString(), "readme.txt", "sub/nested.txt"));
+    }
+
+    @Test
+    void renameFileThrowsForAMissingSource() {
+        assertThrows(WorkspaceException.class,
+                () -> workspace.renameFile(root.toString(), "missing.txt", "new.txt"));
+    }
+
+    @Test
+    void renameFileRejectsEscapingTheWorkspaceEitherSide() {
+        assertThrows(WorkspaceException.class,
+                () -> workspace.renameFile(root.toString(), "../outside.txt", "new.txt"));
+        assertThrows(WorkspaceException.class,
+                () -> workspace.renameFile(root.toString(), "readme.txt", "../outside.txt"));
     }
 }

@@ -17,6 +17,10 @@
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <javafx.version>21.0.4</javafx.version>
     <junit.version>5.11.3</junit.version>
+    <!-- 2.18.9 clears the jackson-core / jackson-databind advisories flagged by the
+         release-verify SBOM scan (GHSA-r7wm-3cxj-wff9, GHSA-rmj7-2vxq-3g9f,
+         GHSA-j3rv-43j4-c7qm and the related medium ones); patch-only bump within 2.18.x. -->
+    <jackson.version>2.18.9</jackson.version>
     <main.class>com.multiagent.desktop.App</main.class>
   </properties>
 
@@ -40,11 +44,17 @@
       <version>3.47.1.0</version>
     </dependency>
 
-    <!-- JSON -->
+    <!-- JSON. jackson-core is pinned explicitly (not just pulled in transitively) so the
+         SBOM records the patched version unambiguously. -->
     <dependency>
       <groupId>com.fasterxml.jackson.core</groupId>
       <artifactId>jackson-databind</artifactId>
-      <version>2.18.2</version>
+      <version>${jackson.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>com.fasterxml.jackson.core</groupId>
+      <artifactId>jackson-core</artifactId>
+      <version>${jackson.version}</version>
     </dependency>
 
     <!-- Rich text / code blocks -->

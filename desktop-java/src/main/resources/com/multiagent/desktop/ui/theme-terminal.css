@@ -78,6 +78,11 @@
     -fx-fill: #33ff33;
 }
 
+.thinking-text {
+    -fx-text-fill: #2ea62e;
+    -fx-font-style: italic;
+}
+
 .code-block {
     -fx-font-family: "Consolas", "Courier New", monospace;
     -fx-fill: #33ff33;

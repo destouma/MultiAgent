@@ -18,6 +18,26 @@ class ActionTagParserTest {
     }
 
     @Test
+    void parsesAPlainReadFileTag() {
+        List<ActionTagParser.ParsedAction> actions = ActionTagParser.parse("<read_file path=\"a.txt\" />");
+        assertEquals(1, actions.size());
+        assertEquals("read_file", actions.get(0).name());
+        assertEquals("a.txt", actions.get(0).args().get("path"));
+        assertTrue(!actions.get(0).args().containsKey("offset"));
+    }
+
+    @Test
+    void parsesAReadFileTagWithOffsetAndLimit() {
+        List<ActionTagParser.ParsedAction> actions = ActionTagParser.parse(
+                "<read_file path=\"src/Big.java\" offset=\"120\" limit=\"60\" />");
+        assertEquals(1, actions.size());
+        assertEquals("read_file", actions.get(0).name());
+        assertEquals("src/Big.java", actions.get(0).args().get("path"));
+        assertEquals("120", actions.get(0).args().get("offset"));
+        assertEquals("60", actions.get(0).args().get("limit"));
+    }
+
+    @Test
     void parsesAWriteFileTagWithMultilineContent() {
         String content = "<write_file path=\"src/Foo.java\">line1\nline2</write_file>";
         List<ActionTagParser.ParsedAction> actions = ActionTagParser.parse(content);
@@ -47,6 +67,43 @@ class ActionTagParserTest {
         List<ActionTagParser.ParsedAction> actions = ActionTagParser.parse(
                 "<generate_image prompt=\"a cat\" />");
         assertEquals("images/generated.png", actions.get(0).args().get("path"));
+    }
+
+    @Test
+    void parsesARenameFileTag() {
+        List<ActionTagParser.ParsedAction> actions = ActionTagParser.parse(
+                "<rename_file path=\"old.txt\" newPath=\"new.txt\" />");
+        assertEquals(1, actions.size());
+        assertEquals("rename_file", actions.get(0).name());
+        assertEquals("old.txt", actions.get(0).args().get("path"));
+        assertEquals("new.txt", actions.get(0).args().get("newPath"));
+    }
+
+    @Test
+    void parsesABareGitStatusTag() {
+        List<ActionTagParser.ParsedAction> actions = ActionTagParser.parse("Let me check: <git_status />");
+        assertEquals(1, actions.size());
+        assertEquals("git_status", actions.get(0).name());
+        assertTrue(actions.get(0).args().isEmpty());
+    }
+
+    @Test
+    void parsesGitTagsWithAttributes() {
+        List<ActionTagParser.ParsedAction> actions = ActionTagParser.parse(
+                "<git_diff staged=\"true\" path=\"src/Foo.java\" />\n"
+                        + "<git_commit message=\"Fix the bug\" all=\"true\" />");
+        assertEquals(2, actions.size());
+        assertEquals("git_diff", actions.get(0).name());
+        assertEquals("true", actions.get(0).args().get("staged"));
+        assertEquals("src/Foo.java", actions.get(0).args().get("path"));
+        assertEquals("git_commit", actions.get(1).name());
+        assertEquals("Fix the bug", actions.get(1).args().get("message"));
+        assertEquals("true", actions.get(1).args().get("all"));
+    }
+
+    @Test
+    void doesNotMistakeAnUnknownGitLikeTagForAnAction() {
+        assertTrue(ActionTagParser.parse("<git_rebase onto=\"main\" />").isEmpty());
     }
 
     @Test

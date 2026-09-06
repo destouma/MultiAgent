@@ -37,11 +37,11 @@ See [Differences from the Electron client](#10-differences-from-the-electron-cli
 
 ### Providers
 
-`llm.LlmClient` is the interface (`checkHealth`, `listModels`, `listLoadedModelNames`, `supportsLoadStatus`, `ensureModelLoaded`, `streamChat`, `completeChat`, `supportsImageGeneration`) both implementations satisfy:
+`llm.LlmClient` is the interface (`checkHealth`, `listModels`, `listLoadedModelNames`, `supportsLoadStatus`, `ensureModelLoaded`, `streamChat`, `completeChat`, `supportsImageGeneration`) all three implementations satisfy:
 
 - **`OpenAiClient`** (`llm/OpenAiClient.java`) — any generic OpenAI-compatible server. Uses the JDK's own `HttpClient` for `/chat/completions` (SSE streaming via `streaming/SseLineReader.java`, and non-streaming `completeChat` with a `tools` payload for the agent loop) and `/models`. No load-status signal on the standard `/v1` surface, so `listLoadedModelNames()`/`supportsLoadStatus()` are honest about that (empty list, `false`) and `ensureModelLoaded` is a no-op.
 - **`LemonadeClient`** (`llm/LemonadeClient.java`) — `extends OpenAiClient`, adding Lemonade's `/health` (parses `all_models_loaded`) and `POST /load` + poll-until-ready (1.5s interval, 10min timeout) on top of the inherited chat behavior.
-- **Ollama** — not ported yet. `LlmClientFactory.create(ProviderType.OLLAMA, ...)` throws a clear `ProviderException` rather than silently misbehaving; `ProviderType` already has the `OLLAMA` enum value reserved for when it lands.
+- **`OllamaClient`** (`llm/OllamaClient.java`) — native Ollama protocol, deliberately standalone rather than extending `OpenAiClient` since the wire format differs at almost every call: `POST /api/chat` (NDJSON streaming via `streaming/NdjsonLineReader.java`, not SSE), `GET /api/tags` for model listing, `GET /api/ps` for currently-loaded models (best-effort — degrades to `supportsLoadStatus() == false` if the server doesn't implement it), `POST /api/generate` with no prompt to trigger on-demand loading. Ollama assigns no id to tool calls and sends `arguments` as a JSON object rather than a string, so `completeChat`/`toOllamaMessages` synthesize an id and re-serialize arguments to match the shape every other provider produces. **Has no image-generation endpoint** — `supportsImageGeneration()` returns `false`.
 
 `LlmClientFactory.create(providerType, settings)` picks the implementation, mirroring `shared/llm/createLlmClient.ts`.
 
@@ -378,10 +378,9 @@ Intentional, not oversights:
 | Mutating file tools | Execute immediately, no confirmation | Gated behind `ActionApprover`/`DialogActionApprover` — every write/delete/rename asks first | Added specifically for this client; a generic enough interface that other action types (e.g. git commands) can reuse it later |
 | Tool-call detection | Native tool calls, then XML action-tag fallback | Native tool calls, then XML action-tag fallback, **then a JSON-tool-call-text fallback** (`JsonToolCallParser`) | Found live against Qwen2.5-Coder + Lemonade: the model ignores both the native tool-calling field and this app's XML tags, printing the JSON shape it was fine-tuned to emit instead |
 | `rename_file` tool | Not present | Present (`WorkspaceService.renameFile`, XML tag, JSON fallback) | Added during this port; not back-ported to the TS side |
-| Ollama provider | Supported (`OllamaClient`, NDJSON) | Not ported — `ProviderType.OLLAMA` is recognized in config but `LlmClientFactory` throws a clear "not yet supported" error | Deferred; Lemonade and generic OpenAI-compatible servers cover the primary use case |
 | Image generation | Full (`ImageService`, image sessions, gallery) | Not ported (explicitly out of scope for this migration) | Deprioritized early in planning — plain/workspace chat and orchestrator were the priority |
 | Packaging | NSIS installer (Windows), AppImage (Linux) | None yet — `mvn javafx:run` only | Not yet built; see [§8](#8-develop--build) |
 | Process model | Electron main/renderer + IPC + `contextBridge` | Single JVM, `ChatViewModel` calls services directly | No separate untrusted-renderer boundary to defend in a JavaFX desktop app the way there is in an app that also renders arbitrary web content |
 | Settings/DB location | `%APPDATA%\MultiAgent\` | `%APPDATA%\MultiAgentJava\` | Deliberately separate so the two clients never fight over the same files or assume config-shape compatibility |
 
-Everything else — folders, side-by-side split view, per-conversation server pinning, search, export, checkpoint diff/revert, three themes, the orchestrator's plan/specialist/synthesize flow, the workspace sandboxing rules — is a faithful behavioral port.
+Everything else — folders, side-by-side split view, per-conversation server pinning, search, export, checkpoint diff/revert, three themes, the orchestrator's plan/specialist/synthesize flow, the workspace sandboxing rules, and all three providers (OpenAI-compatible, Lemonade, Ollama) — is a faithful behavioral port.

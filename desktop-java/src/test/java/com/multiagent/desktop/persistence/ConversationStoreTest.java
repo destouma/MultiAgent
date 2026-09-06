@@ -5,6 +5,7 @@ import com.multiagent.desktop.model.Conversation;
 import com.multiagent.desktop.model.ConversationKind;
 import com.multiagent.desktop.model.FolderEntry;
 import com.multiagent.desktop.model.MessageRole;
+import com.multiagent.desktop.model.ProjectEntry;
 import com.multiagent.desktop.model.SearchResult;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -172,6 +173,82 @@ class ConversationStoreTest {
         assertEquals(2, folders.size());
         assertEquals(first.path(), folders.get(0).path());
         assertEquals(second.path(), folders.get(1).path());
+    }
+
+    @Test
+    void newFoldersStartWithNoProject() {
+        FolderEntry folder = store.addFolder("a");
+        assertNull(folder.projectId());
+    }
+
+    @Test
+    void addProjectThenAssignFolderGroupsIt() {
+        ProjectEntry project = store.addProject("Acme Corp");
+        store.addFolder("frontend");
+
+        store.setFolderProject("frontend", project.id());
+
+        FolderEntry reloaded = store.listFolders().stream()
+                .filter(f -> f.path().equals("frontend"))
+                .findFirst().orElseThrow();
+        assertEquals(project.id(), reloaded.projectId());
+    }
+
+    @Test
+    void assigningNullProjectIdUngroupsAFolder() {
+        ProjectEntry project = store.addProject("Acme Corp");
+        store.addFolder("frontend");
+        store.setFolderProject("frontend", project.id());
+
+        store.setFolderProject("frontend", null);
+
+        FolderEntry reloaded = store.listFolders().stream()
+                .filter(f -> f.path().equals("frontend"))
+                .findFirst().orElseThrow();
+        assertNull(reloaded.projectId());
+    }
+
+    @Test
+    void renameProjectChangesItsNameButKeepsItsId() {
+        ProjectEntry project = store.addProject("Old name");
+
+        ProjectEntry renamed = store.renameProject(project.id(), "New name");
+
+        assertEquals(project.id(), renamed.id());
+        assertEquals("New name", renamed.name());
+    }
+
+    @Test
+    void removingAProjectUngroupsItsFoldersWithoutDeletingThem() {
+        ProjectEntry project = store.addProject("Acme Corp");
+        store.addFolder("frontend");
+        store.setFolderProject("frontend", project.id());
+
+        boolean removed = store.removeProject(project.id());
+
+        assertTrue(removed);
+        assertTrue(store.listProjects().isEmpty());
+        FolderEntry reloaded = store.listFolders().stream()
+                .filter(f -> f.path().equals("frontend"))
+                .findFirst().orElseThrow();
+        assertNull(reloaded.projectId(), "folder should be kept, just ungrouped");
+    }
+
+    @Test
+    void removingAProjectThatWasNeverAddedReturnsFalse() {
+        assertFalse(store.removeProject("never-added"));
+    }
+
+    @Test
+    void projectsAreOrderedByCreationTime() throws InterruptedException {
+        ProjectEntry first = store.addProject("First");
+        Thread.sleep(5);
+        ProjectEntry second = store.addProject("Second");
+
+        List<ProjectEntry> projects = store.listProjects();
+        assertEquals(2, projects.size());
+        assertEquals(first.id(), projects.get(0).id());
+        assertEquals(second.id(), projects.get(1).id());
     }
 
     @Test

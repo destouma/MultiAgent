@@ -13,6 +13,7 @@ import com.multiagent.desktop.model.FolderEntry;
 import com.multiagent.desktop.model.HealthStatus;
 import com.multiagent.desktop.model.ModelInfo;
 import com.multiagent.desktop.model.Persona;
+import com.multiagent.desktop.model.ProjectEntry;
 import com.multiagent.desktop.model.SearchResult;
 import com.multiagent.desktop.model.ServerProfile;
 import com.multiagent.desktop.persistence.ConversationStore;
@@ -87,6 +88,7 @@ public class ChatViewModel {
     private final ObservableList<Persona> personas = FXCollections.observableArrayList();
     private final ObservableList<ModelInfo> models = FXCollections.observableArrayList();
     private final ObservableList<FolderEntry> folders = FXCollections.observableArrayList();
+    private final ObservableList<ProjectEntry> projects = FXCollections.observableArrayList();
     private final ObservableList<WorkspaceOpEntry> workspaceOps = FXCollections.observableArrayList();
 
     private final ObjectProperty<Conversation> activeConversation = new SimpleObjectProperty<>();
@@ -121,7 +123,7 @@ public class ChatViewModel {
 
     public void bootstrap() {
         personas.setAll(personaRegistry.list());
-        refreshConversationsAndFolders();
+        refreshAll();
         if (!conversations.isEmpty()) {
             selectConversation(conversations.get(0));
         }
@@ -143,14 +145,15 @@ public class ChatViewModel {
         }
     }
 
-    private void refreshConversationsAndFolders() {
+    private void refreshAll() {
         conversations.setAll(store.listConversations());
         folders.setAll(store.listFolders());
+        projects.setAll(store.listProjects());
     }
 
     private void notifySiblings() {
         for (ChatViewModel sibling : siblings) {
-            sibling.refreshConversationsAndFolders();
+            sibling.refreshAll();
             Conversation siblingActive = sibling.activeConversation.get();
             if (siblingActive != null) {
                 Conversation refreshed = store.getConversation(siblingActive.getId());
@@ -180,6 +183,34 @@ public class ChatViewModel {
                 activeConversation.set(refreshed);
             }
         }
+        notifySiblings();
+    }
+
+    /** Assigns a folder to a project (or ungroups it, when projectId is null) - pure sidebar grouping, no effect on the folder's chats. */
+    public void assignFolderToProject(String folderPath, String projectId) {
+        store.setFolderProject(folderPath, projectId);
+        folders.setAll(store.listFolders());
+        notifySiblings();
+    }
+
+    /** Creates a new empty project - a name to group folders under, nothing more. */
+    public void addProject(String name) {
+        store.addProject(name);
+        projects.setAll(store.listProjects());
+        notifySiblings();
+    }
+
+    public void renameProject(ProjectEntry project, String newName) {
+        store.renameProject(project.id(), newName);
+        projects.setAll(store.listProjects());
+        notifySiblings();
+    }
+
+    /** Deletes the project - its folders are kept, just ungrouped (same "unbind, don't cascade" behavior as removeFolder()). */
+    public void removeProject(ProjectEntry project) {
+        store.removeProject(project.id());
+        projects.setAll(store.listProjects());
+        folders.setAll(store.listFolders());
         notifySiblings();
     }
 
@@ -645,6 +676,10 @@ public class ChatViewModel {
 
     public ObservableList<FolderEntry> folders() {
         return folders;
+    }
+
+    public ObservableList<ProjectEntry> projects() {
+        return projects;
     }
 
     public ObservableList<WorkspaceOpEntry> workspaceOps() {

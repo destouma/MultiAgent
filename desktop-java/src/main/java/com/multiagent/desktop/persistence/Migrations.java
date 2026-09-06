@@ -58,6 +58,17 @@ final class Migrations {
                     )
                     """);
             st.execute("""
+                    CREATE TABLE IF NOT EXISTS projects (
+                      id TEXT PRIMARY KEY,
+                      name TEXT NOT NULL,
+                      createdAt INTEGER NOT NULL
+                    )
+                    """);
+            // No FK to projects.id - same loose-coupling style as folders -> conversations.workspacePath
+            // below: application code unbinds on delete rather than relying on cascade.
+            addColumnIfMissing(st, "folders", "projectId", "TEXT");
+
+            st.execute("""
                     CREATE TABLE IF NOT EXISTS file_checkpoints (
                       id TEXT PRIMARY KEY,
                       conversationId TEXT NOT NULL,

@@ -1,6 +1,8 @@
 package com.multiagent.desktop.ui.viewmodel;
 
 import com.multiagent.desktop.model.Conversation;
+import com.multiagent.desktop.model.FolderEntry;
+import com.multiagent.desktop.model.ProjectEntry;
 import com.multiagent.desktop.persistence.ConversationStore;
 import com.multiagent.desktop.service.CheckpointService;
 import com.multiagent.desktop.service.ChatService;
@@ -97,5 +99,29 @@ class ChatViewModelSiblingSyncTest {
     void openingAFolderInOnePaneAddsItToTheOthersFolderList(@TempDir Path folder) {
         secondary.openFolder(folder.toString());
         assertTrue(primary.folders().stream().anyMatch(f -> f.path().equals(folder.toString())));
+    }
+
+    @Test
+    void addingAProjectInOnePaneAppearsInTheOthersProjectList() {
+        secondary.addProject("Acme Corp");
+        assertTrue(primary.projects().stream().anyMatch(p -> p.name().equals("Acme Corp")));
+    }
+
+    @Test
+    void assigningAFolderToAProjectInOnePaneIsReflectedInTheOthersFolderList(@TempDir Path folder) {
+        primary.openFolder(folder.toString());
+        primary.addProject("Acme Corp");
+        ProjectEntry project = secondary.projects().stream()
+                .filter(p -> p.name().equals("Acme Corp"))
+                .findFirst()
+                .orElseThrow();
+
+        secondary.assignFolderToProject(folder.toString(), project.id());
+
+        FolderEntry seenByPrimary = primary.folders().stream()
+                .filter(f -> f.path().equals(folder.toString()))
+                .findFirst()
+                .orElseThrow();
+        assertEquals(project.id(), seenByPrimary.projectId());
     }
 }

@@ -6,6 +6,7 @@ import com.multiagent.desktop.model.ConversationKind;
 import com.multiagent.desktop.model.FileCheckpoint;
 import com.multiagent.desktop.model.FolderEntry;
 import com.multiagent.desktop.model.MessageRole;
+import com.multiagent.desktop.model.ProjectEntry;
 import com.multiagent.desktop.model.SearchResult;
 
 import java.io.IOException;
@@ -388,10 +389,10 @@ public class ConversationStore implements AutoCloseable {
     public List<FolderEntry> listFolders() {
         List<FolderEntry> folders = new ArrayList<>();
         try (PreparedStatement stmt = connection.prepareStatement(
-                "SELECT path, addedAt FROM folders ORDER BY addedAt ASC");
+                "SELECT path, addedAt, projectId FROM folders ORDER BY addedAt ASC");
              ResultSet rs = stmt.executeQuery()) {
             while (rs.next()) {
-                folders.add(new FolderEntry(rs.getString("path"), rs.getLong("addedAt")));
+                folders.add(new FolderEntry(rs.getString("path"), rs.getLong("addedAt"), rs.getString("projectId")));
             }
         } catch (SQLException e) {
             throw new IllegalStateException(e);
@@ -410,11 +411,11 @@ public class ConversationStore implements AutoCloseable {
             throw new IllegalStateException(e);
         }
         try (PreparedStatement stmt = connection.prepareStatement(
-                "SELECT path, addedAt FROM folders WHERE path = ?")) {
+                "SELECT path, addedAt, projectId FROM folders WHERE path = ?")) {
             stmt.setString(1, folderPath);
             try (ResultSet rs = stmt.executeQuery()) {
                 rs.next();
-                return new FolderEntry(rs.getString("path"), rs.getLong("addedAt"));
+                return new FolderEntry(rs.getString("path"), rs.getLong("addedAt"), rs.getString("projectId"));
             }
         } catch (SQLException e) {
             throw new IllegalStateException(e);
@@ -433,6 +434,78 @@ public class ConversationStore implements AutoCloseable {
             deleteFolder.executeUpdate();
             clearBinding.setLong(1, System.currentTimeMillis());
             clearBinding.setString(2, folderPath);
+            clearBinding.executeUpdate();
+        } catch (SQLException e) {
+            throw new IllegalStateException(e);
+        }
+        return true;
+    }
+
+    /** Assigns a folder to a project, or ungroups it when projectId is null. Silently a no-op if the folder isn't registered. */
+    public void setFolderProject(String folderPath, String projectId) {
+        try (PreparedStatement stmt = connection.prepareStatement(
+                "UPDATE folders SET projectId = ? WHERE path = ?")) {
+            stmt.setString(1, projectId);
+            stmt.setString(2, folderPath);
+            stmt.executeUpdate();
+        } catch (SQLException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    public List<ProjectEntry> listProjects() {
+        List<ProjectEntry> projects = new ArrayList<>();
+        try (PreparedStatement stmt = connection.prepareStatement(
+                "SELECT id, name, createdAt FROM projects ORDER BY createdAt ASC");
+             ResultSet rs = stmt.executeQuery()) {
+            while (rs.next()) {
+                projects.add(new ProjectEntry(rs.getString("id"), rs.getString("name"), rs.getLong("createdAt")));
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException(e);
+        }
+        return projects;
+    }
+
+    public ProjectEntry addProject(String name) {
+        String id = UUID.randomUUID().toString();
+        long createdAt = System.currentTimeMillis();
+        try (PreparedStatement stmt = connection.prepareStatement(
+                "INSERT INTO projects (id, name, createdAt) VALUES (?, ?, ?)")) {
+            stmt.setString(1, id);
+            stmt.setString(2, name);
+            stmt.setLong(3, createdAt);
+            stmt.executeUpdate();
+        } catch (SQLException e) {
+            throw new IllegalStateException(e);
+        }
+        return new ProjectEntry(id, name, createdAt);
+    }
+
+    public ProjectEntry renameProject(String id, String newName) {
+        try (PreparedStatement stmt = connection.prepareStatement(
+                "UPDATE projects SET name = ? WHERE id = ?")) {
+            stmt.setString(1, newName);
+            stmt.setString(2, id);
+            stmt.executeUpdate();
+        } catch (SQLException e) {
+            throw new IllegalStateException(e);
+        }
+        return listProjects().stream().filter(p -> p.id().equals(id)).findFirst().orElse(null);
+    }
+
+    /** Deletes the project and ungroups its folders (projectId -> NULL) - folders and their chats are untouched, same unbind-not-cascade pattern as removeFolder(). */
+    public boolean removeProject(String id) {
+        boolean existed = listProjects().stream().anyMatch(p -> p.id().equals(id));
+        if (!existed) {
+            return false;
+        }
+        try (PreparedStatement deleteProject = connection.prepareStatement("DELETE FROM projects WHERE id = ?");
+             PreparedStatement clearBinding = connection.prepareStatement(
+                     "UPDATE folders SET projectId = NULL WHERE projectId = ?")) {
+            deleteProject.setString(1, id);
+            deleteProject.executeUpdate();
+            clearBinding.setString(1, id);
             clearBinding.executeUpdate();
         } catch (SQLException e) {
             throw new IllegalStateException(e);

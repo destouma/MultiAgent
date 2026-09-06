@@ -7,6 +7,7 @@ import com.multiagent.desktop.ui.viewmodel.WorkspaceOpEntry;
 
 import javafx.animation.Animation;
 import javafx.animation.KeyFrame;
+import javafx.animation.PauseTransition;
 import javafx.animation.Timeline;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
@@ -14,12 +15,22 @@ import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
 import javafx.scene.control.Label;
 import javafx.scene.control.ScrollPane;
+import javafx.scene.input.Clipboard;
+import javafx.scene.input.ClipboardContent;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
+import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
 import javafx.scene.text.Text;
 import javafx.scene.text.TextFlow;
+import javafx.stage.FileChooser;
+import javafx.stage.Window;
 import javafx.util.Duration;
+
+import java.io.File;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 
 /**
  * Renders messages[] plus a synthetic streaming bubble while streaming is true, mirroring
@@ -182,46 +193,123 @@ public class ChatThread extends ScrollPane {
     private HBox bubble(MessageRole role, String content) {
         boolean fromUser = role == MessageRole.USER;
 
-        TextFlow flow = buildContentFlow(content == null ? "" : content);
-        flow.setMaxWidth(560);
-        flow.setPadding(new Insets(8, 12, 8, 12));
-        flow.getStyleClass().add(fromUser ? "bubble-user" : "bubble-assistant");
+        VBox container = buildMessageContent(content == null ? "" : content);
+        container.setMaxWidth(560);
+        container.setPadding(new Insets(8, 12, 8, 12));
+        container.getStyleClass().add(fromUser ? "bubble-user" : "bubble-assistant");
 
-        HBox row = new HBox(flow);
+        HBox row = new HBox(container);
         row.setAlignment(fromUser ? Pos.CENTER_RIGHT : Pos.CENTER_LEFT);
         HBox.setHgrow(row, Priority.ALWAYS);
         return row;
     }
 
-    /** Splits on ```fenced``` blocks the same way MessageContent.tsx does, no other markdown. */
-    private TextFlow buildContentFlow(String content) {
-        TextFlow flow = new TextFlow();
+    /**
+     * Splits on ```fenced``` blocks the same way MessageContent.tsx does, no other markdown -
+     * except each fenced block now becomes its own dedicated "code box" (codeBox()) instead
+     * of an inline monospace run, so it can carry a language label and a Download button,
+     * rather than one TextFlow mixing prose and code runs together.
+     */
+    private VBox buildMessageContent(String content) {
+        VBox container = new VBox(8);
         int cursor = 0;
         while (cursor < content.length()) {
             int fenceStart = content.indexOf("```", cursor);
             if (fenceStart < 0) {
-                flow.getChildren().add(new Text(content.substring(cursor)));
+                addProse(container, content.substring(cursor));
+                cursor = content.length();
                 break;
             }
             if (fenceStart > cursor) {
-                flow.getChildren().add(new Text(content.substring(cursor, fenceStart)));
+                addProse(container, content.substring(cursor, fenceStart));
             }
             int fenceEnd = content.indexOf("```", fenceStart + 3);
             if (fenceEnd < 0) {
-                flow.getChildren().add(new Text(content.substring(fenceStart)));
+                addProse(container, content.substring(fenceStart));
+                cursor = content.length();
                 break;
             }
-            String code = content.substring(fenceStart + 3, fenceEnd);
-            int firstNewline = code.indexOf('\n');
-            String body = firstNewline >= 0 ? code.substring(firstNewline + 1) : code;
-            Text codeText = new Text(body);
-            codeText.getStyleClass().add("code-block");
-            flow.getChildren().add(codeText);
+            String fence = content.substring(fenceStart + 3, fenceEnd);
+            int firstNewline = fence.indexOf('\n');
+            String language = firstNewline >= 0 ? fence.substring(0, firstNewline).trim() : "";
+            String code = firstNewline >= 0 ? fence.substring(firstNewline + 1) : fence;
+            container.getChildren().add(codeBox(language, code));
             cursor = fenceEnd + 3;
         }
-        if (flow.getChildren().isEmpty()) {
-            flow.getChildren().add(new Text(""));
+        if (container.getChildren().isEmpty()) {
+            addProse(container, "");
         }
-        return flow;
+        return container;
+    }
+
+    private void addProse(VBox container, String text) {
+        if (text.isEmpty() && !container.getChildren().isEmpty()) {
+            return;
+        }
+        container.getChildren().add(new TextFlow(new Text(text)));
+    }
+
+    /**
+     * A fenced code block's own dark, fixed-terminal-look box - deliberately the same
+     * regardless of the app's active Light/Dark/Terminal theme, so generated code always
+     * reads as "code" at a glance. Carries a language tag, a Copy button, and a Download
+     * button to save the snippet as a local file - both shown consistently in every chat,
+     * workspace-bound or not: a folder binding doesn't guarantee this particular snippet was
+     * ever actually written there (the model may only have shown it, or a workspace write
+     * may have been declined at the approval gate), so gating either button on that was more
+     * confusing than helpful.
+     */
+    private VBox codeBox(String language, String code) {
+        Label langLabel = new Label(language.isBlank() ? "code" : language);
+        langLabel.getStyleClass().add("code-box-lang");
+
+        Region spacer = new Region();
+        HBox.setHgrow(spacer, Priority.ALWAYS);
+        Button copy = new Button("Copy");
+        copy.setOnAction(e -> copyToClipboard(code, copy));
+        Button download = new Button("Download");
+        download.setOnAction(e -> downloadSnippet(language, code));
+        HBox header = new HBox(6, langLabel, spacer, copy, download);
+        header.setAlignment(Pos.CENTER_LEFT);
+        header.getStyleClass().add("code-box-header");
+
+        Text codeText = new Text(code.stripTrailing());
+        codeText.getStyleClass().add("code-block");
+        TextFlow body = new TextFlow(codeText);
+        body.getStyleClass().add("code-box-body");
+
+        VBox box = new VBox(header, body);
+        box.getStyleClass().add("code-box");
+        return box;
+    }
+
+    /** Puts the snippet on the system clipboard and flashes the button's label as brief feedback, then reverts it. */
+    private void copyToClipboard(String code, Button sourceButton) {
+        ClipboardContent content = new ClipboardContent();
+        content.putString(code.stripTrailing());
+        Clipboard.getSystemClipboard().setContent(content);
+
+        String original = sourceButton.getText();
+        sourceButton.setText("Copied!");
+        PauseTransition reset = new PauseTransition(Duration.seconds(1.2));
+        reset.setOnFinished(e -> sourceButton.setText(original));
+        reset.play();
+    }
+
+    private void downloadSnippet(String language, String code) {
+        FileChooser chooser = new FileChooser();
+        chooser.setTitle("Save code snippet");
+        chooser.setInitialFileName("snippet." + CodeBlockExtensions.extensionFor(language));
+
+        Window window = getScene() != null ? getScene().getWindow() : null;
+        File file = chooser.showSaveDialog(window);
+        if (file == null) {
+            return;
+        }
+        try {
+            Files.writeString(file.toPath(), code.stripTrailing() + System.lineSeparator(), StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            showError("Failed to save file: " + e.getMessage());
+        }
     }
 }

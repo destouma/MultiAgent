@@ -77,7 +77,34 @@
 
 .code-block {
     -fx-font-family: "Consolas", "Menlo", monospace;
-    -fx-fill: #e3e3e3;
+    -fx-fill: #d4d4d4;
+}
+
+/* Fixed dark terminal-like card, deliberately the same across every theme - see styles.css. */
+.code-box {
+    -fx-background-color: #1e1e1e;
+    -fx-background-radius: 6;
+    -fx-border-color: #3a3a3a;
+    -fx-border-radius: 6;
+    -fx-border-width: 1;
+}
+
+.code-box-header {
+    -fx-background-color: #171717;
+    -fx-background-radius: 6 6 0 0;
+    -fx-border-color: #3a3a3a;
+    -fx-border-width: 0 0 1 0;
+    -fx-padding: 4 10 4 10;
+}
+
+.code-box-lang {
+    -fx-text-fill: #9ca3af;
+    -fx-font-size: 11px;
+    -fx-font-family: "Consolas", "Menlo", monospace;
+}
+
+.code-box-body {
+    -fx-padding: 10;
 }
 
 .workspace-op-running {

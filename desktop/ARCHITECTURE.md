@@ -1,5 +1,7 @@
 # MultiAgent — Architecture & User Guide
 
+> **⚠️ Deprecated.** This Electron client is superseded by [`../desktop-java/`](../desktop-java) ([its own architecture doc](../desktop-java/ARCHITECTURE.md)), which has reached and gone beyond feature parity with it. This document describes the Electron client as it stands; it's kept for reference and isn't receiving new features.
+
 MultiAgent is a desktop app (Electron + React) for chatting with local models — packaged as a Windows installer and a Linux AppImage today, with macOS not yet packaged. It connects to **Lemonade**, any other **OpenAI-compatible server** (NoLlama, LM Studio, vLLM, real OpenAI, ...), or a **native Ollama server** — save multiple named connections in Settings and switch between them without restarting. It supports switchable agent personas, folder-bound workspace chats with read/write tools, dedicated image sessions, **orchestrator** sessions that route work across specialists, and a **side-by-side split view** for comparing two conversations from the same folder — each conversation can be pinned to its own saved server connection and generates independently, so two servers can be in active use at the same time. Messages can be edited/regenerated, conversations searched and exported, AI file writes reviewed as a diff and reverted, and a rough token-usage estimate is shown near the composer.
 
 ---

@@ -1,8 +1,8 @@
 # MultiAgent Desktop (Java) — Architecture & User Guide
 
-MultiAgent Desktop (Java) is a JavaFX port of [`desktop/`](../desktop) (the Electron/React client) — a **separate, parallel client** in the same repo, not a replacement. It connects to **Lemonade** or any other **OpenAI-compatible server** (NoLlama, LM Studio, vLLM, real OpenAI, ...) — save multiple named connections in Settings and switch between them, or pin different conversations to different servers. It supports switchable agent personas (pinned per conversation), folder-bound workspace chats with read/write/rename tools gated behind an approval dialog, orchestrator sessions that route work across specialists, and a side-by-side split view for comparing two conversations from the same folder. Messages persist to SQLite, conversations can be searched and exported, and AI file writes can be reviewed as a diff and reverted.
+MultiAgent Desktop (Java) is a JavaFX port of [`desktop/`](../desktop) (the Electron/React client) that started as a **separate, parallel client** in the same repo and is now **the actively developed one** — `desktop/` is deprecated, kept for reference only. It connects to **Lemonade**, any other **OpenAI-compatible server** (NoLlama, LM Studio, vLLM, real OpenAI, ...), or a native **Ollama** server — save multiple named connections in Settings and switch between them, or pin different conversations to different servers. It supports switchable agent personas (pinned per conversation), folder-bound workspace chats with read/write/rename/git tools gated behind an approval dialog, project grouping over folders, text-file attachments, message edit/regenerate, a token-usage estimate, orchestrator sessions that route work across specialists, and a side-by-side split view for comparing two conversations from the same folder. Messages persist to SQLite, conversations can be searched and exported, and AI file writes can be reviewed as a diff and reverted.
 
-See [Differences from the Electron client](#10-differences-from-the-electron-client) for what this port intentionally does or doesn't carry over.
+See [Differences from the Electron client](#10-differences-from-the-electron-client) for what this port intentionally does or doesn't carry over, and what it's since gained that never made it back into `desktop/`.
 
 ---
 
@@ -345,7 +345,35 @@ JUnit 5, one test class per main class (`ConversationStoreTest`, `WorkspaceServi
 
 ### Packaging
 
-**Not implemented yet.** There's no `jpackage`/native-installer step in `pom.xml` — today this module is dev-run-only via `mvn javafx:run`. A packaged Windows installer (jlinked JRE + jpackage, so end users don't need a separate Java install) is a natural next step but hasn't been built.
+Produces a real Windows installer (`.exe`, WiX-built, with a Start Menu entry/desktop shortcut/uninstall entry) via the JDK's own `jpackage`, bundling a full JRE so end users don't need Java installed separately. Two steps:
+
+1. **`mvn clean package`** — besides the usual jar, this assembles `target/jpackage-input/`: the app's own jar (built there directly via `maven-jar-plugin`'s `outputDirectory` override) plus every runtime dependency jar via `maven-dependency-plugin`'s `copy-dependencies`, plus a `personas/` copy placed as a *sibling* of the jar (not just bundled inside it — `PersonaRegistry`'s packaged-path lookup is filesystem-based, relative to the jar's own on-disk location, not a classpath resource read). This flat-directory shape is exactly what `jpackage`'s non-modular "input directory" mode expects: no fat-jar/shading, no `module-info.java`.
+2. **`jpackage`** itself, run directly (not through a Maven plugin) - see the exact command below. Needs [WiX Toolset](https://wixtoolset.org/) v3-v5 on `PATH` for `--type exe`/`msi` (an app-image build with `--type app-image` needs no WiX at all - a plain runnable folder, no installer wrapper). **Use WiX v5, not v6/v7** — v6+ introduced an "Open Source Maintenance Fee" policy with a click-through EULA in v7 specifically; v5 predates it entirely and needs no EULA acceptance (`dotnet tool install --global wix --version 5.0.2`, then `wix extension add -g WixToolset.Util.wixext/5.0.2 WixToolset.UI.wixext/5.0.2`).
+
+```bash
+mvn clean package
+
+jpackage \
+  --type exe \
+  --name MultiAgent \
+  --app-version 1.0.0 \
+  --vendor MultiAgent \
+  --input target/jpackage-input \
+  --main-jar multiagent-desktop.jar \
+  --main-class com.multiagent.desktop.Launcher \
+  --icon ../desktop/build/icon.ico \
+  --dest target/dist \
+  --java-options "--enable-native-access=ALL-UNNAMED" \
+  --win-menu --win-shortcut --win-dir-chooser \
+  --description "Multi-agent chat over a local LLM server" \
+  --copyright "MultiAgent"
+```
+
+**Why `--main-class com.multiagent.desktop.Launcher` and not `App` directly:** `App` extends `javafx.application.Application`. The JVM refuses to start an `Application` subclass directly as the manifest/`--main-class` main class unless JavaFX is on the *module path* - which a plain classpath app built from `jpackage`'s input-directory mode never is (confirmed live: `Error: JavaFX runtime components are missing, and are required to run this application`). `Launcher` (`Launcher.java`) exists solely to sidestep this: a plain `main(String[])` that just calls `App.main(args)`. `mvn javafx:run`'s dev loop doesn't need this detour - that plugin sets up the module path itself, so its `<mainClass>` still points straight at `App`.
+
+Output: `target/dist/MultiAgent-<version>.exe`. Verified end-to-end for 1.0.0: builds, installs (Start Menu + desktop shortcut, registers in Add/Remove Programs), and the installed app launches correctly from `C:\Program Files\MultiAgent\MultiAgent.exe`.
+
+**Not yet done:** Linux/macOS packaging (Windows-only for now, matching where `desktop/`'s own installer effort focused first), and none of this is wired into a Maven plugin or CI - it's a manual two-step process today.
 
 ---
 
@@ -379,7 +407,7 @@ Intentional, not oversights:
 | Tool-call detection | Native tool calls, then XML action-tag fallback | Native tool calls, then XML action-tag fallback, **then a JSON-tool-call-text fallback** (`JsonToolCallParser`) | Found live against Qwen2.5-Coder + Lemonade: the model ignores both the native tool-calling field and this app's XML tags, printing the JSON shape it was fine-tuned to emit instead |
 | `rename_file` tool | Not present | Present (`WorkspaceService.renameFile`, XML tag, JSON fallback) | Added during this port; not back-ported to the TS side |
 | Image generation | Full (`ImageService`, image sessions, gallery) | Not ported (explicitly out of scope for this migration) | Deprioritized early in planning — plain/workspace chat and orchestrator were the priority |
-| Packaging | NSIS installer (Windows), AppImage (Linux) | None yet — `mvn javafx:run` only | Not yet built; see [§8](#8-develop--build) |
+| Packaging | NSIS installer (Windows), AppImage (Linux) | WiX-built `.exe` installer (Windows only so far) via `jpackage` - manual two-step process, not yet a Maven plugin/CI step | See [§8](#8-develop--build) |
 | Process model | Electron main/renderer + IPC + `contextBridge` | Single JVM, `ChatViewModel` calls services directly | No separate untrusted-renderer boundary to defend in a JavaFX desktop app the way there is in an app that also renders arbitrary web content |
 | Settings/DB location | `%APPDATA%\MultiAgent\` | `%APPDATA%\MultiAgentJava\` | Deliberately separate so the two clients never fight over the same files or assume config-shape compatibility |
 

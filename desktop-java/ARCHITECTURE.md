@@ -18,6 +18,7 @@ See [Differences from the Electron client](#10-differences-from-the-electron-cli
 8. [Develop & build](#8-develop--build)
 9. [Troubleshooting](#9-troubleshooting)
 10. [Differences from the Electron client](#10-differences-from-the-electron-client)
+11. [Ideas not yet implemented](#11-ideas-not-yet-implemented)
 
 ---
 
@@ -412,3 +413,31 @@ Intentional, not oversights:
 | Settings/DB location | `%APPDATA%\MultiAgent\` | `%APPDATA%\MultiAgentJava\` | Deliberately separate so the two clients never fight over the same files or assume config-shape compatibility |
 
 Everything else — folders, side-by-side split view, per-conversation server pinning, search, export, checkpoint diff/revert, three themes, the orchestrator's plan/specialist/synthesize flow, the workspace sandboxing rules, and all three providers (OpenAI-compatible, Lemonade, Ollama) — is a faithful behavioral port.
+
+---
+
+## 11. Ideas not yet implemented
+
+Raised in conversation, not yet built. Recorded here so they survive past the chat they were discussed in, not as commitments.
+
+### Docker tool integration
+
+`GitService`'s shape (allowlisted subcommands, one hand-built argv per tool via `ProcessBuilder` - never a shell string, read-only vs. mutating split, mutating ones behind `ActionApprover`) generalizes naturally to Docker. The gap versus git: git's blast radius is one repo; Docker's is the whole host (`--privileged`, `-v /:/host`, `--network=host`). A regex on refs was enough sanitization for git; Docker's flag surface is much harder to fully close off. Proposed scope if this gets built:
+
+| Tier | Commands | Approval |
+| --- | --- | --- |
+| Read-only, safe for orchestrator specialists too | `ps`, `images`, `logs`, `inspect`, `stats`, `version` | none |
+| Scoped lifecycle, workspace-bound only | `build` (Dockerfile in the workspace), `compose up`/`down`, `start`/`stop`/`restart` by container name | gated, like `git_add`/`git_commit` |
+| **Deliberately excluded** | `run`, `exec`, or anything else taking arbitrary flags | — |
+
+`run`/`exec` are excluded from the proposal on purpose: sanitizing their flag space properly is a meaningfully bigger problem than anything `GitService` had to solve, and shipping the clearly-safe subset beats half-sanitizing the dangerous one.
+
+### Other ideas raised, not yet built
+
+- **SAST/SBOM launcher inside the app** — running Syft/Grype/CodeQL-style scans as a first-class in-app action (the current `release-verify/security-scan/` workflow is a manual, outside-the-app process). Explicitly deferred - the user wants to think through the shape of this one before it's designed.
+- **Vision/binary attachments** — the composer's text-file attachment only handles UTF-8 text today (see [§6](#6-features-in-detail)); images would need a multimodal request format none of the three `LlmClient` implementations speak yet, and there's no local vision-model story either. Same category as image *generation*, already out of scope for this port.
+- **Cross-folder project "notes"** — when project grouping ([§6](#6-features-in-detail)) was designed, a shared free-text notes field per project (injected into every chat's system prompt across that project's folders, like the workspace tree already is) was floated as a middle ground between "no shared context" (what shipped) and full cross-chat memory. Deliberately deferred - per-chat memory was judged enough for now.
+- **Split view "send to both panes"** — split view today is two fully independent panes; firing the same prompt at both at once (e.g. two different models/servers side by side) would turn it into real A/B comparison, which nothing else in the app currently offers.
+- **Git commit-message-from-diff quick action** — a one-click "draft a commit message from what's staged," built on the `git_diff`/`git_commit` tools that already exist.
+- **Pin/star a conversation** — easy to lose one specific chat now that folders *and* projects both add nesting levels to the sidebar.
+- **Command palette (Ctrl+K)** — jump to any conversation/folder/project by typing; `SearchDialog` today is content search, not a fast navigator.

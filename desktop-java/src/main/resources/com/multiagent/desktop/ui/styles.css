@@ -40,12 +40,12 @@
 }
 
 .bubble-user {
-    -fx-background-color: #0f766e;
+    -fx-background-color: #14b8a6;
     -fx-background-radius: 10;
 }
 
-.bubble-user .text {
-    -fx-fill: white;
+.bubble-user .bubble-text {
+    -fx-fill: #0b1120;
 }
 
 .bubble-assistant {
@@ -63,8 +63,10 @@
     -fx-fill: #d4d4d4;
 }
 
-/* A code box's look is fixed - deliberately the same dark, terminal-like card regardless
-   of the app's active Light/Dark/Terminal theme, so generated code always reads as "code". */
+/* A dark card against this theme's light background, so generated code clearly reads as
+   "code" against the surrounding prose. Dark/Terminal themes use their own tailored
+   palette here instead (see theme-dark.css/theme-terminal.css) - a plain dark box like this
+   one would just blend into (or clash with) UI that's already dark by default. */
 .code-box {
     -fx-background-color: #1e1e1e;
     -fx-background-radius: 6;

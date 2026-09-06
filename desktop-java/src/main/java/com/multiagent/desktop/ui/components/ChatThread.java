@@ -246,18 +246,30 @@ public class ChatThread extends ScrollPane {
         if (text.isEmpty() && !container.getChildren().isEmpty()) {
             return;
         }
-        container.getChildren().add(new TextFlow(new Text(text)));
+        // "bubble-text" is added explicitly here rather than relying on Text's own default
+        // style class (there isn't a reliable one to hook a ".bubble-user .text"-style
+        // selector to), so .bubble-user/.bubble-assistant's text-color rule is guaranteed to
+        // actually match instead of silently falling back to Text's own default fill - which
+        // is exactly what made a message unreadable against a bubble color that default
+        // happened not to contrast with (worst case: invisible, in the black-on-black
+        // Terminal theme).
+        Text prose = new Text(text);
+        prose.getStyleClass().add("bubble-text");
+        container.getChildren().add(new TextFlow(prose));
     }
 
     /**
-     * A fenced code block's own dark, fixed-terminal-look box - deliberately the same
-     * regardless of the app's active Light/Dark/Terminal theme, so generated code always
-     * reads as "code" at a glance. Carries a language tag, a Copy button, and a Download
-     * button to save the snippet as a local file - both shown consistently in every chat,
-     * workspace-bound or not: a folder binding doesn't guarantee this particular snippet was
-     * ever actually written there (the model may only have shown it, or a workspace write
-     * may have been declined at the approval gate), so gating either button on that was more
-     * confusing than helpful.
+     * A fenced code block's own dedicated box, styled via the "code-box"/"code-box-header"/
+     * "code-box-lang"/"code-box-body"/"code-block" classes so it visually reads as "this is
+     * code" separate from the surrounding prose - each theme tailors its own palette for
+     * this (see styles.css/theme-dark.css/theme-terminal.css) rather than one look forced
+     * onto every theme, since what pops against a light background clashes against a
+     * default-dark one, and Terminal wants its own black+green look, not a foreign one.
+     * Carries a language tag, a Copy button, and a Download button to save the snippet as a
+     * local file - both shown consistently in every chat, workspace-bound or not: a folder
+     * binding doesn't guarantee this particular snippet was ever actually written there (the
+     * model may only have shown it, or a workspace write may have been declined at the
+     * approval gate), so gating either button on that was more confusing than helpful.
      */
     private VBox codeBox(String language, String code) {
         Label langLabel = new Label(language.isBlank() ? "code" : language);

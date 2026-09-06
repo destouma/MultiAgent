@@ -38,6 +38,11 @@
     -fx-border-width: 0 0 1 0;
 }
 
+.topbar-field-label {
+    -fx-text-fill: #9ca3af;
+    -fx-font-size: 10px;
+}
+
 .composer {
     -fx-background-color: #2b2d31;
     -fx-border-color: #3a3b3e;

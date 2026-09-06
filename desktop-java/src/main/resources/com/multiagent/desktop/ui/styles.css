@@ -24,6 +24,11 @@
     -fx-border-width: 0 0 1 0;
 }
 
+.topbar-field-label {
+    -fx-text-fill: #6b7280;
+    -fx-font-size: 10px;
+}
+
 .composer {
     -fx-background-color: #ffffff;
     -fx-border-color: #e2e2e5;

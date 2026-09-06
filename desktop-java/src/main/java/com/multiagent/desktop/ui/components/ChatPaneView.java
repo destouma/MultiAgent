@@ -145,11 +145,21 @@ public class ChatPaneView extends BorderPane {
         viewModel.healthProperty().addListener((obs, old, val) -> updateHealthLabels(statusDot, statusText, val));
         updateHealthLabels(statusDot, statusText, viewModel.healthProperty().get());
 
-        HBox bar = new HBox(10, personaBox, serverBox, modelBox, statusDot, statusText);
+        HBox bar = new HBox(10,
+                labeledColumn("Server", serverBox), labeledColumn("Model", modelBox), labeledColumn("Persona", personaBox),
+                statusDot, statusText);
         bar.setAlignment(Pos.CENTER_LEFT);
         bar.setPadding(new Insets(8, 12, 8, 12));
         bar.getStyleClass().add("conversation-topbar");
         return bar;
+    }
+
+    /** A small caption above a dropdown, so the topbar reads as "Server / Model / Persona" instead of three unlabeled boxes. */
+    private VBox labeledColumn(String title, javafx.scene.Node control) {
+        Label caption = new Label(title);
+        caption.getStyleClass().add("topbar-field-label");
+        VBox column = new VBox(2, caption, control);
+        return column;
     }
 
     private void syncModelItems(ComboBox<String> modelBox, List<ModelInfo> models) {

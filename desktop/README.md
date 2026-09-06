@@ -43,7 +43,7 @@ What this does:
 
 1. Install and start [Lemonade Server](https://lemonade-server.ai/) (not bundled with MultiAgent).
 2. Run MultiAgent from the Start Menu / install folder.
-3. Confirm the connection badge is online (default API: `http://localhost:13305/api/v1`).
+3. Confirm the Server picker's status dot in the topbar is green (default API: `http://localhost:13305/api/v1`).
 
 ### Optional: bump version
 

@@ -1,0 +1,85 @@
+.sidebar {
+    -fx-background-color: #f4f4f5;
+    -fx-border-color: #e2e2e5;
+    -fx-border-width: 0 1 0 0;
+}
+
+.global-topbar {
+    -fx-background-color: #f4f4f5;
+    -fx-border-color: #e2e2e5;
+    -fx-border-width: 0 0 1 0;
+}
+
+.app-title {
+    -fx-font-weight: bold;
+}
+
+.chat-panel {
+    -fx-background-color: #ffffff;
+}
+
+.conversation-topbar {
+    -fx-background-color: #ffffff;
+    -fx-border-color: #e2e2e5;
+    -fx-border-width: 0 0 1 0;
+}
+
+.topbar-field-label {
+    -fx-text-fill: #6b7280;
+    -fx-font-size: 10px;
+}
+
+.composer {
+    -fx-background-color: #ffffff;
+    -fx-border-color: #e2e2e5;
+    -fx-border-width: 1 0 0 0;
+}
+
+.error-banner {
+    -fx-text-fill: #b91c1c;
+}
+
+.bubble-user {
+    -fx-background-color: #0f766e;
+    -fx-background-radius: 10;
+}
+
+.bubble-user .text {
+    -fx-fill: white;
+}
+
+.bubble-assistant {
+    -fx-background-color: #eef1f4;
+    -fx-background-radius: 10;
+}
+
+.thinking-text {
+    -fx-text-fill: #6b7280;
+    -fx-font-style: italic;
+}
+
+.code-block {
+    -fx-font-family: "Consolas", "Menlo", monospace;
+}
+
+.workspace-op-running {
+    -fx-text-fill: #6b7280;
+    -fx-font-size: 11px;
+}
+
+.workspace-op-ok {
+    -fx-text-fill: #15803d;
+    -fx-font-size: 11px;
+}
+
+.workspace-op-error {
+    -fx-text-fill: #b91c1c;
+    -fx-font-size: 11px;
+}
+
+.orchestrator-status {
+    -fx-background-color: #fef3c7;
+    -fx-text-fill: #92400e;
+    -fx-padding: 6 12 6 12;
+    -fx-font-size: 12px;
+}

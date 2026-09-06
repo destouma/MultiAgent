@@ -35,6 +35,8 @@ const api = {
     ipcRenderer.invoke('models:listForServer', serverId),
   listLoadedModelsForServer: (serverId: string | null): Promise<LoadedModelsResult> =>
     ipcRenderer.invoke('models:loadedForServer', serverId),
+  loadModelForServer: (serverId: string | null, model: string): Promise<boolean> =>
+    ipcRenderer.invoke('models:loadForServer', serverId, model),
   checkHealth: (): Promise<HealthStatus> => ipcRenderer.invoke('health:check'),
   checkHealthForServer: (serverId: string | null): Promise<HealthStatus> =>
     ipcRenderer.invoke('health:checkForServer', serverId),

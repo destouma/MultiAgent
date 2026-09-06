@@ -143,6 +143,29 @@ export function registerIpcHandlers(
     }
   });
 
+  ipcMain.handle(
+    IpcChannels.modelsLoadForServer,
+    async (_event, serverId: string | null, model: string) => {
+      try {
+        const win = getWindow();
+        await getClientFor(serverId).ensureModelLoaded(model, {
+          onStatus: (message) => {
+            const lower = message.toLowerCase();
+            const phase = lower.includes('ready')
+              ? 'ready'
+              : lower.includes('loading') || lower.includes('waiting')
+                ? 'loading'
+                : 'checking';
+            win?.webContents.send('model:status', { model, phase, message });
+          },
+        });
+        return true;
+      } catch (error) {
+        throw serializeError(error);
+      }
+    },
+  );
+
   ipcMain.handle(IpcChannels.healthCheck, async () => getClientFor(null).checkHealth());
 
   ipcMain.handle(IpcChannels.healthCheckForServer, async (_event, serverId: string | null) =>

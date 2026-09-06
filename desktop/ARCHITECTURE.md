@@ -256,7 +256,7 @@ Right-click a folder with 2+ conversations → **Side by side** opens a picker (
 - **State:** `src/store/chatStore.ts` exports a `createChatStore()` factory; `useChatStore` (left/primary pane) and `useSecondaryChatStore` (right pane) are two separate instances of it. Both register themselves in a small in-module sibling list so a create/delete/rename in either pane pushes the refreshed `conversations`/`folders` list into the other immediately (and into the sidebar, which is always bound to the primary instance) — otherwise the second pane's mutations would only surface in the sidebar on the sidebar's own next unrelated action.
 - **Streaming isolation:** IPC events (`chat:token`, `chat:done`, `chat:error`, `workspace:op`, `orchestrator:step`) are dispatched to both store instances from `App.tsx`; each store's own reducer ignores events whose `conversationId` doesn't match its own `activeConversationId`, so tokens/errors/tool-ops never leak from one pane into the other.
 - **Generation runs concurrently, per conversation:** `ChatService`/`OrchestratorService` each keep a `Map<conversationId, AbortController>` rather than a single field, so sending in both panes at once starts two independent generations instead of the second cancelling the first. `chat:cancel` takes a `conversationId` end-to-end (`preload.cancelChat` → `chat.cancel()`/`orchestrator.cancel()`) so Stop in one pane only aborts that pane's request.
-- **Layout:** the connection badge, Models, and Settings buttons live in a `.global-topbar` above both panes (not inside either pane's own topbar), since they're connection-level, not per-conversation. Each pane's own topbar holds persona/server/model — this is also what keeps the two panes' topbar rows the same height and visually aligned regardless of which conversation kinds are shown side by side. A "× Close split" button appears in the global topbar while split view is open; closing it hides the second pane without deleting its conversation.
+- **Layout:** the Models and Settings buttons live in a `.global-topbar` above both panes (not inside either pane's own topbar), since they're app-level, not per-conversation. Each pane's own topbar holds persona/server/model — this is also what keeps the two panes' topbar rows the same height and visually aligned regardless of which conversation kinds are shown side by side. A "× Close split" button appears in the global topbar while split view is open; closing it hides the second pane without deleting its conversation.
 
 ### Two servers at once
 
@@ -346,7 +346,7 @@ npm run dev
 ```
 
 1. Wait for the desktop window.
-2. Check the connection badge (top right). Click it to refresh.
+2. Check the **Server** picker's status dot in the topbar (green = reachable). Open it to see every saved server's status, or open **Models** for a full per-server breakdown.
 3. Open **Settings** if you need a custom base URL or API key stub.
 
 ### Chat

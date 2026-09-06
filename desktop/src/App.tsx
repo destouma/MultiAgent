@@ -1,7 +1,6 @@
 import { useEffect } from 'react';
 import { ChatThread } from './components/ChatThread';
 import { Composer } from './components/Composer';
-import { ConnectionBadge } from './components/ConnectionBadge';
 import { ConversationList } from './components/ConversationList';
 import { ImageStudio } from './components/ImageStudio';
 import { ModelPicker } from './components/ModelPicker';
@@ -109,7 +108,6 @@ export default function App() {
       <ConversationList />
       <div className="content-column">
         <header className="topbar global-topbar">
-          <ConnectionBadge />
           <button type="button" className="btn" onClick={() => setModelsOpen(true)}>
             Models
           </button>

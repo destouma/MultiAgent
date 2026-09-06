@@ -39,7 +39,7 @@ export function ServerPicker({ store = useChatStore }: Props) {
   const servers = settings?.servers ?? [];
   const serverIdsKey = servers.map((server) => server.id).join(',');
 
-  useEffect(() => {
+  const checkAllServers = () => {
     for (const server of servers) {
       setChecking((prev) => new Set(prev).add(server.id));
       void window.api
@@ -56,9 +56,23 @@ export function ServerPicker({ store = useChatStore }: Props) {
           }),
         );
     }
-    // Re-check only when the actual set of server ids changes, not on every render.
+  };
+
+  useEffect(() => {
+    checkAllServers();
+    // Re-check when the actual set of server ids changes, not on every render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [serverIdsKey]);
+
+  useEffect(() => {
+    // A server that was down when it first got checked (e.g. still starting
+    // up) would otherwise show a stale red dot forever, since the effect
+    // above only re-runs when the set of server ids changes. Re-check
+    // whenever the dropdown is actually opened, so status is never more
+    // stale than "as of the last time someone looked".
+    if (open) checkAllServers();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;

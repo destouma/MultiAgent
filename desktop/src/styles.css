@@ -985,32 +985,6 @@ button {
   white-space: nowrap;
 }
 
-.badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  border-radius: 999px;
-  padding: 0.4rem 0.75rem;
-  font-size: 0.82rem;
-  border: 1px solid var(--line);
-  background: var(--bg-elevated);
-}
-
-.badge-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #b9b09c;
-}
-
-.badge.ok .badge-dot {
-  background: #15803d;
-}
-
-.badge.bad .badge-dot {
-  background: var(--danger);
-}
-
 .thread {
   overflow: auto;
   padding: 24px 28px 12px;
@@ -1675,6 +1649,35 @@ button {
   overflow: auto;
   margin-bottom: 8px;
   padding-right: 2px;
+}
+
+.models-server-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.models-server-group:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.models-server-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.models-server-name {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.models-server-count {
+  margin-left: auto;
 }
 
 .models-row {

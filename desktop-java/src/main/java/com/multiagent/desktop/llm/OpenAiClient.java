@@ -132,7 +132,8 @@ public class OpenAiClient implements LlmClient {
                 .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
                 .build();
 
-        DebugLog.Exchange exchange = DebugLog.begin("POST", apiBase() + "/chat/completions", body.toString());
+        DebugLog.Exchange exchange = DebugLog.begin("POST", apiBase() + "/chat/completions",
+                redactBase64(body.toString()));
         StringBuilder rawStream = new StringBuilder();
 
         InputStream stream;
@@ -196,7 +197,8 @@ public class OpenAiClient implements LlmClient {
                 .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
                 .build();
 
-        JsonNode root = sendJson(request, "POST", apiBase() + "/chat/completions", body.toString(), token);
+        JsonNode root = sendJson(request, "POST", apiBase() + "/chat/completions",
+                redactBase64(body.toString()), token);
         JsonNode message = root.path("choices").path(0).path("message");
         String content = message.path("content").asText("");
 
@@ -217,18 +219,58 @@ public class OpenAiClient implements LlmClient {
         return new ChatCompletionResult(content, toolCalls);
     }
 
+    @Override
+    public String describeImage(String model, String question, byte[] imageBytes, String mimeType,
+                                 CancellationToken token) {
+        ObjectNode body = MAPPER.createObjectNode();
+        body.put("model", model);
+        body.put("stream", false);
+        ArrayNode messages = body.putArray("messages");
+        ObjectNode userMessage = messages.addObject();
+        userMessage.put("role", "user");
+        ArrayNode parts = userMessage.putArray("content");
+        parts.addObject().put("type", "text").put("text", question);
+        String dataUrl = "data:" + mimeType + ";base64,"
+                + java.util.Base64.getEncoder().encodeToString(imageBytes);
+        parts.addObject().put("type", "image_url").putObject("image_url").put("url", dataUrl);
+
+        HttpRequest request = requestBuilder("/chat/completions")
+                .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
+                .build();
+
+        // Redacted log body - the real payload carries a multi-MB base64 image.
+        JsonNode root = sendJson(request, "POST", apiBase() + "/chat/completions",
+                "<image: \"" + question + "\", " + imageBytes.length + " bytes, " + mimeType + ">", token);
+        return root.path("choices").path(0).path("message").path("content").asText("");
+    }
+
     /** Deferred to Phase 3 - see ARCHITECTURE plan. */
     @Override
     public boolean supportsImageGeneration() {
         return false;
     }
 
-    private ArrayNode toMessagesNode(List<ChatRequestMessage> messages) {
+    /** Collapses long base64 image payloads in a request body so DebugLog doesn't store multi-MB lines. */
+    private static String redactBase64(String json) {
+        return json.replaceAll("(data:[^;\"]+;base64,)[A-Za-z0-9+/=]{48,}", "$1<elided>");
+    }
+
+    // Package-private for OpenAiClientTest (multimodal content serialization).
+    ArrayNode toMessagesNode(List<ChatRequestMessage> messages) {
         ArrayNode array = MAPPER.createArrayNode();
         for (ChatRequestMessage message : messages) {
             ObjectNode node = array.addObject();
             node.put("role", message.role());
-            if (message.content() != null) {
+            if (message.image() != null) {
+                // Multimodal user turn: content becomes an OpenAI parts array.
+                ArrayNode parts = node.putArray("content");
+                if (message.content() != null && !message.content().isEmpty()) {
+                    parts.addObject().put("type", "text").put("text", message.content());
+                }
+                String dataUrl = "data:" + message.image().mimeType() + ";base64,"
+                        + java.util.Base64.getEncoder().encodeToString(message.image().bytes());
+                parts.addObject().put("type", "image_url").putObject("image_url").put("url", dataUrl);
+            } else if (message.content() != null) {
                 node.put("content", message.content());
             } else {
                 node.putNull("content");

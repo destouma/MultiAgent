@@ -189,6 +189,40 @@ class WorkspaceServiceTest {
     }
 
     @Test
+    void visionToolIsSeparateAndRequiresPathAndQuestion() {
+        var tool = WorkspaceService.visionTool();
+        assertEquals("describe_image", tool.name());
+        var required = tool.parametersSchema().path("required");
+        assertEquals(2, required.size());
+        assertTrue(required.toString().contains("path"));
+        assertTrue(required.toString().contains("question"));
+    }
+
+    @Test
+    void guessImageMimeMapsKnownExtensionsAndRejectsOthers() {
+        assertEquals("image/png", WorkspaceService.guessImageMime("a/b.PNG"));
+        assertEquals("image/jpeg", WorkspaceService.guessImageMime("shot.jpg"));
+        assertEquals("image/jpeg", WorkspaceService.guessImageMime("shot.jpeg"));
+        assertEquals("image/gif", WorkspaceService.guessImageMime("x.gif"));
+        assertEquals("image/webp", WorkspaceService.guessImageMime("x.webp"));
+        assertThrows(WorkspaceException.class, () -> WorkspaceService.guessImageMime("notes.txt"));
+    }
+
+    @Test
+    void readImageBytesReadsAWorkspaceImageAndRejectsEscapesAndNonImages() throws IOException {
+        byte[] png = {(byte) 0x89, 'P', 'N', 'G', 0, 1, 2, 3};
+        Files.write(root.resolve("shot.png"), png);
+        assertEquals(png.length, workspace.readImageBytes(root.toString(), "shot.png").length);
+
+        assertThrows(WorkspaceException.class,
+                () -> workspace.readImageBytes(root.toString(), "../shot.png"));
+        assertThrows(WorkspaceException.class,
+                () -> workspace.readImageBytes(root.toString(), "readme.txt"));
+        assertThrows(WorkspaceException.class,
+                () -> workspace.readImageBytes(root.toString(), "missing.png"));
+    }
+
+    @Test
     void renameFileMovesTheFileToTheNewPath() {
         String result = workspace.renameFile(root.toString(), "readme.txt", "renamed.txt");
         assertTrue(result.contains("readme.txt"));

@@ -17,6 +17,8 @@ public class Conversation {
     private String model;
     private String serverId;
     private String personaId;
+    /** Per-chat override of the server's vision model. Blank/null ⇒ fall back to ServerProfile.visionModel. */
+    private String visionModel;
 
     public Conversation() {
     }
@@ -110,6 +112,14 @@ public class Conversation {
 
     public void setPersonaId(String personaId) {
         this.personaId = personaId;
+    }
+
+    public String getVisionModel() {
+        return visionModel;
+    }
+
+    public void setVisionModel(String visionModel) {
+        this.visionModel = visionModel;
     }
 
     @Override

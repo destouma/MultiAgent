@@ -89,6 +89,20 @@ class ConversationStoreTest {
     }
 
     @Test
+    void setConversationVisionModelPersistsAndClearsPerConversation() {
+        Conversation a = store.createConversation();
+        Conversation b = store.createConversation();
+
+        assertNull(store.getConversation(a.getId()).getVisionModel());
+        store.setConversationVisionModel(a.getId(), "Qwen2.5-VL-3B");
+        assertEquals("Qwen2.5-VL-3B", store.getConversation(a.getId()).getVisionModel());
+        assertNull(store.getConversation(b.getId()).getVisionModel());
+
+        store.setConversationVisionModel(a.getId(), null);
+        assertNull(store.getConversation(a.getId()).getVisionModel());
+    }
+
+    @Test
     void setConversationPersonaPersistsIndependentlyPerConversation() {
         Conversation a = store.createConversation();
         Conversation b = store.createConversation();

@@ -169,7 +169,7 @@ MultiAgent/
         Persona.java  Conversation.java  ConversationKind.java  ChatMessage.java  MessageRole.java
         ServerProfile.java  ProviderType.java  AppSettings.java  ThemeMode.java
         ModelInfo.java  HealthStatus.java  FolderEntry.java  SearchResult.java
-        FileCheckpoint.java  CheckpointDiff.java
+        FileCheckpoint.java  CheckpointDiff.java  ImageAttachment.java
       ui/
         MainWindow.java                # sidebar + global topbar + split layout + theming
         viewmodel/ChatViewModel.java   # ConversationSession-per-chat isolation, sibling sync
@@ -204,7 +204,7 @@ MultiAgent/
 | `model`           | `""`                              | Fallback chat/orchestrator model for conversations without their own            |
 | `maxHistory`      | `40`                              | Max messages sent as history                                                    |
 | `theme`           | `light`                           | `light` \| `dark` \| `terminal`                                                 |
-| `servers`         | `[]`                              | Saved `ServerProfile` list (id, name, providerType, baseUrl, apiKey, maxHistory) |
+| `servers`         | `[]`                              | Saved `ServerProfile` list (id, name, providerType, baseUrl, apiKey, maxHistory, visionModel) |
 | `activeServerId`  | `null`                            | Id of the `servers` entry currently copied into the active-connection fields    |
 | `debugLogging`    | `false`                           | "Debug: log raw API traffic" — feeds `DebugLog` (in-app panel + `api-debug.log`), see [§6](#raw-api-debug-log) |
 
@@ -214,7 +214,7 @@ Path: `%APPDATA%/MultiAgentJava/config.json` (its own folder — deliberately se
 
 ### Conversations / messages (SQLite via sqlite-jdbc)
 
-- `conversations(id, title, createdAt, updatedAt, workspacePath, kind, model, serverId, personaId)` — `personaId` is a Java-client-only addition (see [§10](#10-differences-from-the-electron-client)); everything else matches the Electron schema field-for-field.
+- `conversations(id, title, createdAt, updatedAt, workspacePath, kind, model, serverId, personaId, visionModel)` — `personaId` and `visionModel` are Java-client-only additions (see [§10](#10-differences-from-the-electron-client)); everything else matches the Electron schema field-for-field.
 - `messages(id, conversationId, role, content, personaId, createdAt)`, indexed on `(conversationId, createdAt)`.
 - `folders(path, addedAt)`.
 - `file_checkpoints(id, conversationId, relativePath, previousContent, previousExisted, createdAt)` — one row per successful `write_file`/`delete_file`, capturing pre-op content (`previousContent: null` + `previousExisted: false` means the op created the file).
@@ -263,7 +263,7 @@ Right-click a folder with 2+ conversations → **Side by side** opens `SplitPick
 A chat created from a folder has `workspacePath` set for its whole lifetime (fixed at creation). When bound:
 
 - The system prompt gets the workspace's directory tree plus tool-usage instructions.
-- Tools available: `list_dir`, `read_file`, `write_file`, `delete_file`, `rename_file` (`generate_image` is defined in the tool schema for forward-compat but rejected by `WorkspaceService.executeTool` — image generation isn't ported).
+- Tools available: `list_dir`, `read_file`, `write_file`, `delete_file`, `rename_file`, and — only when the active server has a vision model configured — `describe_image` (see [Vision](#vision-describe_image--image-attachments)). `generate_image` is defined in the tool schema for forward-compat but rejected by `WorkspaceService.executeTool` — image *generation* isn't ported.
 - **Mutating tools ask first** — see [Approval gate](#approval-gate-for-file-writesdeletesrenames) below. This is new relative to the Electron app.
 - **Safety**, unchanged from the TS original: every path resolves under the workspace root via `WorkspaceService.resolveSafe()` — a plain `..`-rejection check, then a `Path.toRealPath()` symlink-resolved check so a symlink planted inside the workspace can't point files outside it. `node_modules`/`.git`/`dist`/etc. are skipped when building the tree.
 
@@ -303,6 +303,72 @@ Opt-in capture of every LLM HTTP exchange, for diagnosing "weird behaviour with 
 - **Instrumentation points** — `OpenAiClient` wraps each exchange in a `DebugLog.Exchange` handle (`begin` → `succeed`/`fail`): `/chat/completions` streaming and non-streaming, `/models`; `LemonadeClient` adds `/health` and `/load`. When disabled, `begin` returns a shared no-op handle, so call sites need no `if` guard.
 - **Viewer** — `DebugLogWindow`, a non-modal `Stage` opened from the **Debug** button in the global topbar (one instance, re-focused on repeat clicks). Left: the call list, red for errors / 4xx+. Right: the selected call's raw request + response. Buttons: **Copy** (one entry), **Copy all**, **Clear**, **Open log file**, plus a wrap toggle. The window shows a line stating whether capture is currently on.
 
+### Vision (`describe_image` + image attachments)
+
+Lets a chat work with images, whether the chat model can see or not.
+
+**Which vision model** is resolved like the chat model: `Conversation.visionModel`
+(the **Vision** dropdown in the pane topbar, next to Model — `""` = "(server
+default)") if set, else `ServerProfile.visionModel` (an editable dropdown in
+`ServerEditDialog`, seeded from that server's `/models` with a ↻ refresh).
+Everything below is off when the resolved value is blank.
+
+**Two modes**, chosen in `ChatService.send` by whether the resolved vision model
+**equals the chat model**:
+
+- **Inline** (`visionModel.equals(model)` — the chat model can see for itself).
+  The attached image is put straight on this turn's user message
+  (`ChatRequestMessage.userWithImage`), and `OpenAiClient.toMessagesNode`
+  serializes that message's `content` as an OpenAI parts array
+  (`{type:text}` + `{type:image_url, data: URL}`) instead of a string. No
+  pre-pass. `DebugLog` bodies for `/chat/completions` are run through
+  `redactBase64` so the log doesn't store the payload.
+- **Pre-pass** (`dash of B` — a *different* VL model). On the send background
+  thread, `describeAttachedImage` transcribes the image once
+  (`"Describe this image in full detail…"`) and splices the description into the
+  message list just ahead of the user turn, so even a non-seeing chat model has
+  the content. If the VLM returns a canned "I can't see images" reply
+  (`VisionResponses.looksLikeRefusal` — common with small local VLMs when the
+  server drops the image part), a `[could not read the image]` note is spliced
+  instead, so the chat model doesn't parrot the refusal. `describe_image` applies
+  the same guard.
+
+Common to both: the image is **not persisted** — the transcript keeps only a
+`[🖼️ name]` marker (no `ConversationStore` schema change). The attached image is
+available only for the turn it's attached to; re-attach or use `describe_image`
+for a follow-up.
+
+- **`LlmClient.describeImage(model, question, bytes, mime, token)`** — a
+  dedicated one-shot multimodal call, kept off the `completeChat`/`streamChat`
+  path. `OpenAiClient` builds a non-streaming `/chat/completions` with a
+  `content` parts array (`{type:text}` + `{type:image_url, …data: URL}`),
+  `LemonadeClient` inherits it. It flows through `sendJson`, so `DebugLog`
+  captures it — but with a **redacted** body (`<image: "question", N bytes, mime>`),
+  never the base64.
+- **`describe_image` tool (approach A).** `WorkspaceService.visionTool()` — kept
+  out of `workspaceTools()` (which has an exact-list test); `ToolLoopRunner.run`
+  appends it only when `visionModel` is set, and advertises the matching
+  `<describe_image path="…" question="…" />` line in the system prompt (guarded
+  like the `git_*` lines). Dispatched as a special branch in `runToolAndEmit`
+  (before the workspace/git switch): `WorkspaceService.readImageBytes` (sandboxed
+  via `resolveSafe`, ≤ 4 MB, extension allowlist) → `ensureModelLoaded` →
+  `describeImage`. Read-only: no `ActionApprover`, no checkpoint; still emits the
+  normal workspace-op row. `ActionTagParser` and `JsonToolCallParser` both learn
+  the tool name so it works for models without native tool-calling.
+- **Attaching an image.** `Composer` takes a `.png/.jpg/.jpeg/.gif/.webp` file
+  (Attach button, drag-drop, **Ctrl/Cmd+V** of a screenshot, or the "Paste image"
+  entry on its custom right-click menu) as bytes, ≤ 4 MB, into an
+  `ImageAttachment {name, mime, bytes}` (a pasted bitmap is encoded to opaque RGB
+  PNG, alpha composited on white, since CLIP/mmproj preprocessors are fussy about
+  RGBA); `ChatViewModel.sendMessage(text, image)`
+  → `ChatService.send`, which routes to inline or pre-pass mode as above. Failure
+  (no vision model, oversize, VLM error) degrades to a short note, never aborts
+  the turn.
+
+Not wired: persisting images, multi-turn image memory, orchestrator specialists
+calling the tool, non-image binaries. See [§11](#11-ideas-not-yet-implemented)
+for choosing a VLM (Qwen2.5-VL etc.) and why Omni models aren't worth it yet.
+
 ### Themes
 
 Three complete, self-contained stylesheets (`styles.css` / `theme-dark.css` / `theme-terminal.css`) swapped wholesale on the `Scene` (`MainWindow.applyTheme`) rather than layered — each overrides Modena's base variables (`-fx-base`, `-fx-background`, `-fx-control-inner-background`, `-fx-text-base-color`) so stock JavaFX controls pick up the theme too, plus this app's own custom style classes. **Terminal** is a black-background, `#33ff33`-text, monospace, square-cornered 1980s-green-screen look. Picked in Settings (applies immediately, persisted to `AppSettings.theme`).
@@ -331,6 +397,12 @@ Or in IntelliJ: open `desktop-java/pom.xml` as a project, then run the `MultiAge
 1. Click **+ Add folder**, pick a folder.
 2. Right-click its name in the sidebar → **New chat here**.
 3. Ask the model to inspect or edit files. Watch tool activity in the thread; a confirmation dialog appears before any write/delete/rename actually happens on disk.
+
+### Vision (images)
+
+1. Load a VLM in Lemonade (e.g. Qwen2.5-VL-7B). **Settings → Edit server → Vision model** = its id → **OK**.
+2. In a workspace chat, ask about an image in the folder — "use describe_image on `mockup.png` and build that layout". Or drop a `.png/.jpg` onto the composer and ask "what's this error?" (works with or without a workspace).
+3. Clear the Vision model field to turn the feature off for that server.
 
 ### Orchestrator
 
@@ -462,10 +534,10 @@ Rough scoring — **Effort** is what it takes to ship *well* (not a prototype), 
 | [Model-invoked HTTP(S) fetch tool](#model-invoked-https-fetch-tool) | Med | **High** | **High** | The call is trivial; the SSRF denylist / allowlist / approval design is the work. Highest-demand item |
 | Replay / send HTTP from the Debug panel | Low–Med | Low–Med | Low–Med | Panel + captured entries exist; human-driven, keep debug-only |
 | SAST/SBOM launcher in-app | Med | Low–Med | Low–Med | Blocked on the user designing its shape first; more third-party tooling to trust |
-| [Vision / image attachments](#vision--image-attachments) | High | Med | Low–Med | Not image *generation* — model reads an attached image. No multimodal `content` path in any `LlmClient` yet; models exist (Qwen2.5-VL, Gemma 3, LLaVA…) |
+| ~~Vision / image attachments~~ | — | — | — | **Shipped** — `describe_image` tool + attach-and-describe, see [§6](#vision-describe_image--image-attachments). Model-choice notes kept below. |
 | [Docker tool integration](#docker-tool-integration) | Med–High | Low–Med | **High** | `build` = arbitrary host code exec; `logs`/`inspect` leak secrets; blast radius = whole host |
 
-**Sequencing:** the top three are quick, wanted, near-riskless — do those first, then split-send and the palette. The HTTP fetch tool is the highest-value item but the security design must be done deliberately, not rushed. Defer vision and Docker until a concrete need appears; SAST waits on the user's own thinking.
+**Sequencing:** the top three are quick, wanted, near-riskless — do those first, then split-send and the palette. The HTTP fetch tool is the highest-value item but the security design must be done deliberately, not rushed. Defer Docker until a concrete need appears; SAST waits on the user's own thinking.
 
 ### Docker tool integration
 
@@ -498,51 +570,22 @@ Sketch of a shape that could be defensible:
 
 Related but distinct from the debug-panel "replay a request" idea below: that one is a human clicking resend on traffic the app already made; this one is the model originating new requests, which is a much larger trust decision.
 
-### Vision / image attachments
+### Vision — choosing a VLM
 
-**Not the same as image generation.** Two different capabilities that both get called "vision":
+The mechanism shipped — `describe_image` tool, inline multimodal when the chat model can see, and a pre-pass transcribe when it can't (see [§6](#vision-describe_image--image-attachments)). What's left is a *config* decision: which model to set as the chat's / server's vision model.
 
-| | Direction | Examples | Status |
-| --- | --- | --- | --- |
-| Image *generation* | text → image | DALL·E, Stable Diffusion, Flux | Deferred — the separate "image generation" item, out of scope for the port |
-| Vision / VLM | image → text | the model *reads* an attached screenshot / diagram / PDF page and answers about it | This item |
+**Vision ≠ image generation.** A VLM goes image → text (reads a screenshot/diagram and answers). Image *generation* (text → image: DALL·E, SD, Flux) is a different, still-unported capability.
 
-This one is about attaching an image to the composer and having the model interpret it — nothing is generated.
+**Local open-weight VLMs, run through Lemonade / an OpenAI-compatible server:**
 
-**Models that could do it** (all open-weight, run through an OpenAI-compatible or Ollama server):
-
-- **Qwen2.5-VL** (3B / 7B / 32B / 72B), and the newer **Qwen3-VL** — strongest open VLMs for OCR, documents, charts, UI screenshots; GGUF + `mmproj` for llama.cpp.
-- **Gemma 3** (4B / 12B / 27B) — multimodal all-rounder, llama.cpp + Ollama.
+- **Qwen2.5-VL** (3B / 7B / 32B / 72B), and the newer **Qwen3-VL** — strongest for OCR, documents, charts, UI screenshots; GGUF + `mmproj` for llama.cpp.
+- **Gemma 3** (4B / 12B / 27B) — multimodal all-rounder.
 - **Llama 3.2 Vision** (11B / 90B) — check the license/region terms.
 - **MiniCPM-V 2.6** (8B) — small, strong OCR. **LLaVA 1.5 / 1.6** — the classic llama.cpp path (model GGUF + `mmproj`).
-- **Moondream2** (~2B), **SmolVLM** (256M–2.2B) — tiny/fast, fine for captioning and simple Q&A on modest hardware.
-- **Phi-3.5-vision** (4.2B), **InternVL2.5**, **Pixtral 12B** — other viable options.
+- **Moondream2** (~2B), **SmolVLM** (256M–2.2B) — tiny/fast, captioning and simple Q&A on modest hardware.
+- **Phi-3.5-vision** (4.2B), **InternVL2.5**, **Pixtral 12B** — other options.
 
-**Why it isn't wired up:**
-
-1. **Message format** — `OpenAiClient.toMessagesNode` sends `content` as a plain string. Vision needs `content` as an array of parts (`{type:"text"}` + `{type:"image_url", image_url:{url:"data:image/png;base64,…"}}`). None of the three `LlmClient` implementations build that shape.
-2. **Server support** — llama.cpp does vision only when started with `--mmproj`; **Lemonade**'s VLM support is backend-dependent and still landing (confirm against its current model list); **Ollama** has the cleanest story (`ollama run qwen2.5-vl` / `gemma3` / `llava`, base64 `images` array) but this app rejects the Ollama provider at connect time.
-3. **Composer** — the attachment path handles UTF-8 text only today (see [§6](#6-features-in-detail)); binary/image handling and thumbnail rendering would be new.
-
-Same payload/context-budget caveat as large text attachments — an image is a few hundred to a few thousand tokens and can blow a small context window (cf. the 4096-token rejection in [§9](#9-troubleshooting)).
-
-**Design note — a code model and a vision model working together.** Loading both at once is not the hard part: Lemonade's `/health` reports `all_models_loaded` as an array, so two models can be resident simultaneously, and `LemonadeClient.ensureModelLoaded(name)` already loads one by id on demand. The open question is how they collaborate. Four shapes, cheapest first:
-
-| Approach | What it is | Build size |
-| --- | --- | --- |
-| **A. Vision-as-a-tool** | A `describe_image(path, question)` tool alongside `read_file`. On call: `ensureModelLoaded(visionModel)` → one-shot multimodal `/chat/completions` to the VLM → return its text answer as the tool result. The code model keeps driving; `ToolLoopRunner`, sandboxing, `DebugLog` and the workspace-op row all apply unchanged. | Small |
-| **B. Preprocessing pass** | On image attach, auto-run the VLM once ("transcribe everything, including text/code/diagrams") and inject that text into the code model's context. The code model never sees pixels. Deterministic, no tool-calling-reliability worry — but lossy and can't re-look. | Smallest |
-| **C. New `ConversationKind` (`VISION`)** | A chat with two pinned models + a routing service (image turns → VLM, else → code model) and two model pickers in the topbar, mirroring how `ORCHESTRATOR` is its own kind + service. | Large — migration, new service, dual-model resolution (`resolveModelFor` returns one today), UI |
-| **D. Multi-model orchestrator** | Let an orchestrator *specialist* pin a different model; "vision" becomes a specialist persona whose model is the VLM, and the code-model coordinator delegates to it. Reuses plan/specialist/synthesize wholesale. | Medium — "specialist can override model" + the multimodal builder |
-
-Recommended path: **A**, optionally with a light **B** (auto-describe once on attach so the code model has *something* even if it never calls the tool; the tool then answers follow-ups). A new window / `ConversationKind` (**C**) only earns its keep if the two models should be co-equal and user-visible as a pair, or 3+ models are foreseen. Minimum concrete steps for **A**:
-
-1. `AppSettings` / `ServerProfile` — add a `visionModel` id (the already-present unused `imageModel` field is the same pattern).
-2. `LlmClient` — extend `completeChat` to accept multimodal `content` parts (build the `data:` URL from file bytes); this is the "message format" gap above.
-3. `WorkspaceService.workspaceTools()` — a `describe_image` def: `path` (via `resolveSafe`) + `question`, byte-capped. Read-only ⇒ no `ActionApprover` prompt.
-4. `WorkspaceService.executeTool` / `ToolLoopRunner` — on `describe_image`: ensure the vision model is loaded, one-shot call, return text.
-5. `ChatService.buildSystemPrompt` / `WorkspaceService.workspaceTools()` — advertise `describe_image` (its instruction line *and* its native-tool `ToolDefinition`) only when a `visionModel` is configured in Settings, the same way the `git_*` tools are listed only for a git-repo workspace. Otherwise a model told the tool exists will call it and get "no vision model configured" back — a wasted round-trip.
-6. Composer (optional) — binary/image attach; until then the tool can only point at images already inside the bound workspace folder.
+**Caveats:** llama.cpp needs `--mmproj` for vision; **Lemonade**'s VLM support is backend-dependent — confirm the model actually accepts an image and doesn't silently ignore it. An image is a few hundred to a few thousand tokens and can blow a small context window (cf. the 4096-token rejection in [§9](#9-troubleshooting)). **Omni** models (e.g. `Qwen2.5-Omni-7B`) aren't worth it here: the audio/speech half is dead weight, GGUF multimodal support is shakier than plain VL, and a 7B split across modalities codes worse than a dedicated coder — pair a code model with a VL model instead.
 
 ### Other ideas raised, not yet built
 

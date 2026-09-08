@@ -47,6 +47,10 @@ public class WorkspaceService {
     private static final int MAX_RANGE_LINES = 2_000;
     private static final long MAX_RANGED_FILE_BYTES = 10_000_000;
 
+    // describe_image: the raw image is base64-inflated (+33%) into one request and then into
+    // the model's (small) context, so keep it modest.
+    private static final long MAX_IMAGE_BYTES = 4_000_000;
+
     public Path resolveSafe(String workspaceRoot, String relativePath) {
         Path root = Path.of(workspaceRoot).toAbsolutePath().normalize();
         String rel = (relativePath == null || relativePath.isBlank()) ? "." : relativePath;
@@ -255,6 +259,48 @@ public class WorkspaceService {
         return out.toString();
     }
 
+    /**
+     * Reads a workspace image file as raw bytes for the describe_image tool. Same sandboxing
+     * as {@link #readFile} (via {@link #resolveSafe}), a dedicated size cap, and an extension
+     * allowlist so it can't be pointed at arbitrary binaries.
+     */
+    public byte[] readImageBytes(String workspaceRoot, String relativePath) {
+        Path target = resolveSafe(workspaceRoot, relativePath);
+        if (!Files.isRegularFile(target)) {
+            throw new WorkspaceException("Image not found: " + relativePath);
+        }
+        guessImageMime(relativePath); // throws WorkspaceException for an unsupported extension
+        try {
+            long size = Files.size(target);
+            if (size > MAX_IMAGE_BYTES) {
+                throw new WorkspaceException("Image too large (" + size + " bytes). Max is "
+                        + MAX_IMAGE_BYTES + " bytes.");
+            }
+            return Files.readAllBytes(target);
+        } catch (IOException e) {
+            throw new WorkspaceException("Failed to read image: " + e.getMessage());
+        }
+    }
+
+    /** Maps a path's extension to an image MIME type; throws for anything not in the allowlist. */
+    public static String guessImageMime(String path) {
+        String lower = path.toLowerCase();
+        if (lower.endsWith(".png")) {
+            return "image/png";
+        }
+        if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) {
+            return "image/jpeg";
+        }
+        if (lower.endsWith(".gif")) {
+            return "image/gif";
+        }
+        if (lower.endsWith(".webp")) {
+            return "image/webp";
+        }
+        throw new WorkspaceException("Unsupported image type: " + path
+                + " (allowed: .png .jpg .jpeg .gif .webp)");
+    }
+
     /** Like readFile, but returns null instead of throwing - used for checkpoint snapshots where "doesn't exist" is expected. */
     public String tryReadFile(String workspaceRoot, String relativePath) {
         try {
@@ -399,6 +445,23 @@ public class WorkspaceService {
                         List.of("prompt"))));
 
         return tools;
+    }
+
+    /**
+     * The describe_image tool - kept out of {@link #workspaceTools()} (which has an
+     * exact-list test) so {@code ToolLoopRunner} can add it only when the active server has a
+     * vision model configured.
+     */
+    public static ToolDefinition visionTool() {
+        ObjectMapper mapper = new ObjectMapper();
+        return new ToolDefinition("describe_image",
+                "Ask the configured vision model about an image file in the workspace. Returns "
+                        + "the vision model's text answer. Use for screenshots, diagrams, photos, "
+                        + "scanned pages, UI mockups.",
+                schema(mapper, Map.of(
+                        "path", prop(mapper, "string", "Relative path to a .png/.jpg/.jpeg/.gif/.webp image in the workspace"),
+                        "question", prop(mapper, "string", "What to ask about the image, e.g. \"transcribe all text\" or \"what error is shown\"")),
+                        List.of("path", "question")));
     }
 
     // Package-private (not private) so GitService can build its own tool schemas the same way.

@@ -27,6 +27,27 @@ class ActionTagParserTest {
     }
 
     @Test
+    void parsesADescribeImageTagWithBothAttributesInEitherOrder() {
+        List<ActionTagParser.ParsedAction> a = ActionTagParser.parse(
+                "<describe_image path=\"shot.png\" question=\"what error is shown?\" />");
+        assertEquals(1, a.size());
+        assertEquals("describe_image", a.get(0).name());
+        assertEquals("shot.png", a.get(0).args().get("path"));
+        assertEquals("what error is shown?", a.get(0).args().get("question"));
+
+        List<ActionTagParser.ParsedAction> b = ActionTagParser.parse(
+                "<describe_image question=\"transcribe\" path=\"a/b.jpg\" />");
+        assertEquals(1, b.size());
+        assertEquals("a/b.jpg", b.get(0).args().get("path"));
+        assertEquals("transcribe", b.get(0).args().get("question"));
+    }
+
+    @Test
+    void ignoresADescribeImageTagWithNoPath() {
+        assertTrue(ActionTagParser.parse("<describe_image question=\"hi\" />").isEmpty());
+    }
+
+    @Test
     void parsesAReadFileTagWithOffsetAndLimit() {
         List<ActionTagParser.ParsedAction> actions = ActionTagParser.parse(
                 "<read_file path=\"src/Big.java\" offset=\"120\" limit=\"60\" />");

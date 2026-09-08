@@ -27,6 +27,17 @@ class JsonToolCallParserTest {
     }
 
     @Test
+    void parsesADescribeImageJsonToolCall() {
+        String content = "{\"name\": \"describe_image\", \"arguments\": {\"path\": \"ui/mock.png\", "
+                + "\"question\": \"list every button\"}}";
+        List<ActionTagParser.ParsedAction> actions = JsonToolCallParser.parse(content);
+        assertEquals(1, actions.size());
+        assertEquals("describe_image", actions.get(0).name());
+        assertEquals("ui/mock.png", actions.get(0).args().get("path"));
+        assertEquals("list every button", actions.get(0).args().get("question"));
+    }
+
+    @Test
     void parsesAJsonToolCallInsideAMarkdownFence() {
         String content = "```json\n{\"name\": \"read_file\", \"arguments\": {\"path\": \"a.txt\"}}\n```";
         List<ActionTagParser.ParsedAction> actions = JsonToolCallParser.parse(content);

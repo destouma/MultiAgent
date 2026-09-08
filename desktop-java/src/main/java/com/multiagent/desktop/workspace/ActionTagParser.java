@@ -31,6 +31,9 @@ public final class ActionTagParser {
             "<rename_file\\s+path=\"([^\"]+)\"\\s+newPath=\"([^\"]+)\"\\s*/>", Pattern.CASE_INSENSITIVE);
     private static final Pattern IMAGE = Pattern.compile(
             "<generate_image\\s+([^>]+?)\\s*/>", Pattern.CASE_INSENSITIVE);
+    // describe_image carries path + question in any order - an attribute bag like GIT.
+    private static final Pattern DESCRIBE = Pattern.compile(
+            "<describe_image((?:\\s+[a-zA-Z]+=\"[^\"]*\")*)\\s*/>", Pattern.CASE_INSENSITIVE);
     private static final Pattern GIT = Pattern.compile(
             "<(git_status|git_diff|git_log|git_show|git_branch|git_add|git_commit)"
                     + "((?:\\s+[a-zA-Z]+=\"[^\"]*\")*)\\s*/>", Pattern.CASE_INSENSITIVE);
@@ -103,6 +106,18 @@ public final class ActionTagParser {
                 args.put(attr.group(1).toLowerCase(), attr.group(2));
             }
             actions.add(new ParsedAction(git.group(1).toLowerCase(), args));
+        }
+
+        Matcher describe = DESCRIBE.matcher(content);
+        while (describe.find()) {
+            Map<String, String> args = new LinkedHashMap<>();
+            Matcher attr = ATTR.matcher(describe.group(1));
+            while (attr.find()) {
+                args.put(attr.group(1).toLowerCase(), attr.group(2));
+            }
+            if (args.containsKey("path")) {
+                actions.add(new ParsedAction("describe_image", args));
+            }
         }
 
         return actions;

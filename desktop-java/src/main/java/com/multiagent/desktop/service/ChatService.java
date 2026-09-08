@@ -8,6 +8,7 @@ import com.multiagent.desktop.llm.LlmClient;
 import com.multiagent.desktop.llm.ProviderException;
 import com.multiagent.desktop.model.ChatMessage;
 import com.multiagent.desktop.model.Conversation;
+import com.multiagent.desktop.model.ImageAttachment;
 import com.multiagent.desktop.model.MessageRole;
 import com.multiagent.desktop.model.Persona;
 import com.multiagent.desktop.persistence.ConversationStore;
@@ -22,6 +23,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.function.Consumer;
 
 /**
  * Chat turns for both plain conversations and workspace-bound ones, mirroring
@@ -79,17 +81,29 @@ public class ChatService {
 
     /** Persists the user message, then generates+persists the assistant reply on a background thread. */
     public void send(LlmClient client, Conversation conversation, String content, Persona persona,
-                      String model, int maxHistory, Listener listener) {
-        store.addMessage(conversation.getId(), MessageRole.USER, content, persona.getId());
+                      String model, String visionModel, int maxHistory, ImageAttachment image,
+                      Listener listener) {
+        String persistedContent = image != null
+                ? (content.isBlank() ? "" : content + "\n\n") + "[🖼️ " + image.name() + "]"
+                : content;
+        store.addMessage(conversation.getId(), MessageRole.USER, persistedContent, persona.getId());
 
         List<ChatMessage> history = store.getMessages(conversation.getId());
         List<ChatRequestMessage> messages = new ArrayList<>();
-        messages.add(ChatRequestMessage.system(buildSystemPrompt(persona, conversation)));
+        boolean visionEnabled = visionModel != null && !visionModel.isBlank();
+        messages.add(ChatRequestMessage.system(buildSystemPrompt(persona, conversation, visionEnabled)));
         int from = Math.max(0, history.size() - maxHistory);
         for (ChatMessage message : history.subList(from, history.size())) {
             if (message.getRole() == MessageRole.USER || message.getRole() == MessageRole.ASSISTANT) {
                 messages.add(ChatRequestMessage.of(message.getRole(), message.getContent()));
             }
+        }
+
+        // Inline mode: when the chat model IS the vision model (it can see for itself), attach
+        // the image to this turn's user message instead of the transcribe-then-splice pre-pass.
+        boolean inlineImage = image != null && visionEnabled && visionModel.equals(model);
+        if (inlineImage) {
+            messages.set(messages.size() - 1, ChatRequestMessage.userWithImage(content, image));
         }
 
         CancellationToken token = new CancellationToken();
@@ -100,11 +114,16 @@ public class ChatService {
 
         executor.submit(() -> {
             try {
+                if (image != null && !inlineImage) {
+                    describeAttachedImage(client, visionModel, image, messages,
+                            status -> listener.onModelStatus(conversation.getId(), status), token);
+                }
+
                 client.ensureModelLoaded(model,
                         status -> listener.onModelStatus(conversation.getId(), status), token);
 
                 if (workspacePath != null && !workspacePath.isBlank()) {
-                    String finalText = toolLoopRunner.run(client, model, messages, workspacePath,
+                    String finalText = toolLoopRunner.run(client, model, visionModel, messages, workspacePath,
                             conversation.getId(), token,
                             (op, path, status, detail, checkpointId) -> listener.onWorkspaceOp(
                                     conversation.getId(), assistantMessageId, op, path, status, detail, checkpointId));
@@ -131,8 +150,40 @@ public class ChatService {
         });
     }
 
+    /**
+     * "Dash of B": before the real turn runs, transcribe the attached image once with the
+     * vision model and splice the description in just ahead of the user's message, so even a
+     * model that never calls describe_image has the image's content. Failures degrade to a
+     * short note rather than aborting the turn. Runs on the send() background thread.
+     */
+    private void describeAttachedImage(LlmClient client, String visionModel, ImageAttachment image,
+                                        List<ChatRequestMessage> messages, Consumer<String> onStatus,
+                                        CancellationToken token) {
+        int insertAt = Math.max(1, messages.size() - 1); // before the just-persisted user turn
+        if (visionModel == null || visionModel.isBlank()) {
+            messages.add(insertAt, ChatRequestMessage.user("[An image \"" + image.name()
+                    + "\" was attached, but this server has no vision model configured, so it could not be read.]"));
+            return;
+        }
+        try {
+            onStatus.accept("Looking at " + image.name() + "...");
+            client.ensureModelLoaded(visionModel, onStatus, token);
+            String description = client.describeImage(visionModel,
+                    "Describe this image in full detail, including any text, code, diagrams, tables, and UI elements.",
+                    image.bytes(), image.mimeType(), token);
+            String note = VisionResponses.looksLikeRefusal(description)
+                    ? "[The vision model could not read the attached image \"" + image.name()
+                        + "\". Tell the user it couldn't be processed; do not attempt to describe it.]"
+                    : "[Image \"" + image.name() + "\" attached. Vision model description:]\n\n" + description.strip();
+            messages.add(insertAt, ChatRequestMessage.user(note));
+        } catch (RuntimeException e) {
+            messages.add(insertAt, ChatRequestMessage.user("[Could not read the attached image \""
+                    + image.name() + "\": " + (e.getMessage() != null ? e.getMessage() : e.toString()) + "]"));
+        }
+    }
+
     /** Persona prompt, plus (when workspace-bound) the directory tree and tool-usage instructions. */
-    private String buildSystemPrompt(Persona persona, Conversation conversation) {
+    private String buildSystemPrompt(Persona persona, Conversation conversation, boolean visionEnabled) {
         List<String> parts = new ArrayList<>();
         parts.add(persona.getSystemPrompt());
 
@@ -154,6 +205,11 @@ public class ChatService {
                     "<delete_file path=\"relative/path.ext\" />",
                     "<rename_file path=\"relative/old.ext\" newPath=\"relative/new.ext\" />",
                     "<generate_image path=\"images/out.png\" prompt=\"a red circle\" size=\"512x512\" />"));
+
+            if (visionEnabled) {
+                lines.add("<describe_image path=\"relative/img.png\" question=\"...\" />  "
+                        + "(ask the configured vision model about a .png/.jpg/.gif/.webp image in the workspace)");
+            }
 
             if (isGitRepo(workspacePath)) {
                 lines.add("This workspace is a git repository. You also have git tools (XML forms shown for fallback):");

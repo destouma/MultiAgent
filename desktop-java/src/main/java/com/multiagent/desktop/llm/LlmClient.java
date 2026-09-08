@@ -41,6 +41,17 @@ public interface LlmClient {
     ChatCompletionResult completeChat(List<ChatRequestMessage> messages, String model,
                                        List<ToolDefinition> tools, CancellationToken token);
 
+    /**
+     * One-shot multimodal ask: sends {@code question} plus a single image to a vision model
+     * and returns its text answer. Kept separate from {@link #completeChat} because the call
+     * never joins the tool-loop message history - so the main chat/stream path stays plain
+     * text. Providers without a multimodal endpoint keep the default and throw.
+     */
+    default String describeImage(String model, String question, byte[] imageBytes, String mimeType,
+                                  CancellationToken token) {
+        throw new ProviderException(ErrorCode.UNSUPPORTED, "Vision is not supported by this provider");
+    }
+
     /** False for providers with no image-generation endpoint (e.g. Ollama). */
     boolean supportsImageGeneration();
 

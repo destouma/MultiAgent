@@ -64,7 +64,7 @@ public class ConversationStore implements AutoCloseable {
     }
 
     public List<Conversation> listConversations() {
-        String sql = "SELECT id, title, createdAt, updatedAt, workspacePath, kind, model, serverId, personaId "
+        String sql = "SELECT id, title, createdAt, updatedAt, workspacePath, kind, model, serverId, personaId, visionModel "
                 + "FROM conversations ORDER BY updatedAt DESC";
         List<Conversation> conversations = new ArrayList<>();
         try (PreparedStatement stmt = connection.prepareStatement(sql);
@@ -138,6 +138,18 @@ public class ConversationStore implements AutoCloseable {
         return getConversation(id);
     }
 
+    public Conversation setConversationVisionModel(String id, String visionModel) {
+        try (PreparedStatement stmt = connection.prepareStatement(
+                "UPDATE conversations SET visionModel = ? WHERE id = ?")) {
+            stmt.setString(1, visionModel);
+            stmt.setString(2, id);
+            stmt.executeUpdate();
+        } catch (SQLException e) {
+            throw new IllegalStateException(e);
+        }
+        return getConversation(id);
+    }
+
     public Conversation setConversationServer(String id, String serverId) {
         try (PreparedStatement stmt = connection.prepareStatement(
                 "UPDATE conversations SET serverId = ? WHERE id = ?")) {
@@ -183,7 +195,7 @@ public class ConversationStore implements AutoCloseable {
     }
 
     public Conversation getConversation(String id) {
-        String sql = "SELECT id, title, createdAt, updatedAt, workspacePath, kind, model, serverId, personaId "
+        String sql = "SELECT id, title, createdAt, updatedAt, workspacePath, kind, model, serverId, personaId, visionModel "
                 + "FROM conversations WHERE id = ?";
         try (PreparedStatement stmt = connection.prepareStatement(sql)) {
             stmt.setString(1, id);
@@ -556,7 +568,7 @@ public class ConversationStore implements AutoCloseable {
     }
 
     private Conversation mapConversation(ResultSet rs) throws SQLException {
-        return new Conversation(
+        Conversation conversation = new Conversation(
                 rs.getString("id"),
                 rs.getString("title"),
                 rs.getLong("createdAt"),
@@ -566,6 +578,8 @@ public class ConversationStore implements AutoCloseable {
                 rs.getString("model"),
                 rs.getString("serverId"),
                 rs.getString("personaId"));
+        conversation.setVisionModel(rs.getString("visionModel"));
+        return conversation;
     }
 
     @Override

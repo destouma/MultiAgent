@@ -63,12 +63,17 @@ public class ToolLoopRunner {
         void onOp(String op, String path, String status, String detail, String checkpointId);
     }
 
-    public String run(LlmClient client, String model, List<ChatRequestMessage> initialMessages,
+    public String run(LlmClient client, String model, String visionModel,
+                       List<ChatRequestMessage> initialMessages,
                        String workspacePath, String conversationId, CancellationToken token,
                        ToolOpListener listener) {
         List<ChatRequestMessage> messages = new ArrayList<>(initialMessages);
         List<ToolDefinition> tools = new ArrayList<>(WorkspaceService.workspaceTools());
         tools.addAll(GitService.gitTools());
+        boolean visionEnabled = visionModel != null && !visionModel.isBlank();
+        if (visionEnabled) {
+            tools.add(WorkspaceService.visionTool());
+        }
         boolean toolsEnabled = true;
         String finalText = "";
 
@@ -95,7 +100,8 @@ public class ToolLoopRunner {
                 messages.add(ChatRequestMessage.assistantWithToolCalls(assistantContent, nativeCalls));
 
                 for (ToolCall call : nativeCalls) {
-                    String result = runToolAndEmit(workspacePath, conversationId, call.name(), call.arguments(), listener);
+                    String result = runToolAndEmit(client, visionModel, workspacePath, conversationId,
+                            call.name(), call.arguments(), token, listener);
                     messages.add(ChatRequestMessage.tool(call.id(), result));
                 }
                 continue;
@@ -120,7 +126,8 @@ public class ToolLoopRunner {
                     } catch (Exception e) {
                         rawArgs = "{}";
                     }
-                    String result = runToolAndEmit(workspacePath, conversationId, action.name(), rawArgs, listener);
+                    String result = runToolAndEmit(client, visionModel, workspacePath, conversationId,
+                            action.name(), rawArgs, token, listener);
                     results.add("[" + action.name() + "] " + result);
                 }
 
@@ -138,8 +145,9 @@ public class ToolLoopRunner {
         return finalText.isEmpty() ? "Finished workspace operations." : finalText;
     }
 
-    private String runToolAndEmit(String workspacePath, String conversationId, String name, String rawArgsJson,
-                                   ToolOpListener listener) {
+    private String runToolAndEmit(LlmClient client, String visionModel, String workspacePath,
+                                   String conversationId, String name, String rawArgsJson,
+                                   CancellationToken token, ToolOpListener listener) {
         Map<String, Object> args;
         try {
             args = mapper.readValue(rawArgsJson == null || rawArgsJson.isBlank() ? "{}" : rawArgsJson,
@@ -161,6 +169,24 @@ public class ToolLoopRunner {
 
         if (listener != null) {
             listener.onOp(name, relPath, "running", null, null);
+        }
+
+        if ("describe_image".equals(name)) {
+            try {
+                String result = describeImage(client, visionModel, workspacePath, relPath,
+                        String.valueOf(args.getOrDefault("question", "Describe this image.")), token);
+                if (listener != null) {
+                    listener.onOp(name, relPath, "ok",
+                            result.length() > 240 ? result.substring(0, 240) : result, null);
+                }
+                return result;
+            } catch (RuntimeException e) {
+                String message = e.getMessage() != null ? e.getMessage() : e.toString();
+                if (listener != null) {
+                    listener.onOp(name, relPath, "error", message, null);
+                }
+                return "Error: " + message;
+            }
         }
 
         if (MUTATING_TOOLS.contains(name) && approver != null) {
@@ -196,6 +222,27 @@ public class ToolLoopRunner {
             }
             return "Error: " + message;
         }
+    }
+
+    /**
+     * describe_image: read the workspace image (sandboxed + capped), make sure the vision
+     * model is loaded, then one-shot ask it. Read-only - no approver, no checkpoint.
+     */
+    private String describeImage(LlmClient client, String visionModel, String workspacePath,
+                                  String relPath, String question, CancellationToken token) {
+        if (visionModel == null || visionModel.isBlank()) {
+            return "No vision model is configured for this server (Settings -> Edit server -> Vision model).";
+        }
+        byte[] bytes = workspace.readImageBytes(workspacePath, relPath);
+        String mime = WorkspaceService.guessImageMime(relPath);
+        client.ensureModelLoaded(visionModel, status -> { }, token);
+        String answer = client.describeImage(visionModel, question, bytes, mime, token);
+        if (VisionResponses.looksLikeRefusal(answer)) {
+            return "Error: the vision model could not read \"" + relPath
+                    + "\" (it returned a generic \"I can't see images\" reply - the image may be too small "
+                    + "or an unsupported form, or the server dropped it).";
+        }
+        return answer.strip();
     }
 
     /** Human-readable preview of a mutating tool call, shown to the user before it runs. */

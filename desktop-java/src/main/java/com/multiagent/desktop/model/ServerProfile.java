@@ -8,18 +8,26 @@ public class ServerProfile {
     private String baseUrl;
     private String apiKey;
     private int maxHistory = 40;
+    /** Id of a vision/multimodal model loaded on this server, enabling the describe_image tool + image attachments. Blank = off. */
+    private String visionModel = "";
 
     public ServerProfile() {
     }
 
     public ServerProfile(String id, String name, ProviderType providerType, String baseUrl,
                           String apiKey, int maxHistory) {
+        this(id, name, providerType, baseUrl, apiKey, maxHistory, "");
+    }
+
+    public ServerProfile(String id, String name, ProviderType providerType, String baseUrl,
+                          String apiKey, int maxHistory, String visionModel) {
         this.id = id;
         this.name = name;
         this.providerType = providerType;
         this.baseUrl = baseUrl;
         this.apiKey = apiKey;
         this.maxHistory = maxHistory;
+        this.visionModel = visionModel == null ? "" : visionModel;
     }
 
     public String getId() {
@@ -68,6 +76,14 @@ public class ServerProfile {
 
     public void setMaxHistory(int maxHistory) {
         this.maxHistory = maxHistory;
+    }
+
+    public String getVisionModel() {
+        return visionModel == null ? "" : visionModel;
+    }
+
+    public void setVisionModel(String visionModel) {
+        this.visionModel = visionModel == null ? "" : visionModel;
     }
 
     @Override

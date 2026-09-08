@@ -144,13 +144,48 @@ public class ChatPaneView extends BorderPane {
             modelBox.setValue(viewModel.activeModelProperty().get());
         }
 
+        // Vision model for this chat. "" = the server profile's default (or off). A real id
+        // pins this conversation to it - and when it equals Model, images go inline.
+        ComboBox<String> visionBox = new ComboBox<>();
+        visionBox.setEditable(false);
+        Callback<ListView<String>, ListCell<String>> visionCells = lv -> new ListCell<>() {
+            @Override
+            protected void updateItem(String item, boolean empty) {
+                super.updateItem(item, empty);
+                setText(empty ? null : (item == null || item.isEmpty() ? "(server default)" : item));
+            }
+        };
+        visionBox.setCellFactory(visionCells);
+        visionBox.setButtonCell(visionCells.call(null));
+        syncVisionItems(visionBox, viewModel.models());
+        viewModel.models().addListener((ListChangeListener<ModelInfo>) c -> syncVisionItems(visionBox, viewModel.models()));
+        visionBox.valueProperty().addListener((obs, old, val) -> {
+            if (val == null) {
+                return;
+            }
+            if (val.isEmpty()) {
+                viewModel.setVisionModel("");
+            } else if (!val.equals(viewModel.activeVisionModelProperty().get())) {
+                viewModel.setVisionModel(val);
+            }
+        });
+        viewModel.activeVisionModelProperty().addListener((obs, old, val) -> {
+            String show = val == null ? "" : val;
+            if (!show.equals(visionBox.getValue())) {
+                visionBox.setValue(show);
+            }
+        });
+        visionBox.setValue(viewModel.activeVisionModelProperty().get() == null
+                ? "" : viewModel.activeVisionModelProperty().get());
+
         Label statusDot = new Label("●");
         Label statusText = new Label("Checking...");
         viewModel.healthProperty().addListener((obs, old, val) -> updateHealthLabels(statusDot, statusText, val));
         updateHealthLabels(statusDot, statusText, viewModel.healthProperty().get());
 
         HBox bar = new HBox(10,
-                labeledColumn("Server", serverBox), labeledColumn("Model", modelBox), labeledColumn("Persona", personaBox),
+                labeledColumn("Server", serverBox), labeledColumn("Model", modelBox),
+                labeledColumn("Vision", visionBox), labeledColumn("Persona", personaBox),
                 statusDot, statusText);
         bar.setAlignment(Pos.CENTER_LEFT);
         bar.setPadding(new Insets(8, 12, 8, 12));
@@ -164,6 +199,15 @@ public class ChatPaneView extends BorderPane {
         caption.getStyleClass().add("topbar-field-label");
         VBox column = new VBox(2, caption, control);
         return column;
+    }
+
+    private void syncVisionItems(ComboBox<String> visionBox, List<ModelInfo> models) {
+        String current = visionBox.getValue();
+        List<String> items = new java.util.ArrayList<>();
+        items.add(""); // "(server default)"
+        models.forEach(m -> items.add(m.id()));
+        visionBox.getItems().setAll(items);
+        visionBox.setValue(current == null ? "" : current);
     }
 
     private void syncModelItems(ComboBox<String> modelBox, List<ModelInfo> models) {

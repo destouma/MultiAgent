@@ -95,6 +95,7 @@ public class ChatViewModel {
     private final ObjectProperty<Persona> activePersona = new SimpleObjectProperty<>();
     private final ObjectProperty<ServerProfile> activeServer = new SimpleObjectProperty<>();
     private final StringProperty activeModel = new SimpleStringProperty("");
+    private final StringProperty activeVisionModel = new SimpleStringProperty("");
     private final StringProperty streamingContent = new SimpleStringProperty("");
     private final BooleanProperty streaming = new SimpleBooleanProperty(false);
     private final StringProperty errorMessage = new SimpleStringProperty("");
@@ -263,6 +264,15 @@ public class ChatViewModel {
         return configService.getSettings().getModel();
     }
 
+    /** Per-chat vision model if set, else the resolved server profile's visionModel (blank ⇒ off). */
+    private String resolveVisionModelFor(Conversation conversation) {
+        if (conversation != null && conversation.getVisionModel() != null && !conversation.getVisionModel().isBlank()) {
+            return conversation.getVisionModel();
+        }
+        ServerProfile profile = resolveServerFor(conversation);
+        return profile == null ? "" : profile.getVisionModel();
+    }
+
     /** Resolves which persona a conversation uses: its own pin, or the first available persona ("general" by sort order). */
     private Persona resolvePersonaFor(Conversation conversation) {
         String personaId = conversation != null ? conversation.getPersonaId() : null;
@@ -291,6 +301,7 @@ public class ChatViewModel {
         ServerProfile profile = resolveServerFor(conversation);
         activeServer.set(profile);
         activeModel.set(resolveModelFor(conversation));
+        activeVisionModel.set(resolveVisionModelFor(conversation));
         activePersona.set(resolvePersonaFor(conversation));
         refreshModels(profile);
         refreshHealth(profile);
@@ -465,6 +476,23 @@ public class ChatViewModel {
         notifySiblings();
     }
 
+    /** Pins the ACTIVE conversation to this vision model (blank ⇒ fall back to the server's). */
+    public void setVisionModel(String visionModel) {
+        Conversation conversation = activeConversation.get();
+        if (conversation == null) {
+            return;
+        }
+        String value = visionModel == null || visionModel.isBlank() ? null : visionModel;
+        Conversation updated = store.setConversationVisionModel(conversation.getId(), value);
+        activeConversation.set(updated);
+        activeVisionModel.set(resolveVisionModelFor(updated));
+        int index = conversations.indexOf(conversation);
+        if (index >= 0) {
+            conversations.set(index, updated);
+        }
+        notifySiblings();
+    }
+
     /** Pins the ACTIVE conversation (and only that one) to this server - other conversations are untouched. */
     public void setServer(ServerProfile profile) {
         Conversation conversation = activeConversation.get();
@@ -487,9 +515,14 @@ public class ChatViewModel {
      * send never wipes what the user typed.
      */
     public boolean sendMessage(String text) {
-        if (text == null || text.isBlank()) {
+        return sendMessage(text, null);
+    }
+
+    public boolean sendMessage(String text, com.multiagent.desktop.model.ImageAttachment image) {
+        if ((text == null || text.isBlank()) && image == null) {
             return false;
         }
+        String messageText = text == null ? "" : text;
         if (activeConversation.get() == null) {
             newConversation();
         }
@@ -641,9 +674,10 @@ public class ChatViewModel {
         };
 
         if (conversation.getKind() == ConversationKind.ORCHESTRATOR) {
-            orchestratorService.send(client, conversation, text, model, profile.getMaxHistory(), listener);
+            orchestratorService.send(client, conversation, messageText, model, profile.getMaxHistory(), listener);
         } else {
-            chatService.send(client, conversation, text, persona, model, profile.getMaxHistory(), listener);
+            chatService.send(client, conversation, messageText, persona, model,
+                    resolveVisionModelFor(conversation), profile.getMaxHistory(), image, listener);
         }
 
         // The user message is persisted synchronously inside ChatService/OrchestratorService's
@@ -729,6 +763,10 @@ public class ChatViewModel {
 
     public StringProperty activeModelProperty() {
         return activeModel;
+    }
+
+    public StringProperty activeVisionModelProperty() {
+        return activeVisionModel;
     }
 
     public StringProperty streamingContentProperty() {

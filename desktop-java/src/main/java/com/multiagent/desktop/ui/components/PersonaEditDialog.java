@@ -93,6 +93,8 @@ public class PersonaEditDialog extends Dialog<Persona> {
         grid.setVgap(8);
         grid.setPadding(new Insets(12));
         ColumnConstraints labels = new ColumnConstraints();
+        labels.setMinWidth(Region.USE_PREF_SIZE); // never squeeze the label column - it truncates "Description"/"System prompt" otherwise
+        labels.setHalignment(javafx.geometry.HPos.RIGHT);
         ColumnConstraints fields = new ColumnConstraints();
         fields.setHgrow(Priority.ALWAYS);
         fields.setFillWidth(true);
@@ -107,7 +109,7 @@ public class PersonaEditDialog extends Dialog<Persona> {
         grid.addRow(5, promptLabel, promptArea);
 
         getDialogPane().setContent(grid);
-        getDialogPane().setPrefWidth(520);
+        getDialogPane().setPrefWidth(560);
         if (readOnly) {
             getDialogPane().getButtonTypes().add(ButtonType.CLOSE);
         } else {

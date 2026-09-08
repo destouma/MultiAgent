@@ -503,7 +503,7 @@ mvn clean package
 jpackage \
   --type exe \
   --name MultiAgent \
-  --app-version 1.2.0 \
+  --app-version 1.3.0 \
   --vendor MultiAgent \
   --input target/jpackage-input \
   --main-jar multiagent-desktop.jar \
@@ -518,7 +518,7 @@ jpackage \
 
 **Why `--main-class com.multiagent.desktop.Launcher` and not `App` directly:** `App` extends `javafx.application.Application`. The JVM refuses to start an `Application` subclass directly as the manifest/`--main-class` main class unless JavaFX is on the *module path* - which a plain classpath app built from `jpackage`'s input-directory mode never is (confirmed live: `Error: JavaFX runtime components are missing, and are required to run this application`). `Launcher` (`Launcher.java`) exists solely to sidestep this: a plain `main(String[])` that just calls `App.main(args)`. `mvn javafx:run`'s dev loop doesn't need this detour - that plugin sets up the module path itself, so its `<mainClass>` still points straight at `App`.
 
-Output: `target/dist/MultiAgent-<version>.exe`. Verified end-to-end for 1.0.0: builds, installs (Start Menu + desktop shortcut, registers in Add/Remove Programs), and the installed app launches correctly from `C:\Program Files\MultiAgent\MultiAgent.exe`. 1.1.0 built a working `.exe` (WiX 5 + JDK 26) and its app-image was launch-checked; 1.2.0 is a version bump on top. The full install-and-run has not been re-verified since 1.0.0.
+Output: `target/dist/MultiAgent-<version>.exe`. Verified end-to-end for 1.0.0: builds, installs (Start Menu + desktop shortcut, registers in Add/Remove Programs), and the installed app launches correctly from `C:\Program Files\MultiAgent\MultiAgent.exe`. 1.1.0 built a working `.exe` (WiX 5 + JDK 26) and its app-image was launch-checked; 1.2.0 and 1.3.0 are feature releases on top (1.3.0: orchestrator executor phase, persona-coloured bubbles, Settings persona editor). The `.exe` is rebuilt per release; the full install-and-run has not been re-verified since 1.0.0.
 
 The runtime version string lives in `com.multiagent.desktop.AppInfo` (`NAME` / `VERSION`) — shown in the window title and the Settings dialog footer, and kept in sync by hand with `pom.xml` and `--app-version` on each release (no Maven resource filtering is wired up).
 

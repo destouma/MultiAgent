@@ -539,6 +539,45 @@ public class ChatViewModel {
                 .toList();
     }
 
+    // --- Persona editor (Settings) -------------------------------------------------------
+
+    /** True when this persona lives in the writable override dir - i.e. it may be edited or removed. */
+    public boolean isCustomPersona(String id) {
+        return personaRegistry.isUserPersona(id);
+    }
+
+    /** The writable persona directory, for a hint line in the editor. */
+    public java.nio.file.Path customPersonaDir() {
+        return personaRegistry.userPersonaDir();
+    }
+
+    /** Writes a user-defined persona to disk and republishes the roster to every pane. */
+    public void saveCustomPersona(Persona persona) {
+        personaRegistry.saveUserPersona(persona);
+        reloadPersonas();
+    }
+
+    /** Deletes a user-defined persona and republishes the roster. Returns whether a file was removed. */
+    public boolean deleteCustomPersona(String id) {
+        boolean removed = personaRegistry.deleteUserPersona(id);
+        reloadPersonas();
+        return removed;
+    }
+
+    /** Re-reads persona files and pushes the fresh roster into this pane and its siblings. */
+    public void reloadPersonas() {
+        personaRegistry.load();
+        applyReloadedPersonas();
+        for (ChatViewModel sibling : siblings) {
+            sibling.applyReloadedPersonas();
+        }
+    }
+
+    private void applyReloadedPersonas() {
+        personas.setAll(personaRegistry.list());
+        activePersona.set(resolvePersonaFor(activeConversation.get()));
+    }
+
     /** Pins the ACTIVE conversation (and only that one) to this model - other conversations are untouched. */
     public void setModel(String model) {
         Conversation conversation = activeConversation.get();

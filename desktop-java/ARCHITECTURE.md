@@ -179,7 +179,7 @@ MultiAgent/
         components/
           ChatPaneView.java            # per-pane topbar + thread + composer (x2 for split view)
           ChatThread.java  Composer.java
-          SettingsDialog.java  ServerEditDialog.java
+          SettingsDialog.java  ServerEditDialog.java  PersonaEditDialog.java
           SearchDialog.java  SplitPickerDialog.java  DiffDialog.java
           DialogActionApprover.java    # the "ask before writing/deleting/renaming" dialog
           DebugLogWindow.java          # non-modal viewer for DebugLog (list + raw request/response)
@@ -191,6 +191,7 @@ MultiAgent/
   vscode-extension/   # VS Code client (untouched by this module)
   shared/             # TS-only; read as reference during the port, not depended on
   personas/           # General, Researcher, Coder, Critic, Orchestrator - shared source of truth
+                      # (user-defined personas layer on top at %APPDATA%/MultiAgentJava/personas/)
 ```
 
 ---
@@ -252,6 +253,8 @@ There's no IPC layer in this client — `ChatViewModel` calls services directly,
 ### Personas
 
 Loaded from `personas/*.json` at the repo root (`PersonaRegistry`, sorted general/researcher/coder/critic first, then alphabetically, with a hard-coded fallback if the directory can't be found). Unlike the Electron app, **persona is pinned per conversation** here (`Conversation.personaId`), not a single pane-wide field — see [§10](#10-differences-from-the-electron-client). The topbar persona box is kind-filtered: a normal chat lists every persona *except* `orchestrator` (its "I coordinate specialists" prompt is meaningless with no specialists); an orchestrator chat lists all of them, since the box is the **Coordinator** picker there.
+
+**Persona editor** (Settings → *Personas*) — `PersonaRegistry` layers one writable directory, `%APPDATA%/MultiAgentJava/personas/`, *last* over the bundled candidate dirs, so a user file wins on id. `SettingsDialog`'s list gives every bundled persona a read-only **View**; personas that have a file in the writable dir (`isUserPersona(id)`) get **Edit** / **Remove**. `PersonaEditDialog` collects id (fixed once created — it's the `<id>.json` filename, validated against `PersonaRegistry.VALID_ID`), name, description, colour, an optional default model, and the system prompt; `saveUserPersona` / `deleteUserPersona` write the file and re-`load()`, then `ChatViewModel.reloadPersonas()` republishes the roster to every pane (topbar box, specialist roster, bubble accents) with no restart. `Persona.isValid()` is `@JsonIgnore`d and the class is `@JsonInclude(NON_NULL)` + `@JsonIgnoreProperties(ignoreUnknown = true)` so a round-tripped file stays clean and a hand-edited one is tolerated. Removing a persona a chat is pinned to is safe — resolution falls back to the default persona.
 
 Each persona's `color` (a `#hex` in its JSON) drives a 3px accent bar on the outer edge of every user bubble (the conversation's persona) and, in an orchestrator thread, on each specialist reply (its own persona) with a matching persona-name caption above it — `ChatThread` renders the bar as a sibling `Region`, not a CSS border, so it doesn't collide with the Terminal theme's own bubble outline. Colors are sanitized to a bare `#hex` before reaching an inline style.
 
@@ -450,6 +453,12 @@ Or in IntelliJ: open `desktop-java/pom.xml` as a project, then run the `MultiAge
 3. Ask a question. Watch the status banner while specialists run (each line shows the specialist's model); each reply appears in the thread as it completes, followed by the final synthesis.
 4. With the executor enabled, an **Applying changes…** step follows: each file write pops the same approval dialog as a workspace chat (decline and the executor moves on), and the answer ends with an **Applied changes** summary plus the usual **View diff** / **Revert** rows.
 
+### Custom personas
+
+1. **Settings → Personas → + Add new**. Give it an id (`lowercase-with-dashes`), a name, a colour, an optional default model, and a system prompt.
+2. It appears in the persona / Coordinator box and the orchestrator specialist roster immediately — no restart. The file lands in `%APPDATA%\MultiAgentJava\personas\`.
+3. **View** shows a bundled persona read-only; **Edit** / **Remove** are offered only for ones you added. A file you add with the same id as a bundled persona overrides it.
+
 ### Side by side
 
 1. Make sure a folder has at least 2 conversations.
@@ -545,6 +554,7 @@ The runtime version string lives in `com.multiagent.desktop.AppInfo` (`NAME` / `
 - Settings: `%APPDATA%\MultiAgentJava\config.json`
 - Database: `%APPDATA%\MultiAgentJava\chats.db`
 - Raw API debug log (only while **Debug: log raw API traffic** is on): `%APPDATA%\MultiAgentJava\api-debug.log`
+- User-defined personas: `%APPDATA%\MultiAgentJava\personas\*.json`
 
 ---
 
@@ -558,6 +568,7 @@ Intentional, not oversights:
 | Mutating file tools | Execute immediately, no confirmation | Gated behind `ActionApprover`/`DialogActionApprover` — every write/delete/rename asks first | Added specifically for this client; a generic enough interface that other action types (e.g. git commands) can reuse it later |
 | Tool-call detection | Native tool calls, then XML action-tag fallback | Native tool calls, then XML action-tag fallback, **then a JSON-tool-call-text fallback** (`JsonToolCallParser`) | Found live against Qwen2.5-Coder + Lemonade: the model ignores both the native tool-calling field and this app's XML tags, printing the JSON shape it was fine-tuned to emit instead |
 | `rename_file` tool | Not present | Present (`WorkspaceService.renameFile`, XML tag, JSON fallback) | Added during this port; not back-ported to the TS side |
+| Persona editing | `personas/*.json` files only, no in-app UI | Settings → *Personas*: view bundled ones, add/edit/remove your own into `%APPDATA%/MultiAgentJava/personas/` (`PersonaEditDialog`) | Added during this port; the writable dir layers last over the bundled candidate dirs so a custom persona wins on id |
 | Image generation | Full (`ImageService`, image sessions, gallery) | Not ported (explicitly out of scope for this migration) | Deprioritized early in planning — plain/workspace chat and orchestrator were the priority |
 | Packaging | NSIS installer (Windows), AppImage (Linux) | WiX-built `.exe` installer (Windows only so far) via `jpackage` - manual two-step process, not yet a Maven plugin/CI step | See [§8](#8-develop--build) |
 | Process model | Electron main/renderer + IPC + `contextBridge` | Single JVM, `ChatViewModel` calls services directly | No separate untrusted-renderer boundary to defend in a JavaFX desktop app the way there is in an app that also renders arbitrary web content |

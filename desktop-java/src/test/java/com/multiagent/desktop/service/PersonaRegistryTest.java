@@ -2,12 +2,16 @@ package com.multiagent.desktop.service;
 
 import com.multiagent.desktop.model.Persona;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -62,5 +66,65 @@ class PersonaRegistryTest {
     void listLazilyLoadsWithoutRequiringAnExplicitLoadCall() {
         PersonaRegistry registry = new PersonaRegistry();
         assertFalse(registry.list().isEmpty());
+    }
+
+    @Test
+    void savesAUserPersonaToTheOverrideDirAndLoadsItBack(@TempDir Path userDir) {
+        PersonaRegistry registry = new PersonaRegistry(userDir);
+        Persona custom = new Persona("security-auditor", "Security Auditor",
+                "Threat-models the change", "You are a security auditor.", "#DC2626");
+
+        registry.saveUserPersona(custom);
+
+        assertTrue(Files.isRegularFile(userDir.resolve("security-auditor.json")));
+        assertTrue(registry.isUserPersona("security-auditor"));
+        assertFalse(registry.isUserPersona("coder"), "a bundled persona is not user-editable");
+        Optional<Persona> loaded = registry.get("security-auditor");
+        assertTrue(loaded.isPresent());
+        assertEquals("Security Auditor", loaded.get().getName());
+        assertEquals("#DC2626", loaded.get().getColor());
+    }
+
+    @Test
+    void aUserPersonaWinsOverABundledOneWithTheSameId(@TempDir Path userDir) {
+        PersonaRegistry registry = new PersonaRegistry(userDir);
+        registry.saveUserPersona(new Persona("coder", "My Coder",
+                "overridden", "You are my custom coder.", "#111111"));
+
+        assertEquals("My Coder", registry.get("coder").orElseThrow().getName());
+        assertTrue(registry.isUserPersona("coder"));
+    }
+
+    @Test
+    void deleteUserPersonaRemovesTheFileAndFallsBackToTheBundledOne(@TempDir Path userDir) {
+        PersonaRegistry registry = new PersonaRegistry(userDir);
+        registry.saveUserPersona(new Persona("coder", "My Coder",
+                "overridden", "You are my custom coder.", "#111111"));
+        assertEquals("My Coder", registry.get("coder").orElseThrow().getName());
+
+        assertTrue(registry.deleteUserPersona("coder"));
+        assertFalse(registry.isUserPersona("coder"));
+        assertEquals("Coder", registry.get("coder").orElseThrow().getName(), "bundled coder is back");
+        assertFalse(registry.deleteUserPersona("coder"), "second delete is a no-op");
+    }
+
+    @Test
+    void rejectsAnUnsafePersonaId(@TempDir Path userDir) {
+        PersonaRegistry registry = new PersonaRegistry(userDir);
+        assertThrows(IllegalArgumentException.class, () -> registry.saveUserPersona(
+                new Persona("../evil", "Evil", "x", "prompt", "#000000")));
+        assertThrows(IllegalArgumentException.class, () -> registry.saveUserPersona(
+                new Persona("Bad Id", "Bad", "x", "prompt", "#000000")));
+    }
+
+    @Test
+    void savedUserPersonaJsonOmitsNullOptionalFields(@TempDir Path userDir) throws Exception {
+        PersonaRegistry registry = new PersonaRegistry(userDir);
+        registry.saveUserPersona(new Persona("minimal", "Minimal", null, "Just a prompt.", null));
+
+        String json = Files.readString(userDir.resolve("minimal.json"));
+        assertFalse(json.contains("defaultModel"));
+        assertFalse(json.contains("\"color\""));
+        assertFalse(json.contains("\"description\""));
     }
 }

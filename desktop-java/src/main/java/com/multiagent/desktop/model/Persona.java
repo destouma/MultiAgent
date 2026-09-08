@@ -1,6 +1,12 @@
 package com.multiagent.desktop.model;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonInclude;
+
 /** Mirrors shared/types.ts Persona. Loaded from personas/*.json (Jackson). */
+@JsonInclude(JsonInclude.Include.NON_NULL) // user-saved personas skip null defaultModel/color rather than writing "field": null
+@JsonIgnoreProperties(ignoreUnknown = true) // tolerate stray keys in a hand-edited persona file
 public class Persona {
     private String id;
     private String name;
@@ -68,6 +74,7 @@ public class Persona {
         this.color = color;
     }
 
+    @JsonIgnore // a derived check, not a stored field - keep it out of the written JSON
     public boolean isValid() {
         return id != null && !id.isBlank() && name != null && !name.isBlank()
                 && systemPrompt != null && !systemPrompt.isBlank();

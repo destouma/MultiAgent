@@ -2,6 +2,7 @@ package com.multiagent.desktop.service;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.multiagent.desktop.action.ActionApprover;
 import com.multiagent.desktop.llm.CancellationToken;
 import com.multiagent.desktop.llm.ChatCompletionResult;
 import com.multiagent.desktop.llm.ChatRequestMessage;
@@ -67,6 +68,9 @@ public class OrchestratorService {
     private final WorkspaceService workspace = new WorkspaceService();
     private final GitService git = new GitService();
     private final ObjectMapper mapper = new ObjectMapper();
+    // Only used by the opt-in executor phase - the full write/git tool loop, behind the same
+    // ActionApprover gate as ChatService's.
+    private final ToolLoopRunner toolLoop;
     private final Map<String, CancellationToken> activeTokens = new ConcurrentHashMap<>();
     private final ExecutorService executor = Executors.newCachedThreadPool(runnable -> {
         Thread thread = new Thread(runnable, "orchestrator-service-worker");
@@ -77,10 +81,16 @@ public class OrchestratorService {
     public OrchestratorService(ConversationStore store, PersonaRegistry personas) {
         this.store = store;
         this.personas = personas;
+        this.toolLoop = new ToolLoopRunner(store);
+    }
+
+    /** Installs the write/delete/rename/git confirmation gate for the executor phase (App wires the real one). */
+    public void setActionApprover(ActionApprover approver) {
+        toolLoop.setActionApprover(approver);
     }
 
     public void send(LlmClient client, Conversation conversation, String content, String fallbackModel,
-                      int maxHistory, Map<String, String> specialistModels, int contextTokens,
+                      int maxHistory, Map<String, String> specialistModels, int contextTokens, boolean apply,
                       ChatService.Listener listener) {
         store.addMessage(conversation.getId(), MessageRole.USER, content, null);
 
@@ -176,6 +186,14 @@ public class OrchestratorService {
                 String finalText = full.toString().trim();
                 if (finalText.isEmpty()) {
                     finalText = "I could not produce a final answer from the specialist notes.";
+                }
+
+                if (apply && workspacePath != null && !workspacePath.isBlank()) {
+                    listener.onStep(conversation.getId(), "executing", orchestrator.getId(),
+                            "Applying changes...");
+                    String applied = runExecutor(client, orchestrator, model, maxTokens, content, notes, finalText,
+                            workspacePath, workspaceTree, conversation.getId(), assistantMessageId, token, listener);
+                    finalText = finalText + "\n\n---\n\n**Applied changes**\n\n" + applied.trim();
                 }
 
                 listener.onStep(conversation.getId(), "done", orchestrator.getId(), "Done");
@@ -397,11 +415,6 @@ public class OrchestratorService {
     private void synthesize(LlmClient client, Persona orchestrator, String model, int maxTokens, String userContent,
                              String planRationale, List<SpecialistNote> notes, String workspacePath,
                              String workspaceTree, CancellationToken token, java.util.function.Consumer<String> onDelta) {
-        String notesBlock = notes.isEmpty()
-                ? "(No specialists were consulted.)"
-                : notes.stream().map(note -> "### " + note.persona().getName() + "\n" + note.content())
-                        .collect(Collectors.joining("\n\n"));
-
         List<String> systemLines = new ArrayList<>(List.of(
                 orchestrator.getSystemPrompt(), "",
                 "Synthesize a final answer for the user from the specialist notes.",
@@ -415,12 +428,52 @@ public class OrchestratorService {
                     workspaceTree));
         }
 
-        String userBlock = "User request:\n" + userContent + "\n\nSpecialist notes:\n" + notesBlock;
+        String userBlock = "User request:\n" + userContent + "\n\nSpecialist notes:\n" + notesBlock(notes);
         List<ChatRequestMessage> messages = List.of(
                 ChatRequestMessage.system(String.join("\n", systemLines)),
                 ChatRequestMessage.user(userBlock));
 
         client.streamChat(messages, model, maxTokens, onDelta, token);
+    }
+
+    private static String notesBlock(List<SpecialistNote> notes) {
+        return notes.isEmpty()
+                ? "(No specialists were consulted.)"
+                : notes.stream().map(note -> "### " + note.persona().getName() + "\n" + note.content())
+                        .collect(Collectors.joining("\n\n"));
+    }
+
+    /**
+     * Runs the write-capable executor: the specialist notes + synthesis are the brief; every
+     * write/delete/rename still goes through ToolLoopRunner's ActionApprover gate and captures
+     * a checkpoint. Returns the executor's own summary of what it did.
+     */
+    private String runExecutor(LlmClient client, Persona orchestrator, String model, int maxTokens,
+                                String userContent, List<SpecialistNote> notes, String plan, String workspacePath,
+                                String workspaceTree, String conversationId, String messageId,
+                                CancellationToken token, ChatService.Listener listener) {
+        List<String> systemLines = new ArrayList<>(List.of(
+                orchestrator.getSystemPrompt(), "",
+                "You are now APPLYING the agreed changes to the bound workspace folder: " + workspacePath,
+                "Tools: list_dir, read_file, search_file (read); write_file, delete_file, rename_file"
+                        + (isGitRepo(workspacePath) ? ", and git_add / git_commit" : "") + " (write).",
+                "Every write is shown to the user for approval first - if a result says the user declined, "
+                        + "stop that edit and don't retry it.",
+                "Make only the changes the plan calls for; keep them minimal and on-topic. "
+                        + "If nothing actually needs changing, say so and make no edits.",
+                "When finished, give a short bullet summary of what you changed."));
+        if (workspaceTree != null) {
+            systemLines.addAll(List.of("Workspace tree:", workspaceTree));
+        }
+        List<ChatRequestMessage> messages = new ArrayList<>(List.of(
+                ChatRequestMessage.system(String.join("\n", systemLines)),
+                ChatRequestMessage.user("Original request:\n" + userContent
+                        + "\n\nSpecialist notes:\n" + notesBlock(notes)
+                        + "\n\nAgreed plan / synthesis:\n" + plan)));
+
+        return toolLoop.run(client, model, null, maxTokens, messages, workspacePath, conversationId, token,
+                (op, path, status, detail, checkpointId) ->
+                        listener.onWorkspaceOp(conversationId, messageId, op, path, status, detail, checkpointId));
     }
 
     public void cancel(String conversationId) {

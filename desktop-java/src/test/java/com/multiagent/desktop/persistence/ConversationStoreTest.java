@@ -116,6 +116,21 @@ class ConversationStoreTest {
     }
 
     @Test
+    void setConversationOrchestratorApplyRoundTripsAndClears() {
+        Conversation a = store.createConversation();
+        Conversation b = store.createConversation();
+
+        store.setConversationOrchestratorApply(a.getId(), "1");
+        assertEquals("1", store.getConversation(a.getId()).getOrchestratorApply());
+        assertTrue(store.getConversation(a.getId()).isOrchestratorApply());
+        assertFalse(store.getConversation(b.getId()).isOrchestratorApply());
+
+        store.setConversationOrchestratorApply(a.getId(), null);
+        assertNull(store.getConversation(a.getId()).getOrchestratorApply());
+        assertFalse(store.getConversation(a.getId()).isOrchestratorApply());
+    }
+
+    @Test
     void setConversationPersonaPersistsIndependentlyPerConversation() {
         Conversation a = store.createConversation();
         Conversation b = store.createConversation();

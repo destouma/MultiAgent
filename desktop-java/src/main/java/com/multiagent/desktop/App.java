@@ -59,8 +59,10 @@ public class App extends Application {
 
         // Installed after the Stage is showing, since the approver parents its confirmation
         // dialog on it - real usage always has this; a null approver (the default) only
-        // ever applies to tests that construct ChatService directly with no UI at all.
-        chatService.setActionApprover(new DialogActionApprover(stage));
+        // ever applies to tests that construct the services directly with no UI at all.
+        DialogActionApprover approver = new DialogActionApprover(stage);
+        chatService.setActionApprover(approver);
+        orchestratorService.setActionApprover(approver); // for the executor phase
     }
 
     /** Same {@code %APPDATA%/MultiAgentJava} (or {@code ~/.config} fallback) folder ConfigService uses for config.json. */

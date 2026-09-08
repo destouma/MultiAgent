@@ -104,7 +104,7 @@ flowchart TB
 
 - **UI (`ui/`, `ui/components/`)** — plain-Java JavaFX construction (no FXML), reacting to `ChatViewModel`'s `ObservableList`/`Property` fields. `MainWindow` owns the sidebar (folder-grouped `TreeView`, bound to the primary view model only) and the global topbar (Search/Refresh/Settings/Close-split); `ChatPaneView` is the per-pane topbar+thread+composer, instantiated twice for split view.
 - **ViewModel (`ui/viewmodel/ChatViewModel`)** — the MVVM layer and the seam that gives each conversation its own isolated state. Holds a `ConversationSession` per conversation id (streaming buffer, workspace-op list, error, orchestrator status) so switching the active conversation never carries over another one's in-flight state, and a `resolveModelFor`/`resolveServerFor`/`resolvePersonaFor` trio that reads each of those off the `Conversation` row itself rather than a single shared field — this is what makes model/server/persona genuinely per-chat (see [§10](#10-differences-from-the-electron-client) for why persona differs from the Electron app here). Background work runs on a per-instance executor and marshals results back via `Platform.runLater`.
-- **Services (`service/`)** — `ChatService` (plain chat + delegates to `ToolLoopRunner` when a workspace is bound), `OrchestratorService` (plan → specialists → synthesize, with its own smaller read-only tool executor), `ToolLoopRunner` (the shared native-tool-calling/XML-tag/JSON-tool-call agent loop, factored out so `ChatService` and future callers don't duplicate it), `CheckpointService` (diff/revert), `PersonaRegistry`, `ConfigService`, `DebugLog` (opt-in raw HTTP capture — see [§6](#raw-api-debug-log)).
+- **Services (`service/`)** — `ChatService` (plain chat + delegates to `ToolLoopRunner` when a workspace is bound), `OrchestratorService` (plan → specialists → synthesize, with its own smaller read-only tool executor for specialists, and an opt-in write-capable executor phase that reuses `ToolLoopRunner`), `ToolLoopRunner` (the shared native-tool-calling/XML-tag/JSON-tool-call agent loop, factored out so `ChatService` and future callers don't duplicate it), `CheckpointService` (diff/revert), `PersonaRegistry`, `ConfigService`, `DebugLog` (opt-in raw HTTP capture — see [§6](#raw-api-debug-log)).
 - **Persistence (`persistence/`)** — `ConversationStore` over `sqlite-jdbc`, `Migrations` (additive, `PRAGMA table_info`-guarded).
 - **Workspace (`workspace/`)** — `WorkspaceService` (sandboxed list/read/write/delete/rename + tree-building), `ActionTagParser` and `JsonToolCallParser` (two independent fallbacks for models without reliable native tool-calling — see [§6](#6-features-in-detail)).
 - **Action approval (`action/`, `ui/components/DialogActionApprover`)** — a small, deliberately generic interface (`ActionApprover.approve(PendingAction)`) sitting between the tool loop and execution, so any future mutating action type (not just files) can gate on the same "describe → ask → execute" pipeline without new plumbing.
@@ -161,7 +161,7 @@ MultiAgent/
       service/
         ChatService.java              # plain chat + workspace delegation
         ToolLoopRunner.java           # shared tool-calling agent loop
-        OrchestratorService.java      # plan -> specialists -> synthesize
+        OrchestratorService.java      # plan -> specialists -> synthesize -> (opt-in) executor
         CheckpointService.java        # diff/revert
         PersonaRegistry.java  ConfigService.java  ExportFormat.java  PlanParser.java
         DebugLog.java                 # opt-in raw LLM HTTP capture (in-memory ring + api-debug.log)
@@ -183,7 +183,7 @@ MultiAgent/
           SearchDialog.java  SplitPickerDialog.java  DiffDialog.java
           DialogActionApprover.java    # the "ask before writing/deleting/renaming" dialog
           DebugLogWindow.java          # non-modal viewer for DebugLog (list + raw request/response)
-          SpecialistModelsDialog.java  # orchestrator: model per specialist for this chat
+          SpecialistModelsDialog.java  # orchestrator: model per specialist + executor-phase opt-in
     src/main/resources/com/multiagent/desktop/ui/
       styles.css  theme-dark.css  theme-terminal.css
     src/test/java/com/multiagent/desktop/...   # JUnit 5, one test class per main class above
@@ -217,7 +217,7 @@ Path: `%APPDATA%/MultiAgentJava/config.json` (its own folder — deliberately se
 
 ### Conversations / messages (SQLite via sqlite-jdbc)
 
-- `conversations(id, title, createdAt, updatedAt, workspacePath, kind, model, serverId, personaId, visionModel, specialistModels)` — `personaId`, `visionModel` and `specialistModels` (orchestrator per-specialist model overrides, JSON) are Java-client-only additions (see [§10](#10-differences-from-the-electron-client)); everything else matches the Electron schema field-for-field.
+- `conversations(id, title, createdAt, updatedAt, workspacePath, kind, model, serverId, personaId, visionModel, specialistModels, orchestratorApply)` — `personaId`, `visionModel`, `specialistModels` (orchestrator per-specialist model overrides, JSON) and `orchestratorApply` (`"1"` ⇒ run the write-capable executor phase) are Java-client-only additions (see [§10](#10-differences-from-the-electron-client)); everything else matches the Electron schema field-for-field.
 - `messages(id, conversationId, role, content, personaId, createdAt)`, indexed on `(conversationId, createdAt)`.
 - `folders(path, addedAt)`.
 - `file_checkpoints(id, conversationId, relativePath, previousContent, previousExisted, createdAt)` — one row per successful `write_file`/`delete_file`, capturing pre-op content (`previousContent: null` + `previousExisted: false` means the op created the file).
@@ -236,7 +236,7 @@ There's no IPC layer in this client — `ChatViewModel` calls services directly,
 | --- | --- | --- |
 | `ChatService.send(client, conversation, content, persona, model, maxHistory, listener)` | async, callback-based | Runs one chat turn (plain or workspace tool loop) on a background thread |
 | `ChatService.Listener` | interface | `onToken` / `onDone` / `onError` / `onWorkspaceOp` / `onStep` / `onMessagesUpdated` — the callback contract both `ChatService` and `OrchestratorService` report through |
-| `OrchestratorService.send(...)` | async, callback-based | Same `Listener` contract, drives the plan → specialists → synthesize sequence |
+| `OrchestratorService.send(...)` | async, callback-based | Same `Listener` contract, drives the plan → specialists → synthesize sequence, plus the opt-in write-capable executor phase (`boolean apply`) |
 | `ChatService.cancel(conversationId)` / `OrchestratorService.cancel(conversationId)` | sync | Cancels that conversation's in-flight `CancellationToken` — per-conversation, not global |
 | `ChatService.setActionApprover(approver)` | sync | Installs the write/delete/rename confirmation gate |
 | `CheckpointService.diff(checkpointId)` / `.revert(checkpointId)` | sync | Backing calls for the chat thread's View diff / Revert buttons |
@@ -288,12 +288,13 @@ Every successful `write_file`/`delete_file` captures a checkpoint (`ToolLoopRunn
 
 ### Orchestrator sessions
 
-**+ Orchestrator** creates a `kind: ORCHESTRATOR` conversation. Each user message runs: **Plan** (orchestrator persona picks 1-3 specialists via a small JSON-only completion, parsed by `PlanParser`) → **Specialists** (each runs in turn, with read-only `list_dir`/`read_file`/`search_file` tools plus read-only `git_*` when a workspace is bound — never write/delete/rename or `git_add`/`git_commit` — persisted as its own message as it completes) → **Synthesize** (final streamed answer from the specialist notes). Progress surfaces via `onStep` events into `orchestratorStatusProperty()`.
+**+ Orchestrator** creates a `kind: ORCHESTRATOR` conversation. Each user message runs: **Plan** (orchestrator persona picks 1-3 specialists via a small JSON-only completion, parsed by `PlanParser`) → **Specialists** (each runs in turn, with read-only `list_dir`/`read_file`/`search_file` tools plus read-only `git_*` when a workspace is bound — never write/delete/rename or `git_add`/`git_commit` — persisted as its own message as it completes) → **Synthesize** (final streamed answer from the specialist notes) → optionally **Execute** (see below). Progress surfaces via `onStep` events into `orchestratorStatusProperty()`.
 
 - **Coordinator** — the persona that runs the plan + synthesis. For an orchestrator chat the pane topbar relabels the **Persona** box to **Coordinator** (and hides **Vision** — specialists don't do vision); it pins `Conversation.personaId`, which `OrchestratorService` resolves as coordinator → falls back to the `orchestrator` persona, then `general`.
 - **Roster** — any loaded persona except `orchestrator` (`OrchestratorService.availableSpecialistIds()`), so dropping in `personas/security.json` just extends it; the planner is told each candidate's name and resolved model.
 - **Per-specialist model** — resolved `Conversation.specialistModels[id]` (the **Specialists…** dialog, per orchestrator chat) → `persona.defaultModel` → the conversation's model. The step line shows which model a specialist is on.
 - **Context fit** — `priorContext` is trimmed to the server's context-window budget (like `ChatService`), and every specialist / plan / synthesis call carries `max_tokens` = the reply reserve.
+- **Executor phase** — off by default; ticking *"Let the coordinator apply changes to the workspace"* in the **Specialists…** dialog sets `Conversation.orchestratorApply` (`"1"`/null). When on **and** a workspace is bound, a final **Execute** step runs the synthesis + specialist notes as the brief through the shared `ToolLoopRunner` on the coordinator's model — the full `write_file`/`delete_file`/`rename_file` (+ `git_add`/`git_commit` in a repo) tool set, each write still gated by the same `ActionApprover` dialog and captured as a checkpoint (`App.java` installs one `DialogActionApprover` on both `ChatService` and `OrchestratorService`). The executor's summary is appended to the synthesis as an **Applied changes** section. No workspace, or the box unticked ⇒ the step is skipped entirely.
 
 ### Message search & export
 
@@ -443,8 +444,9 @@ Or in IntelliJ: open `desktop-java/pom.xml` as a project, then run the `MultiAge
 ### Orchestrator
 
 1. Click **+ Orchestrator**.
-2. (Optional) **Coordinator** box — which persona runs the plan + synthesis (default: the Orchestrator persona). **Specialists…** — set a model per specialist for this chat (blank = the persona's / conversation's model). Add a `personas/*.json` to extend the roster.
+2. (Optional) **Coordinator** box — which persona runs the plan + synthesis (default: the Orchestrator persona). **Specialists…** — set a model per specialist for this chat (blank = the persona's / conversation's model), and (workspace chats only) tick **"Let the coordinator apply changes to the workspace"** to add the write-capable **Execute** step after synthesis. Add a `personas/*.json` to extend the roster.
 3. Ask a question. Watch the status banner while specialists run (each line shows the specialist's model); each reply appears in the thread as it completes, followed by the final synthesis.
+4. With the executor enabled, an **Applying changes…** step follows: each file write pops the same approval dialog as a workspace chat (decline and the executor moves on), and the answer ends with an **Applied changes** summary plus the usual **View diff** / **Revert** rows.
 
 ### Side by side
 

@@ -80,19 +80,20 @@ public class SpecialistModelsDialog extends Dialog<SpecialistModelsDialog.Orches
             row++;
         }
 
-        CheckBox applyBox = new CheckBox("Let the coordinator apply changes to the workspace"
+        CheckBox applyBox = new CheckBox("Apply changes to the workspace after synthesizing"
                 + " (each write still asks for approval)");
         applyBox.setSelected(applyEnabled && hasWorkspace(workspacePath));
+        Label applyHint = new Label(hasWorkspace(workspacePath)
+                ? "On by default once a folder is bound. Untick to make this a planning-only chat."
+                : "Bind a workspace folder to this chat to let it apply changes.");
+        applyHint.setStyle("-fx-text-fill: gray;");
+        applyHint.setWrapText(true);
         if (!hasWorkspace(workspacePath)) {
             applyBox.setSelected(false);
             applyBox.setDisable(true);
-            Label hint = new Label("Bind a workspace folder to this chat to enable applying changes.");
-            hint.setStyle("-fx-text-fill: gray;");
-            grid.add(applyBox, 0, row++, 2, 1);
-            grid.add(hint, 0, row++, 2, 1);
-        } else {
-            grid.add(applyBox, 0, row++, 2, 1);
         }
+        grid.add(applyBox, 0, row++, 2, 1);
+        grid.add(applyHint, 0, row++, 2, 1);
 
         getDialogPane().setContent(grid);
         getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);

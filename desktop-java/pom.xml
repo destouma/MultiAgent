@@ -6,11 +6,11 @@
 
   <groupId>com.multiagent</groupId>
   <artifactId>desktop-java</artifactId>
-  <version>0.1.0</version>
+  <version>1.3.0</version>
   <packaging>jar</packaging>
 
   <name>MultiAgent Desktop (Java)</name>
-  <description>Java/JavaFX desktop client for MultiAgent - a parallel client to desktop/ (Electron)</description>
+  <description>Java/JavaFX desktop client for MultiAgent - the actively developed client, desktop/ (Electron) is deprecated</description>
 
   <properties>
     <maven.compiler.release>21</maven.compiler.release>
@@ -21,20 +21,72 @@
          release-verify SBOM scan (GHSA-r7wm-3cxj-wff9, GHSA-rmj7-2vxq-3g9f,
          GHSA-j3rv-43j4-c7qm and the related medium ones); patch-only bump within 2.18.x. -->
     <jackson.version>2.18.9</jackson.version>
+    <!-- mvn javafx:run sets up the module path itself, so it launches App directly. A
+         packaged (jpackage) run is a plain classpath app and needs Launcher instead - see
+         Launcher.java's javadoc. -->
     <main.class>com.multiagent.desktop.App</main.class>
+    <packaged.main.class>com.multiagent.desktop.Launcher</packaged.main.class>
+    <!-- OpenJFX native-bearing classifier. Defaults to Windows; the os-activated
+         profiles below switch it to mac / mac-aarch64 / linux, and
+         `-Djavafx.classifier=…` overrides everything. -->
+    <javafx.classifier>win</javafx.classifier>
   </properties>
 
   <dependencies>
-    <!-- JavaFX -->
+    <!-- JavaFX. The ${javafx.classifier} is set explicitly on all four modules (base/graphics
+         included, not just the two this app imports directly - Maven doesn't reliably
+         propagate a classifier through transitive resolution). It defaults to "win" and is
+         switched to mac / mac-aarch64 / linux by the os-activated <profiles> at the bottom of
+         this POM (so `mvn package` picks the right native jars on each CI runner). The
+         classifier-less artifact has no native graphics/glass libraries at all, so
+         mvn javafx:run's dev loop happens to work only because the javafx-maven-plugin
+         resolves the platform-specific jars itself, separately from these plain
+         <dependencies>; jpackage's own "input directory" option needs the real
+         native-bearing jars sitting right here to package correctly. Each -win module's own
+         POM declares its next-lower module WITHOUT a classifier (a known OpenJFX/Maven
+         quirk), so each level here excludes that classifier-less transitive copy - without
+         it, both variants of the same module land in target/jpackage-input/ side by side. -->
+    <dependency>
+      <groupId>org.openjfx</groupId>
+      <artifactId>javafx-base</artifactId>
+      <version>${javafx.version}</version>
+      <classifier>${javafx.classifier}</classifier>
+    </dependency>
+    <dependency>
+      <groupId>org.openjfx</groupId>
+      <artifactId>javafx-graphics</artifactId>
+      <version>${javafx.version}</version>
+      <classifier>${javafx.classifier}</classifier>
+      <exclusions>
+        <exclusion>
+          <groupId>org.openjfx</groupId>
+          <artifactId>javafx-base</artifactId>
+        </exclusion>
+      </exclusions>
+    </dependency>
     <dependency>
       <groupId>org.openjfx</groupId>
       <artifactId>javafx-controls</artifactId>
       <version>${javafx.version}</version>
+      <classifier>${javafx.classifier}</classifier>
+      <exclusions>
+        <exclusion>
+          <groupId>org.openjfx</groupId>
+          <artifactId>javafx-graphics</artifactId>
+        </exclusion>
+      </exclusions>
     </dependency>
     <dependency>
       <groupId>org.openjfx</groupId>
       <artifactId>javafx-fxml</artifactId>
       <version>${javafx.version}</version>
+      <classifier>${javafx.classifier}</classifier>
+      <exclusions>
+        <exclusion>
+          <groupId>org.openjfx</groupId>
+          <artifactId>javafx-controls</artifactId>
+        </exclusion>
+      </exclusions>
     </dependency>
 
     <!-- Persistence -->
@@ -108,6 +160,72 @@
         <version>3.5.2</version>
       </plugin>
 
+      <!-- Packaging (mvn package): assembles target/jpackage-input/ - this app's own jar
+           plus every runtime dependency jar (including the win-classified JavaFX natives)
+           flat in one directory, which is exactly the shape jpackage's non-modular
+           "input directory" mode expects: it wires up the full classpath from whatever jars it finds there,
+           no fat-jar/shading and no module-info.java needed. -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-jar-plugin</artifactId>
+        <version>3.4.1</version>
+        <configuration>
+          <outputDirectory>${project.build.directory}/jpackage-input</outputDirectory>
+          <archive>
+            <manifest>
+              <mainClass>${packaged.main.class}</mainClass>
+            </manifest>
+          </archive>
+        </configuration>
+      </plugin>
+
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-dependency-plugin</artifactId>
+        <version>3.8.1</version>
+        <executions>
+          <execution>
+            <id>copy-runtime-deps-for-jpackage</id>
+            <phase>package</phase>
+            <goals>
+              <goal>copy-dependencies</goal>
+            </goals>
+            <configuration>
+              <outputDirectory>${project.build.directory}/jpackage-input</outputDirectory>
+              <includeScope>runtime</includeScope>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+
+      <!-- PersonaRegistry resolves personas/ next to the jar's own on-disk location for a
+           packaged (non-dev) run - not classpath resources inside the jar, which the
+           <resources> block above already bundles there but which a packaged app never
+           actually reads - so a real personas/ directory needs to sit as a sibling of the
+           jar in jpackage-input/ too. -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-resources-plugin</artifactId>
+        <version>3.3.1</version>
+        <executions>
+          <execution>
+            <id>copy-personas-for-jpackage</id>
+            <phase>package</phase>
+            <goals>
+              <goal>copy-resources</goal>
+            </goals>
+            <configuration>
+              <outputDirectory>${project.build.directory}/jpackage-input/personas</outputDirectory>
+              <resources>
+                <resource>
+                  <directory>${project.basedir}/../personas</directory>
+                </resource>
+              </resources>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+
       <!-- `mvn javafx:run` dev loop -->
       <plugin>
         <groupId>org.openjfx</groupId>
@@ -128,4 +246,32 @@
       </plugin>
     </plugins>
   </build>
+
+  <!-- Selects the OpenJFX native classifier for the build host, so `mvn package` on a CI
+       runner assembles target/jpackage-input/ with the jars that OS's jpackage needs. Only
+       the property changes; the jpackage invocation itself stays a per-OS shell step (see
+       .github/workflows/desktop-java.yml and ARCHITECTURE.md §8). Override with
+       `-Djavafx.classifier=…` on the command line. -->
+  <profiles>
+    <profile>
+      <id>jfx-windows</id>
+      <activation><os><family>windows</family></os></activation>
+      <properties><javafx.classifier>win</javafx.classifier></properties>
+    </profile>
+    <profile>
+      <id>jfx-linux</id>
+      <activation><os><name>linux</name></os></activation>
+      <properties><javafx.classifier>linux</javafx.classifier></properties>
+    </profile>
+    <profile>
+      <id>jfx-mac-intel</id>
+      <activation><os><family>mac</family><arch>x86_64</arch></os></activation>
+      <properties><javafx.classifier>mac</javafx.classifier></properties>
+    </profile>
+    <profile>
+      <id>jfx-mac-arm</id>
+      <activation><os><family>mac</family><arch>aarch64</arch></os></activation>
+      <properties><javafx.classifier>mac-aarch64</javafx.classifier></properties>
+    </profile>
+  </profiles>
 </project>

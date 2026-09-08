@@ -1,0 +1,117 @@
+name: desktop-java
+
+on:
+  push:
+    branches: [master, dev]
+    tags: ['v*']
+  pull_request:
+    paths: ['desktop-java/**', '.github/workflows/desktop-java.yml']
+  workflow_dispatch:
+
+defaults:
+  run:
+    working-directory: desktop-java
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - name: mvn verify
+        run: mvn -B --no-transfer-progress verify
+
+  installers:
+    name: ${{ matrix.name }}
+    needs: test
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      || startsWith(github.ref, 'refs/tags/v')
+      || (github.event_name == 'push' && github.ref == 'refs/heads/master')
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: windows,       runner: windows-latest, jptype: exe }
+          - { name: linux-deb,     runner: ubuntu-latest,   jptype: deb }
+          - { name: macos-x86_64,  runner: macos-13,        jptype: dmg }
+          - { name: macos-aarch64, runner: macos-14,        jptype: dmg }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # JDK 24: its jpackage supports WiX v4/v5 for the Windows exe (JDK 21's needs the
+      # deprecated WiX 3.x). Bytecode target is still 21 via maven.compiler.release.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '24'
+          cache: maven
+
+      - name: Windows - WiX v5
+        if: runner.os == 'Windows'
+        working-directory: .
+        run: |
+          dotnet tool install --global wix --version 5.0.2
+          echo "$HOME\.dotnet\tools" >> $env:GITHUB_PATH
+
+      - name: Windows - WiX extensions
+        if: runner.os == 'Windows'
+        working-directory: .
+        run: |
+          wix extension add -g WixToolset.UI.wixext/5.0.2
+          wix extension add -g WixToolset.Util.wixext/5.0.2
+
+      - name: Linux - deb tooling
+        if: runner.os == 'Linux'
+        working-directory: .
+        run: sudo apt-get update && sudo apt-get install -y fakeroot binutils
+
+      # The os-activated <profiles> in pom.xml pick the right OpenJFX native classifier
+      # (win / linux / mac / mac-aarch64) for this runner, so jpackage-input/ gets the
+      # jars this OS's jpackage needs.
+      - name: mvn package
+        run: mvn -B --no-transfer-progress -DskipTests clean package
+
+      - name: Build installer (jpackage)
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION=$(mvn -q -DforceStdout help:evaluate -Dexpression=project.version)
+          ICONS="$GITHUB_WORKSPACE/desktop/build"
+          COMMON=(
+            --name MultiAgent --app-version "$VERSION" --vendor MultiAgent
+            --input target/jpackage-input --main-jar multiagent-desktop.jar
+            --main-class com.multiagent.desktop.Launcher
+            --dest target/dist
+            --java-options --enable-native-access=ALL-UNNAMED
+            --description "Multi-agent chat over a local LLM server" --copyright MultiAgent
+          )
+          case "${{ runner.os }}" in
+            Windows)
+              jpackage --type ${{ matrix.jptype }} "${COMMON[@]}" \
+                --icon "$ICONS/icon.ico" \
+                --win-menu --win-shortcut --win-dir-chooser ;;
+            Linux)
+              jpackage --type ${{ matrix.jptype }} "${COMMON[@]}" \
+                --icon "$ICONS/icon.png" \
+                --linux-shortcut --linux-menu-group Development ;;
+            macOS)
+              sips -s format icns "$ICONS/icon.png" --out "$RUNNER_TEMP/icon.icns"
+              # Unsigned: fine as a CI artifact; Gatekeeper will warn on other machines.
+              jpackage --type ${{ matrix.jptype }} "${COMMON[@]}" \
+                --icon "$RUNNER_TEMP/icon.icns" \
+                --mac-package-identifier com.multiagent.desktop --mac-package-name MultiAgent ;;
+          esac
+          ls -la target/dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: multiagent-${{ matrix.name }}
+          path: desktop-java/target/dist/*
+          retention-days: 30
+          if-no-files-found: error

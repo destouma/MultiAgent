@@ -49,8 +49,20 @@
     -fx-border-width: 1 0 0 0;
 }
 
+.composer-drag-over {
+    -fx-border-color: #14b8a6;
+    -fx-border-width: 2;
+}
+
 .error-banner {
     -fx-text-fill: #f87171;
+    -fx-wrap-text: true;
+    -fx-background-color: #402626;
+    -fx-border-color: #7f1d1d;
+    -fx-border-width: 1;
+    -fx-border-radius: 6;
+    -fx-background-radius: 6;
+    -fx-padding: 6 10 6 10;
 }
 
 .bubble-user {
@@ -58,7 +70,7 @@
     -fx-background-radius: 10;
 }
 
-.bubble-user .text {
+.bubble-user .bubble-text {
     -fx-fill: #0b1120;
 }
 
@@ -66,7 +78,7 @@
     -fx-background-color: #3a3b3e;
 }
 
-.bubble-assistant .text {
+.bubble-assistant .bubble-text {
     -fx-fill: #e3e3e3;
 }
 
@@ -77,7 +89,36 @@
 
 .code-block {
     -fx-font-family: "Consolas", "Menlo", monospace;
-    -fx-fill: #e3e3e3;
+    -fx-fill: #e6edf3;
+}
+
+/* Noticeably darker than the surrounding chat bg (#1e1f22) and bubble (#3a3b3e), with a
+   brighter border, so the code box actually pops instead of blending into a UI that's
+   already dark everywhere - a plain "VS Code dark" card here would read as low-contrast. */
+.code-box {
+    -fx-background-color: #141517;
+    -fx-background-radius: 6;
+    -fx-border-color: #4b5563;
+    -fx-border-radius: 6;
+    -fx-border-width: 1;
+}
+
+.code-box-header {
+    -fx-background-color: #0d0e10;
+    -fx-background-radius: 6 6 0 0;
+    -fx-border-color: #4b5563;
+    -fx-border-width: 0 0 1 0;
+    -fx-padding: 4 10 4 10;
+}
+
+.code-box-lang {
+    -fx-text-fill: #c9d1d9;
+    -fx-font-size: 11px;
+    -fx-font-family: "Consolas", "Menlo", monospace;
+}
+
+.code-box-body {
+    -fx-padding: 10;
 }
 
 .workspace-op-running {

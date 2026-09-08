@@ -33,13 +33,16 @@ import java.util.Objects;
  */
 public class ChatPaneView extends BorderPane {
     private final ChatViewModel viewModel;
+    /** True while syncPersonaItems is rewriting the persona box - suppresses the value listener so a programmatic reselect can't loop back into setPersona -> activeConversation.set -> resync. */
+    private boolean syncingPersonaBox;
 
     public ChatPaneView(ChatViewModel viewModel) {
         this.viewModel = viewModel;
         getStyleClass().add("chat-panel");
         setTop(buildConversationTopBar());
         setCenter(buildCenterColumn());
-        setBottom(new Composer(viewModel));
+        VBox bottom = new VBox(new ContextUsageBar(viewModel), new Composer(viewModel));
+        setBottom(bottom);
     }
 
     private javafx.scene.Node buildCenterColumn() {
@@ -64,17 +67,17 @@ public class ChatPaneView extends BorderPane {
      * servers/models at once.
      */
     private javafx.scene.Node buildConversationTopBar() {
-        ComboBox<Persona> personaBox = new ComboBox<>(viewModel.personas());
+        // Own item list, not viewModel.personas() directly, so it can be filtered by kind
+        // (the "orchestrator" persona is only meaningful as an orchestrator chat's coordinator).
+        ComboBox<Persona> personaBox = new ComboBox<>();
         personaBox.setPromptText("Persona");
         personaBox.valueProperty().addListener((obs, old, val) -> {
-            if (val != null) {
+            if (val != null && !syncingPersonaBox) {
                 viewModel.setPersona(val);
             }
         });
         viewModel.activePersonaProperty().addListener((obs, old, val) -> personaBox.setValue(val));
-        if (viewModel.activePersonaProperty().get() != null) {
-            personaBox.setValue(viewModel.activePersonaProperty().get());
-        }
+        viewModel.personas().addListener((ListChangeListener<Persona>) c -> syncPersonaItems(personaBox, isOrchestrator(viewModel)));
 
         ComboBox<ServerProfile> serverBox = new ComboBox<>();
         serverBox.setPromptText("Server");
@@ -123,7 +126,10 @@ public class ChatPaneView extends BorderPane {
 
         ComboBox<String> modelBox = new ComboBox<>();
         modelBox.setPromptText("Model");
-        modelBox.setEditable(true);
+        // Non-editable: the model id must be one the server actually reported. An editable
+        // box let stray keystrokes prepend to the id (e.g. "analyse this file" + a real id),
+        // which the server then 404s as model_not_found.
+        modelBox.setEditable(false);
         syncModelItems(modelBox, viewModel.models());
         viewModel.models().addListener((ListChangeListener<ModelInfo>) c -> syncModelItems(modelBox, viewModel.models()));
         modelBox.valueProperty().addListener((obs, old, val) -> {
@@ -140,18 +146,125 @@ public class ChatPaneView extends BorderPane {
             modelBox.setValue(viewModel.activeModelProperty().get());
         }
 
+        // Vision model for this chat. "" = the server profile's default (or off). A real id
+        // pins this conversation to it - and when it equals Model, images go inline.
+        ComboBox<String> visionBox = new ComboBox<>();
+        visionBox.setEditable(false);
+        Callback<ListView<String>, ListCell<String>> visionCells = lv -> new ListCell<>() {
+            @Override
+            protected void updateItem(String item, boolean empty) {
+                super.updateItem(item, empty);
+                setText(empty ? null : (item == null || item.isEmpty() ? "(server default)" : item));
+            }
+        };
+        visionBox.setCellFactory(visionCells);
+        visionBox.setButtonCell(visionCells.call(null));
+        syncVisionItems(visionBox, viewModel.models());
+        viewModel.models().addListener((ListChangeListener<ModelInfo>) c -> syncVisionItems(visionBox, viewModel.models()));
+        visionBox.valueProperty().addListener((obs, old, val) -> {
+            if (val == null) {
+                return;
+            }
+            if (val.isEmpty()) {
+                viewModel.setVisionModel("");
+            } else if (!val.equals(viewModel.activeVisionModelProperty().get())) {
+                viewModel.setVisionModel(val);
+            }
+        });
+        viewModel.activeVisionModelProperty().addListener((obs, old, val) -> {
+            String show = val == null ? "" : val;
+            if (!show.equals(visionBox.getValue())) {
+                visionBox.setValue(show);
+            }
+        });
+        visionBox.setValue(viewModel.activeVisionModelProperty().get() == null
+                ? "" : viewModel.activeVisionModelProperty().get());
+
+        // Orchestrator only: pick a model per specialist for this chat.
+        javafx.scene.control.Button specialistsButton = new javafx.scene.control.Button("Specialists…");
+        specialistsButton.setOnAction(e -> {
+            com.multiagent.desktop.model.Conversation c = viewModel.activeConversationProperty().get();
+            if (c == null) {
+                return;
+            }
+            SpecialistModelsDialog dialog = new SpecialistModelsDialog(
+                    viewModel.availableSpecialistPersonas(),
+                    com.multiagent.desktop.service.SpecialistModels.parse(c.getSpecialistModels()),
+                    viewModel.models(), viewModel.activeModelProperty().get(),
+                    c.getWorkspacePath(), c.isOrchestratorApply());
+            if (specialistsButton.getScene() != null) {
+                dialog.initOwner(specialistsButton.getScene().getWindow());
+            }
+            dialog.showAndWait().ifPresent(cfg -> {
+                viewModel.setSpecialistModels(cfg.specialistModels());
+                viewModel.setOrchestratorApply(cfg.apply());
+            });
+        });
+        // "Vision" and "Persona" don't apply to an orchestrator chat (specialists don't do
+        // vision; the persona box picks the *coordinator* instead) - hide Vision, relabel
+        // Persona -> Coordinator, and show the Specialists button, all keyed off the kind.
+        Label personaCaption = new Label("Persona");
+        personaCaption.getStyleClass().add("topbar-field-label");
+        VBox personaColumn = new VBox(2, personaCaption, personaBox);
+        VBox visionColumn = labeledColumn("Vision", visionBox);
+        VBox specialistsColumn = labeledColumn(" ", specialistsButton); // blank caption keeps it aligned with the dropdowns
+
+        Runnable syncForKind = () -> {
+            boolean orchestrator = isOrchestrator(viewModel);
+            specialistsColumn.setVisible(orchestrator);
+            specialistsColumn.setManaged(orchestrator);
+            visionColumn.setVisible(!orchestrator);
+            visionColumn.setManaged(!orchestrator);
+            personaCaption.setText(orchestrator ? "Coordinator" : "Persona");
+            syncPersonaItems(personaBox, orchestrator);
+        };
+        viewModel.activeConversationProperty().addListener((obs, old, val) -> syncForKind.run());
+        syncForKind.run();
+
         Label statusDot = new Label("●");
         Label statusText = new Label("Checking...");
         viewModel.healthProperty().addListener((obs, old, val) -> updateHealthLabels(statusDot, statusText, val));
         updateHealthLabels(statusDot, statusText, viewModel.healthProperty().get());
 
         HBox bar = new HBox(10,
-                labeledColumn("Server", serverBox), labeledColumn("Model", modelBox), labeledColumn("Persona", personaBox),
-                statusDot, statusText);
+                labeledColumn("Server", serverBox), labeledColumn("Model", modelBox),
+                visionColumn, personaColumn, specialistsColumn, statusDot, statusText);
         bar.setAlignment(Pos.CENTER_LEFT);
         bar.setPadding(new Insets(8, 12, 8, 12));
         bar.getStyleClass().add("conversation-topbar");
         return bar;
+    }
+
+    private boolean isOrchestrator(ChatViewModel vm) {
+        com.multiagent.desktop.model.Conversation c = vm.activeConversationProperty().get();
+        return c != null && c.getKind() == com.multiagent.desktop.model.ConversationKind.ORCHESTRATOR;
+    }
+
+    /**
+     * Fills the persona box: every persona for an orchestrator chat (the box picks the
+     * coordinator, and "orchestrator" is the sensible default there); every persona *except*
+     * "orchestrator" for a normal chat, where that persona's "I coordinate specialists" prompt
+     * is just misleading. Preserves the current selection, falling back to the resolved one.
+     */
+    private void syncPersonaItems(ComboBox<Persona> personaBox, boolean orchestrator) {
+        Persona keep = personaBox.getValue() != null ? personaBox.getValue()
+                : viewModel.activePersonaProperty().get();
+        List<Persona> items = viewModel.personas().stream()
+                .filter(p -> orchestrator || !"orchestrator".equals(p.getId()))
+                .toList();
+        syncingPersonaBox = true;
+        try {
+            personaBox.getItems().setAll(items);
+            if (keep != null && items.contains(keep)) {
+                personaBox.setValue(keep);
+            } else if (!items.isEmpty()) {
+                // keep not selectable in this kind (e.g. a plain chat once pinned to "orchestrator"):
+                // show the first item; the real pin resolves when the user picks one.
+                personaBox.setValue(items.get(0));
+            }
+        } finally {
+            syncingPersonaBox = false;
+        }
     }
 
     /** A small caption above a dropdown, so the topbar reads as "Server / Model / Persona" instead of three unlabeled boxes. */
@@ -160,6 +273,15 @@ public class ChatPaneView extends BorderPane {
         caption.getStyleClass().add("topbar-field-label");
         VBox column = new VBox(2, caption, control);
         return column;
+    }
+
+    private void syncVisionItems(ComboBox<String> visionBox, List<ModelInfo> models) {
+        String current = visionBox.getValue();
+        List<String> items = new java.util.ArrayList<>();
+        items.add(""); // "(server default)"
+        models.forEach(m -> items.add(m.id()));
+        visionBox.getItems().setAll(items);
+        visionBox.setValue(current == null ? "" : current);
     }
 
     private void syncModelItems(ComboBox<String> modelBox, List<ModelInfo> models) {

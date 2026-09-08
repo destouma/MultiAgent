@@ -4,6 +4,7 @@ import com.multiagent.desktop.persistence.ConversationStore;
 import com.multiagent.desktop.service.CheckpointService;
 import com.multiagent.desktop.service.ChatService;
 import com.multiagent.desktop.service.ConfigService;
+import com.multiagent.desktop.service.DebugLog;
 import com.multiagent.desktop.service.OrchestratorService;
 import com.multiagent.desktop.service.PersonaRegistry;
 import com.multiagent.desktop.ui.MainWindow;
@@ -14,6 +15,8 @@ import javafx.application.Application;
 import javafx.scene.Scene;
 import javafx.stage.Stage;
 
+import java.nio.file.Path;
+
 /** JavaFX entry point - the Java equivalent of desktop/electron/main.ts's window bootstrap. */
 public class App extends Application {
     private ConversationStore store;
@@ -23,6 +26,8 @@ public class App extends Application {
     @Override
     public void start(Stage stage) {
         ConfigService configService = new ConfigService();
+        DebugLog.setLogFile(debugLogPath());
+        DebugLog.setEnabled(configService.getSettings().isDebugLogging());
         store = new ConversationStore();
         PersonaRegistry personaRegistry = new PersonaRegistry();
         ChatService chatService = new ChatService(store);
@@ -49,13 +54,24 @@ public class App extends Application {
         // so this can't happen until after the Scene is attached above.
         window.applyTheme(configService.getSettings().getTheme());
 
-        stage.setTitle("MultiAgent (Java)");
+        stage.setTitle("MultiAgent (Java) " + AppInfo.VERSION);
         stage.show();
 
         // Installed after the Stage is showing, since the approver parents its confirmation
         // dialog on it - real usage always has this; a null approver (the default) only
-        // ever applies to tests that construct ChatService directly with no UI at all.
-        chatService.setActionApprover(new DialogActionApprover(stage));
+        // ever applies to tests that construct the services directly with no UI at all.
+        DialogActionApprover approver = new DialogActionApprover(stage);
+        chatService.setActionApprover(approver);
+        orchestratorService.setActionApprover(approver); // for the executor phase
+    }
+
+    /** Same {@code %APPDATA%/MultiAgentJava} (or {@code ~/.config} fallback) folder ConfigService uses for config.json. */
+    private static Path debugLogPath() {
+        String appData = System.getenv("APPDATA");
+        Path base = appData != null
+                ? Path.of(appData)
+                : Path.of(System.getProperty("user.home"), ".config");
+        return base.resolve("MultiAgentJava").resolve("api-debug.log");
     }
 
     @Override

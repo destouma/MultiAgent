@@ -13,6 +13,7 @@ import com.multiagent.desktop.model.FolderEntry;
 import com.multiagent.desktop.model.HealthStatus;
 import com.multiagent.desktop.model.ModelInfo;
 import com.multiagent.desktop.model.Persona;
+import com.multiagent.desktop.model.ProjectEntry;
 import com.multiagent.desktop.model.SearchResult;
 import com.multiagent.desktop.model.ServerProfile;
 import com.multiagent.desktop.persistence.ConversationStore;
@@ -25,9 +26,11 @@ import com.multiagent.desktop.service.PersonaRegistry;
 
 import javafx.application.Platform;
 import javafx.beans.property.BooleanProperty;
+import javafx.beans.property.IntegerProperty;
 import javafx.beans.property.LongProperty;
 import javafx.beans.property.ObjectProperty;
 import javafx.beans.property.SimpleBooleanProperty;
+import javafx.beans.property.SimpleIntegerProperty;
 import javafx.beans.property.SimpleLongProperty;
 import javafx.beans.property.SimpleObjectProperty;
 import javafx.beans.property.SimpleStringProperty;
@@ -87,12 +90,16 @@ public class ChatViewModel {
     private final ObservableList<Persona> personas = FXCollections.observableArrayList();
     private final ObservableList<ModelInfo> models = FXCollections.observableArrayList();
     private final ObservableList<FolderEntry> folders = FXCollections.observableArrayList();
+    private final ObservableList<ProjectEntry> projects = FXCollections.observableArrayList();
     private final ObservableList<WorkspaceOpEntry> workspaceOps = FXCollections.observableArrayList();
 
     private final ObjectProperty<Conversation> activeConversation = new SimpleObjectProperty<>();
     private final ObjectProperty<Persona> activePersona = new SimpleObjectProperty<>();
     private final ObjectProperty<ServerProfile> activeServer = new SimpleObjectProperty<>();
     private final StringProperty activeModel = new SimpleStringProperty("");
+    private final StringProperty activeVisionModel = new SimpleStringProperty("");
+    /** Resolved context window for the active chat's server/model (0 = unknown). Drives request trimming + the usage bar. */
+    private final IntegerProperty activeContextTokens = new SimpleIntegerProperty(0);
     private final StringProperty streamingContent = new SimpleStringProperty("");
     private final BooleanProperty streaming = new SimpleBooleanProperty(false);
     private final StringProperty errorMessage = new SimpleStringProperty("");
@@ -121,7 +128,7 @@ public class ChatViewModel {
 
     public void bootstrap() {
         personas.setAll(personaRegistry.list());
-        refreshConversationsAndFolders();
+        refreshAll();
         if (!conversations.isEmpty()) {
             selectConversation(conversations.get(0));
         }
@@ -143,14 +150,15 @@ public class ChatViewModel {
         }
     }
 
-    private void refreshConversationsAndFolders() {
+    private void refreshAll() {
         conversations.setAll(store.listConversations());
         folders.setAll(store.listFolders());
+        projects.setAll(store.listProjects());
     }
 
     private void notifySiblings() {
         for (ChatViewModel sibling : siblings) {
-            sibling.refreshConversationsAndFolders();
+            sibling.refreshAll();
             Conversation siblingActive = sibling.activeConversation.get();
             if (siblingActive != null) {
                 Conversation refreshed = store.getConversation(siblingActive.getId());
@@ -180,6 +188,34 @@ public class ChatViewModel {
                 activeConversation.set(refreshed);
             }
         }
+        notifySiblings();
+    }
+
+    /** Assigns a folder to a project (or ungroups it, when projectId is null) - pure sidebar grouping, no effect on the folder's chats. */
+    public void assignFolderToProject(String folderPath, String projectId) {
+        store.setFolderProject(folderPath, projectId);
+        folders.setAll(store.listFolders());
+        notifySiblings();
+    }
+
+    /** Creates a new empty project - a name to group folders under, nothing more. */
+    public void addProject(String name) {
+        store.addProject(name);
+        projects.setAll(store.listProjects());
+        notifySiblings();
+    }
+
+    public void renameProject(ProjectEntry project, String newName) {
+        store.renameProject(project.id(), newName);
+        projects.setAll(store.listProjects());
+        notifySiblings();
+    }
+
+    /** Deletes the project - its folders are kept, just ungrouped (same "unbind, don't cascade" behavior as removeFolder()). */
+    public void removeProject(ProjectEntry project) {
+        store.removeProject(project.id());
+        projects.setAll(store.listProjects());
+        folders.setAll(store.listFolders());
         notifySiblings();
     }
 
@@ -232,6 +268,15 @@ public class ChatViewModel {
         return configService.getSettings().getModel();
     }
 
+    /** Per-chat vision model if set, else the resolved server profile's visionModel (blank ⇒ off). */
+    private String resolveVisionModelFor(Conversation conversation) {
+        if (conversation != null && conversation.getVisionModel() != null && !conversation.getVisionModel().isBlank()) {
+            return conversation.getVisionModel();
+        }
+        ServerProfile profile = resolveServerFor(conversation);
+        return profile == null ? "" : profile.getVisionModel();
+    }
+
     /** Resolves which persona a conversation uses: its own pin, or the first available persona ("general" by sort order). */
     private Persona resolvePersonaFor(Conversation conversation) {
         String personaId = conversation != null ? conversation.getPersonaId() : null;
@@ -239,6 +284,13 @@ public class ChatViewModel {
             Optional<Persona> pinned = personaRegistry.get(personaId);
             if (pinned.isPresent()) {
                 return pinned.get();
+            }
+        }
+        // An unpinned orchestrator chat defaults its "Coordinator" box to the orchestrator persona.
+        if (conversation != null && conversation.getKind() == ConversationKind.ORCHESTRATOR) {
+            Optional<Persona> orchestrator = personaRegistry.get("orchestrator");
+            if (orchestrator.isPresent()) {
+                return orchestrator.get();
             }
         }
         return !personas.isEmpty() ? personas.get(0) : null;
@@ -260,9 +312,40 @@ public class ChatViewModel {
         ServerProfile profile = resolveServerFor(conversation);
         activeServer.set(profile);
         activeModel.set(resolveModelFor(conversation));
+        activeVisionModel.set(resolveVisionModelFor(conversation));
         activePersona.set(resolvePersonaFor(conversation));
         refreshModels(profile);
         refreshHealth(profile);
+        refreshContextTokens(profile, conversation);
+    }
+
+    /**
+     * Resolve the server's context window for this conversation's model - the manual
+     * {@code ServerProfile.contextTokens} override if set, else asked from the server (a
+     * cheap /health for Lemonade). Cached into {@link #activeContextTokens}; 0 = unknown.
+     */
+    private void refreshContextTokens(ServerProfile profile, Conversation conversation) {
+        int override = profile.getContextTokens();
+        if (override > 0) {
+            activeContextTokens.set(override);
+            return;
+        }
+        String model = resolveModelFor(conversation);
+        LlmClient client = clientFor(profile);
+        runAsync(() -> {
+            int resolved;
+            try {
+                resolved = client.contextWindow(model).orElse(0);
+            } catch (RuntimeException e) {
+                resolved = 0;
+            }
+            int finalResolved = resolved;
+            Platform.runLater(() -> {
+                if (activeServer.get() == profile) {
+                    activeContextTokens.set(finalResolved);
+                }
+            });
+        });
     }
 
     public void refreshModels() {
@@ -353,6 +436,24 @@ public class ChatViewModel {
         notifySiblings();
     }
 
+    /**
+     * The one primitive both Edit and Regenerate reduce to (ChatThread.java): delete the
+     * given message and everything after it in the active conversation (rowid order, so
+     * same-millisecond messages can't tie - see ConversationStore.deleteMessagesFrom), then
+     * send newContent as a fresh turn through the normal sendMessage() path. Edit calls this
+     * with the user's edited text; Regenerate calls it with the last user message's own
+     * content unchanged - a fresh generation, not a branch/version history.
+     */
+    public boolean editAndResend(String messageId, String newContent) {
+        Conversation conversation = activeConversation.get();
+        if (conversation == null || newContent == null || newContent.isBlank()) {
+            return false;
+        }
+        store.deleteMessagesFrom(conversation.getId(), messageId);
+        refreshMessages(conversation.getId());
+        return sendMessage(newContent);
+    }
+
     public List<SearchResult> search(String term) {
         return store.search(term);
     }
@@ -400,6 +501,83 @@ public class ChatViewModel {
         notifySiblings();
     }
 
+    /** Orchestrator only: per-conversation specialist-model overrides (specialistId -> modelId). */
+    public void setSpecialistModels(java.util.Map<String, String> models) {
+        Conversation conversation = activeConversation.get();
+        if (conversation == null) {
+            return;
+        }
+        Conversation updated = store.setConversationSpecialistModels(conversation.getId(),
+                com.multiagent.desktop.service.SpecialistModels.write(models));
+        activeConversation.set(updated);
+        int index = conversations.indexOf(conversation);
+        if (index >= 0) {
+            conversations.set(index, updated);
+        }
+        notifySiblings();
+    }
+
+    /** Orchestrator only: opt in/out of the write-capable executor phase for this conversation. */
+    public void setOrchestratorApply(boolean on) {
+        Conversation conversation = activeConversation.get();
+        if (conversation == null) {
+            return;
+        }
+        Conversation updated = store.setConversationOrchestratorApply(conversation.getId(), on ? "1" : null);
+        activeConversation.set(updated);
+        int index = conversations.indexOf(conversation);
+        if (index >= 0) {
+            conversations.set(index, updated);
+        }
+        notifySiblings();
+    }
+
+    /** Every loaded persona except the orchestrator - the roster the planner can pick from. */
+    public java.util.List<Persona> availableSpecialistPersonas() {
+        return personaRegistry.list().stream()
+                .filter(p -> !"orchestrator".equals(p.getId()))
+                .toList();
+    }
+
+    // --- Persona editor (Settings) -------------------------------------------------------
+
+    /** True when this persona lives in the writable override dir - i.e. it may be edited or removed. */
+    public boolean isCustomPersona(String id) {
+        return personaRegistry.isUserPersona(id);
+    }
+
+    /** The writable persona directory, for a hint line in the editor. */
+    public java.nio.file.Path customPersonaDir() {
+        return personaRegistry.userPersonaDir();
+    }
+
+    /** Writes a user-defined persona to disk and republishes the roster to every pane. */
+    public void saveCustomPersona(Persona persona) {
+        personaRegistry.saveUserPersona(persona);
+        reloadPersonas();
+    }
+
+    /** Deletes a user-defined persona and republishes the roster. Returns whether a file was removed. */
+    public boolean deleteCustomPersona(String id) {
+        boolean removed = personaRegistry.deleteUserPersona(id);
+        reloadPersonas();
+        return removed;
+    }
+
+    /** Re-reads persona files and pushes the fresh roster into this pane and its siblings. */
+    public void reloadPersonas() {
+        personaRegistry.load();
+        applyReloadedPersonas();
+        for (ChatViewModel sibling : siblings) {
+            sibling.applyReloadedPersonas();
+        }
+    }
+
+    private void applyReloadedPersonas() {
+        personas.setAll(personaRegistry.list());
+        activePersona.set(resolvePersonaFor(activeConversation.get()));
+    }
+
     /** Pins the ACTIVE conversation (and only that one) to this model - other conversations are untouched. */
     public void setModel(String model) {
         Conversation conversation = activeConversation.get();
@@ -409,6 +587,24 @@ public class ChatViewModel {
         Conversation updated = store.setConversationModel(conversation.getId(), model);
         activeConversation.set(updated);
         activeModel.set(model);
+        int index = conversations.indexOf(conversation);
+        if (index >= 0) {
+            conversations.set(index, updated);
+        }
+        refreshContextTokens(resolveServerFor(updated), updated); // ctx window is per-model on Lemonade
+        notifySiblings();
+    }
+
+    /** Pins the ACTIVE conversation to this vision model (blank ⇒ fall back to the server's). */
+    public void setVisionModel(String visionModel) {
+        Conversation conversation = activeConversation.get();
+        if (conversation == null) {
+            return;
+        }
+        String value = visionModel == null || visionModel.isBlank() ? null : visionModel;
+        Conversation updated = store.setConversationVisionModel(conversation.getId(), value);
+        activeConversation.set(updated);
+        activeVisionModel.set(resolveVisionModelFor(updated));
         int index = conversations.indexOf(conversation);
         if (index >= 0) {
             conversations.set(index, updated);
@@ -438,9 +634,14 @@ public class ChatViewModel {
      * send never wipes what the user typed.
      */
     public boolean sendMessage(String text) {
-        if (text == null || text.isBlank()) {
+        return sendMessage(text, null);
+    }
+
+    public boolean sendMessage(String text, com.multiagent.desktop.model.ImageAttachment image) {
+        if ((text == null || text.isBlank()) && image == null) {
             return false;
         }
+        String messageText = text == null ? "" : text;
         if (activeConversation.get() == null) {
             newConversation();
         }
@@ -457,6 +658,17 @@ public class ChatViewModel {
         if (model == null || model.isBlank()) {
             sessionFor(conversation.getId()).errorMessage = "Select a model first.";
             errorMessage.set("Select a model first.");
+            return false;
+        }
+
+        // If we have a model list from this server, the target must be in it. Catches a
+        // stale conversation pin or a corrupted id before it becomes a doomed request that
+        // the server rejects with model_not_found.
+        if (!models.isEmpty() && models.stream().noneMatch(m -> m.id().equals(model))) {
+            String msg = "Model \"" + model + "\" isn't available on " + profile.getName()
+                    + ". Pick one from the Model dropdown.";
+            sessionFor(conversation.getId()).errorMessage = msg;
+            errorMessage.set(msg);
             return false;
         }
 
@@ -581,9 +793,13 @@ public class ChatViewModel {
         };
 
         if (conversation.getKind() == ConversationKind.ORCHESTRATOR) {
-            orchestratorService.send(client, conversation, text, model, profile.getMaxHistory(), listener);
+            orchestratorService.send(client, conversation, messageText, model, profile.getMaxHistory(),
+                    com.multiagent.desktop.service.SpecialistModels.parse(conversation.getSpecialistModels()),
+                    activeContextTokens.get(), conversation.isOrchestratorApply(), listener);
         } else {
-            chatService.send(client, conversation, text, persona, model, profile.getMaxHistory(), listener);
+            chatService.send(client, conversation, messageText, persona, model,
+                    resolveVisionModelFor(conversation), profile.getMaxHistory(),
+                    activeContextTokens.get(), image, listener);
         }
 
         // The user message is persisted synchronously inside ChatService/OrchestratorService's
@@ -647,6 +863,10 @@ public class ChatViewModel {
         return folders;
     }
 
+    public ObservableList<ProjectEntry> projects() {
+        return projects;
+    }
+
     public ObservableList<WorkspaceOpEntry> workspaceOps() {
         return workspaceOps;
     }
@@ -665,6 +885,14 @@ public class ChatViewModel {
 
     public StringProperty activeModelProperty() {
         return activeModel;
+    }
+
+    public StringProperty activeVisionModelProperty() {
+        return activeVisionModel;
+    }
+
+    public IntegerProperty activeContextTokensProperty() {
+        return activeContextTokens;
     }
 
     public StringProperty streamingContentProperty() {

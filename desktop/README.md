@@ -1,5 +1,7 @@
 # MultiAgent Desktop
 
+> **⚠️ Deprecated.** This Electron client is superseded by [`../desktop-java/`](../desktop-java), which has reached and gone beyond feature parity with it. This client is kept for reference and isn't receiving new features.
+
 Desktop chat app for local LLM servers (Windows installer + Linux AppImage; macOS not packaged yet). Talk to models through Lemonade, any other OpenAI-compatible API (NoLlama, LM Studio, vLLM, real OpenAI, ...), or a native Ollama server — save multiple named connections and switch between them in Settings, or pin different conversations to different servers and run them side by side. Also: switchable agent personas, workspace folder tools with diff/undo on AI file writes, image sessions (OpenAI-compatible providers only), orchestrator mode, message edit/regenerate, conversation search/export, and a token-usage estimate near the composer.
 
 This is the Electron client. Persona definitions (`../personas/`) and shared types (`../shared/types.ts`) live one level up, at the repo root, so they can also be used by [`../vscode-extension/`](../vscode-extension/).

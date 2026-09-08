@@ -52,6 +52,11 @@
     -fx-border-width: 1 0 0 0;
 }
 
+.composer-drag-over {
+    -fx-border-color: #33ff33;
+    -fx-border-width: 2;
+}
+
 .composer .text-area, .composer .text-area .content {
     -fx-background-color: #000000;
     -fx-text-fill: #33ff33;
@@ -59,6 +64,13 @@
 
 .error-banner {
     -fx-text-fill: #ff5555;
+    -fx-wrap-text: true;
+    -fx-background-color: #1a0000;
+    -fx-border-color: #ff5555;
+    -fx-border-width: 1;
+    -fx-border-radius: 0;
+    -fx-background-radius: 0;
+    -fx-padding: 6 10 6 10;
 }
 
 .bubble-user {
@@ -68,7 +80,7 @@
     -fx-border-width: 1;
 }
 
-.bubble-user .text {
+.bubble-user .bubble-text {
     -fx-fill: #33ff33;
 }
 
@@ -79,7 +91,7 @@
     -fx-border-width: 1;
 }
 
-.bubble-assistant .text {
+.bubble-assistant .bubble-text {
     -fx-fill: #33ff33;
 }
 
@@ -91,6 +103,35 @@
 .code-block {
     -fx-font-family: "Consolas", "Courier New", monospace;
     -fx-fill: #33ff33;
+}
+
+/* Same black+green language as the rest of this theme, not a foreign "VS Code dark" palette -
+   a gray/off-black card here just clashes with (and reads as harder to see than) the
+   green-on-black look everywhere else. */
+.code-box {
+    -fx-background-color: #000000;
+    -fx-background-radius: 0;
+    -fx-border-color: #33ff33;
+    -fx-border-radius: 0;
+    -fx-border-width: 1;
+}
+
+.code-box-header {
+    -fx-background-color: #000000;
+    -fx-background-radius: 0;
+    -fx-border-color: #1f7a1f;
+    -fx-border-width: 0 0 1 0;
+    -fx-padding: 4 10 4 10;
+}
+
+.code-box-lang {
+    -fx-text-fill: #33ff33;
+    -fx-font-size: 11px;
+    -fx-font-family: "Consolas", "Courier New", monospace;
+}
+
+.code-box-body {
+    -fx-padding: 10;
 }
 
 .workspace-op-running {

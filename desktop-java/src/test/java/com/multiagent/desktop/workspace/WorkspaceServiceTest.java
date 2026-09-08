@@ -184,8 +184,90 @@ class WorkspaceServiceTest {
         List<String> names = WorkspaceService.workspaceTools().stream()
                 .map(tool -> tool.name())
                 .toList();
-        assertEquals(List.of("list_dir", "read_file", "write_file", "delete_file", "rename_file", "generate_image"),
-                names);
+        assertEquals(List.of("list_dir", "read_file", "search_file", "write_file", "delete_file",
+                "rename_file", "generate_image"), names);
+    }
+
+    @Test
+    void searchFileReturnsMatchingLinesWithNumbersAndHonoursIgnoreCase() throws IOException {
+        Files.writeString(root.resolve("log.txt"),
+                "line one\nan ERROR here\nline three\nanother error line\nline five\n");
+
+        String hits = workspace.searchFile(root.toString(), "log.txt", "error", false, false, 0, 40);
+        assertTrue(hits.contains(">     4: another error line"), hits);
+        assertTrue(!hits.contains("ERROR here")); // case-sensitive: "error" != "ERROR"
+
+        String both = workspace.searchFile(root.toString(), "log.txt", "error", false, true, 0, 40);
+        assertTrue(both.contains(">     2: an ERROR here"), both);
+        assertTrue(both.contains(">     4: another error line"), both);
+    }
+
+    @Test
+    void searchFileRegexContextGapSeparatorAndMaxMatches() throws IOException {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 1; i <= 30; i++) {
+            sb.append(i % 10 == 0 ? "match " + i + "\n" : "filler " + i + "\n"); // matches at 10, 20, 30
+        }
+        Files.writeString(root.resolve("big.txt"), sb.toString());
+
+        String hits = workspace.searchFile(root.toString(), "big.txt", "^match \\d+$", true, false, 1, 2);
+        assertTrue(hits.contains(">    10: match 10"), hits);
+        assertTrue(hits.contains("      9: filler 9"), hits);  // context before
+        assertTrue(hits.contains("     11: filler 11"), hits); // context after
+        assertTrue(hits.contains("--"), hits);                 // gap between the 10-block and 20-block
+        assertTrue(hits.contains("max_matches=2"), hits);      // stopped before match 30
+    }
+
+    @Test
+    void searchFileRejectsEscapesMissingFilesAndBadRegex() {
+        assertThrows(WorkspaceException.class,
+                () -> workspace.searchFile(root.toString(), "../x.txt", "a", false, false, 0, 40));
+        assertThrows(WorkspaceException.class,
+                () -> workspace.searchFile(root.toString(), "nope.txt", "a", false, false, 0, 40));
+        assertThrows(WorkspaceException.class,
+                () -> workspace.searchFile(root.toString(), "readme.txt", "[", true, false, 0, 40));
+        assertThrows(WorkspaceException.class,
+                () -> workspace.searchFile(root.toString(), "readme.txt", "", false, false, 0, 40));
+    }
+
+    @Test
+    void searchFileReportsNoMatchesCleanly() {
+        String r = workspace.searchFile(root.toString(), "readme.txt", "zzz-not-here", false, false, 0, 40);
+        assertTrue(r.startsWith("No matches"), r);
+    }
+
+    @Test
+    void visionToolIsSeparateAndRequiresPathAndQuestion() {
+        var tool = WorkspaceService.visionTool();
+        assertEquals("describe_image", tool.name());
+        var required = tool.parametersSchema().path("required");
+        assertEquals(2, required.size());
+        assertTrue(required.toString().contains("path"));
+        assertTrue(required.toString().contains("question"));
+    }
+
+    @Test
+    void guessImageMimeMapsKnownExtensionsAndRejectsOthers() {
+        assertEquals("image/png", WorkspaceService.guessImageMime("a/b.PNG"));
+        assertEquals("image/jpeg", WorkspaceService.guessImageMime("shot.jpg"));
+        assertEquals("image/jpeg", WorkspaceService.guessImageMime("shot.jpeg"));
+        assertEquals("image/gif", WorkspaceService.guessImageMime("x.gif"));
+        assertEquals("image/webp", WorkspaceService.guessImageMime("x.webp"));
+        assertThrows(WorkspaceException.class, () -> WorkspaceService.guessImageMime("notes.txt"));
+    }
+
+    @Test
+    void readImageBytesReadsAWorkspaceImageAndRejectsEscapesAndNonImages() throws IOException {
+        byte[] png = {(byte) 0x89, 'P', 'N', 'G', 0, 1, 2, 3};
+        Files.write(root.resolve("shot.png"), png);
+        assertEquals(png.length, workspace.readImageBytes(root.toString(), "shot.png").length);
+
+        assertThrows(WorkspaceException.class,
+                () -> workspace.readImageBytes(root.toString(), "../shot.png"));
+        assertThrows(WorkspaceException.class,
+                () -> workspace.readImageBytes(root.toString(), "readme.txt"));
+        assertThrows(WorkspaceException.class,
+                () -> workspace.readImageBytes(root.toString(), "missing.png"));
     }
 
     @Test

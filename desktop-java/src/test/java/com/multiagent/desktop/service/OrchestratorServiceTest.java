@@ -76,8 +76,8 @@ class OrchestratorServiceTest {
         AtomicReference<ChatMessage> doneMessage = new AtomicReference<>();
         List<String> stepPhases = new ArrayList<>();
 
-        orchestratorService.send(client, conversation, "why is the sky blue?", "fake-model", 40,
-                new ChatService.Listener() {
+        orchestratorService.send(client, conversation, "why is the sky blue?", "fake-model", 40, java.util.Map.of(), 0,
+                false, new ChatService.Listener() {
                     @Override
                     public void onToken(String conversationId, String messageId, String delta) {
                     }
@@ -124,7 +124,7 @@ class OrchestratorServiceTest {
                 "Final answer.");
 
         CountDownLatch latch = new CountDownLatch(1);
-        orchestratorService.send(client, conversation, "hello", "fake-model", 40, new ChatService.Listener() {
+        orchestratorService.send(client, conversation, "hello", "fake-model", 40, java.util.Map.of(), 0, false, new ChatService.Listener() {
             @Override
             public void onToken(String conversationId, String messageId, String delta) {
             }
@@ -142,9 +142,47 @@ class OrchestratorServiceTest {
 
         assertTrue(latch.await(5, TimeUnit.SECONDS));
         List<ChatMessage> persisted = store.getMessages(conversation.getId());
-        // Default plan falls back to a single "researcher" specialist, so the shape is the same.
+        // Malformed plan -> fall back to a single specialist (the first available id, "general"
+        // by PersonaRegistry's preferred order), so the shape is still user + note + synthesis.
         assertEquals(3, persisted.size());
-        assertEquals("researcher", persisted.get(1).getPersonaId());
+        assertEquals("general", persisted.get(1).getPersonaId());
+    }
+
+    @Test
+    void aSpecialistCanUseSearchFileOnALargeWorkspaceFile(@TempDir Path ws) throws Exception {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 1; i <= 500; i++) {
+            sb.append(i == 314 ? "the SECRET marker is here\n" : "filler line " + i + "\n");
+        }
+        Files.writeString(ws.resolve("big.log"), sb.toString());
+        Conversation conversation = store.createConversation(
+                "orchestrator chat", ConversationKind.ORCHESTRATOR, ws.toString());
+
+        FakeLlmClient client = new FakeLlmClient(
+                List.of(
+                        messages -> new ChatCompletionResult(
+                                "{\"specialists\":[\"researcher\"],\"rationale\":\"scan the log\"}", List.of()),
+                        messages -> new ChatCompletionResult(null, List.of(
+                                new ToolCall("c1", "search_file", "{\"path\":\"big.log\",\"pattern\":\"SECRET\"}"))),
+                        messages -> new ChatCompletionResult("Found the marker.", List.of())),
+                "Final answer.");
+
+        ConcurrentLinkedQueue<String> ops = new ConcurrentLinkedQueue<>();
+        CountDownLatch latch = new CountDownLatch(1);
+        orchestratorService.send(client, conversation, "find the secret", "fake-model", 40, java.util.Map.of(), 0,
+                false, new ChatService.Listener() {
+                    @Override public void onToken(String c, String m, String d) { }
+                    @Override public void onDone(String c, ChatMessage m) { latch.countDown(); }
+                    @Override public void onError(String c, String m, ErrorCode e, String msg) { latch.countDown(); }
+                    @Override public void onWorkspaceOp(String c, String m, String op, String p, String s,
+                                                       String detail, String cp) {
+                        ops.add(op + ":" + s + ":" + (detail == null ? "" : detail));
+                    }
+                });
+
+        assertTrue(latch.await(10, TimeUnit.SECONDS));
+        assertTrue(ops.stream().anyMatch(s -> s.startsWith("search_file:ok:") && s.contains("314:")),
+                "search_file should succeed for a specialist and report line 314, ops were: " + ops);
     }
 
     @Test
@@ -169,8 +207,8 @@ class OrchestratorServiceTest {
 
         ConcurrentLinkedQueue<String> ops = new ConcurrentLinkedQueue<>();
         CountDownLatch latch = new CountDownLatch(1);
-        orchestratorService.send(client, conversation, "what's in the history?", "fake-model", 40,
-                new ChatService.Listener() {
+        orchestratorService.send(client, conversation, "what's in the history?", "fake-model", 40, java.util.Map.of(), 0,
+                false, new ChatService.Listener() {
                     @Override
                     public void onToken(String conversationId, String messageId, String delta) {
                     }
@@ -198,6 +236,88 @@ class OrchestratorServiceTest {
                 "git_log should succeed for a specialist, ops were: " + ops);
         assertTrue(ops.stream().anyMatch(s -> s.startsWith("git_add:error:") && s.contains("not available to specialists")),
                 "git_add must be refused for a specialist, ops were: " + ops);
+    }
+
+    @Test
+    void executorPhaseWritesToTheWorkspaceWhenApplyIsOn(@TempDir Path ws) throws Exception {
+        Conversation conversation = store.createConversation(
+                "orchestrator chat", ConversationKind.ORCHESTRATOR, ws.toString());
+
+        FakeLlmClient client = new FakeLlmClient(
+                List.of(
+                        // 1: plan - one specialist.
+                        messages -> new ChatCompletionResult(
+                                "{\"specialists\":[\"researcher\"],\"rationale\":\"draft it\"}", List.of()),
+                        // 2: researcher note (no tools).
+                        messages -> new ChatCompletionResult("Add a CONTRIBUTING.md with a setup section.", List.of()),
+                        // 3: executor round 1 - write the file.
+                        messages -> new ChatCompletionResult(null, List.of(new ToolCall(
+                                "w1", "write_file",
+                                "{\"path\":\"CONTRIBUTING.md\",\"content\":\"# Contributing\\n\\nRun `mvn verify`.\\n\"}"))),
+                        // 4: executor round 2 - summary, no more tools.
+                        messages -> new ChatCompletionResult("- Created CONTRIBUTING.md with a setup section.", List.of())),
+                "Plan: create CONTRIBUTING.md.");
+
+        ConcurrentLinkedQueue<String> ops = new ConcurrentLinkedQueue<>();
+        List<String> stepPhases = new ArrayList<>();
+        AtomicReference<ChatMessage> doneMessage = new AtomicReference<>();
+        CountDownLatch latch = new CountDownLatch(1);
+
+        orchestratorService.send(client, conversation, "add a CONTRIBUTING.md", "fake-model", 40, java.util.Map.of(), 0,
+                true, new ChatService.Listener() {
+                    @Override public void onToken(String c, String m, String d) { }
+                    @Override public void onDone(String c, ChatMessage m) { doneMessage.set(m); latch.countDown(); }
+                    @Override public void onError(String c, String m, ErrorCode e, String msg) { latch.countDown(); }
+                    @Override public void onStep(String c, String phase, String personaId, String label) {
+                        stepPhases.add(phase);
+                    }
+                    @Override public void onWorkspaceOp(String c, String m, String op, String p, String s,
+                                                       String detail, String cp) {
+                        ops.add(op + ":" + s);
+                    }
+                });
+
+        assertTrue(latch.await(10, TimeUnit.SECONDS), "orchestratorService.send() did not complete in time");
+        assertTrue(stepPhases.contains("executing"), "an 'executing' step should fire, phases were: " + stepPhases);
+        assertTrue(ops.stream().anyMatch(s -> s.equals("write_file:ok")),
+                "write_file should succeed, ops were: " + ops);
+        assertEquals("# Contributing\n\nRun `mvn verify`.\n",
+                Files.readString(ws.resolve("CONTRIBUTING.md")));
+        assertNotNull(doneMessage.get());
+        assertTrue(doneMessage.get().getContent().contains("**Applied changes**"),
+                "final message should carry the Applied changes section: " + doneMessage.get().getContent());
+    }
+
+    @Test
+    void executorPhaseIsSkippedWithoutAWorkspaceEvenWhenApplyIsOn() throws InterruptedException {
+        Conversation conversation = store.createConversation("orchestrator chat", ConversationKind.ORCHESTRATOR, null);
+
+        FakeLlmClient client = new FakeLlmClient(
+                List.of(
+                        messages -> new ChatCompletionResult(
+                                "{\"specialists\":[\"researcher\"],\"rationale\":\"x\"}", List.of()),
+                        messages -> new ChatCompletionResult("A note.", List.of())),
+                "Final answer.");
+
+        List<String> stepPhases = new ArrayList<>();
+        AtomicReference<ChatMessage> doneMessage = new AtomicReference<>();
+        CountDownLatch latch = new CountDownLatch(1);
+
+        orchestratorService.send(client, conversation, "no workspace here", "fake-model", 40, java.util.Map.of(), 0,
+                true, new ChatService.Listener() {
+                    @Override public void onToken(String c, String m, String d) { }
+                    @Override public void onDone(String c, ChatMessage m) { doneMessage.set(m); latch.countDown(); }
+                    @Override public void onError(String c, String m, ErrorCode e, String msg) { latch.countDown(); }
+                    @Override public void onStep(String c, String phase, String personaId, String label) {
+                        stepPhases.add(phase);
+                    }
+                });
+
+        assertTrue(latch.await(5, TimeUnit.SECONDS));
+        assertTrue(stepPhases.stream().noneMatch(p -> p.equals("executing")),
+                "no executor step without a workspace, phases were: " + stepPhases);
+        assertNotNull(doneMessage.get());
+        assertTrue(!doneMessage.get().getContent().contains("**Applied changes**"));
     }
 
     private static boolean hasGit() {

@@ -35,17 +35,29 @@
     -fx-border-width: 1 0 0 0;
 }
 
+.composer-drag-over {
+    -fx-border-color: #14b8a6;
+    -fx-border-width: 2;
+}
+
 .error-banner {
     -fx-text-fill: #b91c1c;
+    -fx-wrap-text: true;
+    -fx-background-color: #fef2f2;
+    -fx-border-color: #fecaca;
+    -fx-border-width: 1;
+    -fx-border-radius: 6;
+    -fx-background-radius: 6;
+    -fx-padding: 6 10 6 10;
 }
 
 .bubble-user {
-    -fx-background-color: #0f766e;
+    -fx-background-color: #14b8a6;
     -fx-background-radius: 10;
 }
 
-.bubble-user .text {
-    -fx-fill: white;
+.bubble-user .bubble-text {
+    -fx-fill: #0b1120;
 }
 
 .bubble-assistant {
@@ -60,6 +72,37 @@
 
 .code-block {
     -fx-font-family: "Consolas", "Menlo", monospace;
+    -fx-fill: #d4d4d4;
+}
+
+/* A dark card against this theme's light background, so generated code clearly reads as
+   "code" against the surrounding prose. Dark/Terminal themes use their own tailored
+   palette here instead (see theme-dark.css/theme-terminal.css) - a plain dark box like this
+   one would just blend into (or clash with) UI that's already dark by default. */
+.code-box {
+    -fx-background-color: #1e1e1e;
+    -fx-background-radius: 6;
+    -fx-border-color: #3a3a3a;
+    -fx-border-radius: 6;
+    -fx-border-width: 1;
+}
+
+.code-box-header {
+    -fx-background-color: #171717;
+    -fx-background-radius: 6 6 0 0;
+    -fx-border-color: #3a3a3a;
+    -fx-border-width: 0 0 1 0;
+    -fx-padding: 4 10 4 10;
+}
+
+.code-box-lang {
+    -fx-text-fill: #9ca3af;
+    -fx-font-size: 11px;
+    -fx-font-family: "Consolas", "Menlo", monospace;
+}
+
+.code-box-body {
+    -fx-padding: 10;
 }
 
 .workspace-op-running {

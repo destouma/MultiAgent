@@ -2,6 +2,7 @@ package com.multiagent.desktop.service;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.multiagent.desktop.action.ActionApprover;
 import com.multiagent.desktop.llm.CancellationToken;
 import com.multiagent.desktop.llm.ChatCompletionResult;
 import com.multiagent.desktop.llm.ChatRequestMessage;
@@ -48,11 +49,10 @@ import java.util.stream.Stream;
  * ToolLoopRunner's runToolAndEmit, not a copy of its write/delete or git_add/git_commit handling).
  */
 public class OrchestratorService {
-    private static final List<String> SPECIALIST_IDS = List.of("researcher", "coder", "critic");
     private static final int MAX_SPECIALIST_TOOL_ROUNDS = 4;
-    // list_dir/read_file plus GitService's read-only git_* tools - never write_file/delete_file/rename_file or git_add/git_commit.
+    // list_dir/read_file/search_file plus GitService's read-only git_* tools - never write_file/delete_file/rename_file or git_add/git_commit.
     private static final Set<String> READ_ONLY_TOOL_NAMES = Stream.concat(
-            Stream.of("list_dir", "read_file"), GitService.READ_ONLY_TOOLS.stream())
+            Stream.of("list_dir", "read_file", "search_file"), GitService.READ_ONLY_TOOLS.stream())
             .collect(Collectors.toUnmodifiableSet());
 
     private static final List<ToolDefinition> READ_ONLY_TOOLS = Stream.concat(
@@ -68,6 +68,9 @@ public class OrchestratorService {
     private final WorkspaceService workspace = new WorkspaceService();
     private final GitService git = new GitService();
     private final ObjectMapper mapper = new ObjectMapper();
+    // Only used by the opt-in executor phase - the full write/git tool loop, behind the same
+    // ActionApprover gate as ChatService's.
+    private final ToolLoopRunner toolLoop;
     private final Map<String, CancellationToken> activeTokens = new ConcurrentHashMap<>();
     private final ExecutorService executor = Executors.newCachedThreadPool(runnable -> {
         Thread thread = new Thread(runnable, "orchestrator-service-worker");
@@ -78,17 +81,32 @@ public class OrchestratorService {
     public OrchestratorService(ConversationStore store, PersonaRegistry personas) {
         this.store = store;
         this.personas = personas;
+        this.toolLoop = new ToolLoopRunner(store);
+    }
+
+    /** Installs the write/delete/rename/git confirmation gate for the executor phase (App wires the real one). */
+    public void setActionApprover(ActionApprover approver) {
+        toolLoop.setActionApprover(approver);
     }
 
     public void send(LlmClient client, Conversation conversation, String content, String fallbackModel,
-                      int maxHistory, ChatService.Listener listener) {
+                      int maxHistory, Map<String, String> specialistModels, int contextTokens, boolean apply,
+                      ChatService.Listener listener) {
         store.addMessage(conversation.getId(), MessageRole.USER, content, null);
 
-        Persona orchestrator = personas.get("orchestrator")
+        Map<String, String> overrides = specialistModels == null ? Map.of() : specialistModels;
+        // The "Persona" topbar box picks the coordinator for an orchestrator chat (it runs
+        // the plan + synthesis); fall back to the dedicated orchestrator persona, then general.
+        String coordinatorId = conversation.getPersonaId();
+        Persona orchestrator = (coordinatorId == null || coordinatorId.isBlank()
+                ? Optional.<Persona>empty() : personas.get(coordinatorId))
+                .or(() -> personas.get("orchestrator"))
                 .or(() -> personas.get("general"))
                 .orElseGet(() -> personas.list().get(0));
         String model = orchestrator.getDefaultModel() != null && !orchestrator.getDefaultModel().isBlank()
                 ? orchestrator.getDefaultModel() : fallbackModel;
+        int reserve = contextTokens > 0 ? Math.max(512, Math.min(contextTokens / 4, 4096)) : 0;
+        int maxTokens = reserve;
 
         CancellationToken token = new CancellationToken();
         activeTokens.put(conversation.getId(), token);
@@ -114,17 +132,25 @@ public class OrchestratorService {
 
                 List<ChatMessage> history = store.getMessages(conversation.getId());
                 int from = Math.max(0, history.size() - maxHistory);
-                String priorContext = history.subList(from, history.size()).stream()
+                List<String> entries = history.subList(from, history.size()).stream()
                         .filter(m -> m.getRole() == MessageRole.USER || m.getRole() == MessageRole.ASSISTANT)
                         .map(m -> {
                             String who = m.getRole() == MessageRole.USER ? "User"
                                     : (m.getPersonaId() != null ? "Assistant(" + m.getPersonaId() + ")" : "Assistant");
                             return who + ": " + m.getContent();
                         })
-                        .collect(Collectors.joining("\n\n"));
+                        .collect(Collectors.toCollection(ArrayList::new));
+                if (contextTokens > 0) {
+                    int budget = contextTokens - reserve;
+                    while (entries.size() > 1
+                            && TokenEstimate.estimateTokens(entries) + TokenEstimate.estimateTokens(List.of(content)) > budget) {
+                        entries.remove(0);
+                    }
+                }
+                String priorContext = String.join("\n\n", entries);
 
-                PlanParser.PlanResult plan = planSpecialists(client, orchestrator, model, content, priorContext,
-                        workspacePath, workspaceTree, token);
+                PlanParser.PlanResult plan = planSpecialists(client, orchestrator, model, maxTokens, content,
+                        priorContext, workspacePath, workspaceTree, token);
 
                 List<SpecialistNote> notes = new ArrayList<>();
                 for (String specialistId : plan.specialists()) {
@@ -134,13 +160,14 @@ public class OrchestratorService {
                         continue;
                     }
                     Persona persona = maybePersona.get();
+                    String specialistModel = specialistModelFor(persona, overrides, model);
 
                     listener.onStep(conversation.getId(), "specialist", persona.getId(),
-                            persona.getName() + " is working...");
+                            persona.getName() + " (" + specialistModel + ") is working...");
 
-                    String specialistContent = runSpecialist(client, persona, model, content, priorContext,
-                            plan.rationale(), workspacePath, workspaceTree, conversation.getId(), assistantMessageId,
-                            token, listener);
+                    String specialistContent = runSpecialist(client, persona, specialistModel, maxTokens, content,
+                            priorContext, plan.rationale(), workspacePath, workspaceTree, conversation.getId(),
+                            assistantMessageId, token, listener);
 
                     store.addMessage(conversation.getId(), MessageRole.ASSISTANT, specialistContent, persona.getId());
                     listener.onMessagesUpdated(conversation.getId());
@@ -151,7 +178,7 @@ public class OrchestratorService {
                         "Synthesizing final answer...");
 
                 StringBuilder full = new StringBuilder();
-                synthesize(client, orchestrator, model, content, plan.rationale(), notes, workspacePath,
+                synthesize(client, orchestrator, model, maxTokens, content, plan.rationale(), notes, workspacePath,
                         workspaceTree, token, delta -> {
                             full.append(delta);
                             listener.onToken(conversation.getId(), assistantMessageId, delta);
@@ -159,6 +186,14 @@ public class OrchestratorService {
                 String finalText = full.toString().trim();
                 if (finalText.isEmpty()) {
                     finalText = "I could not produce a final answer from the specialist notes.";
+                }
+
+                if (apply && workspacePath != null && !workspacePath.isBlank()) {
+                    listener.onStep(conversation.getId(), "executing", orchestrator.getId(),
+                            "Applying changes...");
+                    String applied = runExecutor(client, orchestrator, model, maxTokens, content, notes, finalText,
+                            workspacePath, workspaceTree, conversation.getId(), assistantMessageId, token, listener);
+                    finalText = finalText + "\n\n---\n\n**Applied changes**\n\n" + applied.trim();
                 }
 
                 listener.onStep(conversation.getId(), "done", orchestrator.getId(), "Done");
@@ -177,10 +212,31 @@ public class OrchestratorService {
         });
     }
 
-    private PlanParser.PlanResult planSpecialists(LlmClient client, Persona orchestrator, String model,
+    /** Every loaded persona except the orchestrator itself is a candidate specialist. */
+    private List<String> availableSpecialistIds() {
+        return personas.list().stream()
+                .map(Persona::getId)
+                .filter(id -> !"orchestrator".equals(id))
+                .toList();
+    }
+
+    private String specialistModelFor(Persona persona, Map<String, String> overrides, String conversationModel) {
+        String override = overrides.get(persona.getId());
+        if (override != null && !override.isBlank()) {
+            return override;
+        }
+        if (persona.getDefaultModel() != null && !persona.getDefaultModel().isBlank()) {
+            return persona.getDefaultModel();
+        }
+        return conversationModel;
+    }
+
+    private PlanParser.PlanResult planSpecialists(LlmClient client, Persona orchestrator, String model, int maxTokens,
                                                     String userContent, String priorContext, String workspacePath,
                                                     String workspaceTree, CancellationToken token) {
-        String available = SPECIALIST_IDS.stream().filter(id -> personas.get(id).isPresent())
+        List<String> availableIds = availableSpecialistIds();
+        String available = availableIds.stream()
+                .map(id -> personas.get(id).map(p -> id + " (" + p.getName() + ")").orElse(id))
                 .collect(Collectors.joining(", "));
 
         List<String> systemLines = new ArrayList<>(List.of(
@@ -209,17 +265,14 @@ public class OrchestratorService {
                 ChatRequestMessage.system(String.join("\n", systemLines)),
                 ChatRequestMessage.user(userBlock));
 
-        ChatCompletionResult completion = client.completeChat(messages, model, List.of(), token);
-        return PlanParser.parsePlan(completion.content(), SPECIALIST_IDS);
+        ChatCompletionResult completion = client.completeChat(messages, model, List.of(), maxTokens, token);
+        return PlanParser.parsePlan(completion.content(), availableIds);
     }
 
-    private String runSpecialist(LlmClient client, Persona persona, String model, String userContent,
-                                  String priorContext, String planRationale, String workspacePath,
+    private String runSpecialist(LlmClient client, Persona persona, String specialistModel, int maxTokens,
+                                  String userContent, String priorContext, String planRationale, String workspacePath,
                                   String workspaceTree, String conversationId, String messageId,
                                   CancellationToken token, ChatService.Listener listener) {
-        String specialistModel = persona.getDefaultModel() != null && !persona.getDefaultModel().isBlank()
-                ? persona.getDefaultModel() : model;
-
         List<String> systemLines = new ArrayList<>(List.of(
                 persona.getSystemPrompt(), "",
                 "You are contributing as a specialist inside a multi-agent workflow.",
@@ -229,10 +282,10 @@ public class OrchestratorService {
         if (workspacePath != null && workspaceTree != null) {
             systemLines.addAll(List.of("",
                     "You have read-only access to a workspace folder bound to this conversation: " + workspacePath,
-                    "Use the list_dir and read_file tools to inspect actual files before answering - "
+                    "Use the list_dir, read_file and search_file tools to inspect actual files before answering - "
                             + "do not guess at contents from the tree alone. The tree shows only the top "
                             + "levels; list_dir into any folder marked with a trailing \"…\". For a large file, "
-                            + "read_file with offset/limit to page through it."));
+                            + "search_file to find the relevant lines then read_file with offset/limit around them."));
             if (isGitRepo(workspacePath)) {
                 systemLines.add("This workspace is a git repository: git_status, git_diff, git_log, git_show and "
                         + "git_branch are available for inspecting history and pending changes (read-only - you "
@@ -252,17 +305,17 @@ public class OrchestratorService {
                 status -> listener.onModelStatus(conversationId, status), token);
 
         if (workspacePath == null || workspacePath.isBlank()) {
-            ChatCompletionResult completion = client.completeChat(messages, specialistModel, List.of(), token);
+            ChatCompletionResult completion = client.completeChat(messages, specialistModel, List.of(), maxTokens, token);
             String result = completion.content() == null ? "" : completion.content().trim();
             return result.isEmpty() ? "(" + persona.getName() + " returned an empty response.)" : result;
         }
 
-        return runSpecialistWithTools(client, messages, specialistModel, workspacePath, persona, conversationId,
-                messageId, token, listener);
+        return runSpecialistWithTools(client, messages, specialistModel, maxTokens, workspacePath, persona,
+                conversationId, messageId, token, listener);
     }
 
     private String runSpecialistWithTools(LlmClient client, List<ChatRequestMessage> initialMessages, String model,
-                                           String workspacePath, Persona persona, String conversationId,
+                                           int maxTokens, String workspacePath, Persona persona, String conversationId,
                                            String messageId, CancellationToken token, ChatService.Listener listener) {
         List<ChatRequestMessage> messages = new ArrayList<>(initialMessages);
         boolean toolsEnabled = true;
@@ -273,11 +326,11 @@ public class OrchestratorService {
 
             ChatCompletionResult completion;
             try {
-                completion = client.completeChat(messages, model, toolsEnabled ? READ_ONLY_TOOLS : List.of(), token);
+                completion = client.completeChat(messages, model, toolsEnabled ? READ_ONLY_TOOLS : List.of(), maxTokens, token);
             } catch (RuntimeException e) {
                 if (toolsEnabled) {
                     toolsEnabled = false;
-                    completion = client.completeChat(messages, model, List.of(), token);
+                    completion = client.completeChat(messages, model, List.of(), maxTokens, token);
                 } else {
                     throw e;
                 }
@@ -359,14 +412,9 @@ public class OrchestratorService {
         }
     }
 
-    private void synthesize(LlmClient client, Persona orchestrator, String model, String userContent,
+    private void synthesize(LlmClient client, Persona orchestrator, String model, int maxTokens, String userContent,
                              String planRationale, List<SpecialistNote> notes, String workspacePath,
                              String workspaceTree, CancellationToken token, java.util.function.Consumer<String> onDelta) {
-        String notesBlock = notes.isEmpty()
-                ? "(No specialists were consulted.)"
-                : notes.stream().map(note -> "### " + note.persona().getName() + "\n" + note.content())
-                        .collect(Collectors.joining("\n\n"));
-
         List<String> systemLines = new ArrayList<>(List.of(
                 orchestrator.getSystemPrompt(), "",
                 "Synthesize a final answer for the user from the specialist notes.",
@@ -380,12 +428,52 @@ public class OrchestratorService {
                     workspaceTree));
         }
 
-        String userBlock = "User request:\n" + userContent + "\n\nSpecialist notes:\n" + notesBlock;
+        String userBlock = "User request:\n" + userContent + "\n\nSpecialist notes:\n" + notesBlock(notes);
         List<ChatRequestMessage> messages = List.of(
                 ChatRequestMessage.system(String.join("\n", systemLines)),
                 ChatRequestMessage.user(userBlock));
 
-        client.streamChat(messages, model, onDelta, token);
+        client.streamChat(messages, model, maxTokens, onDelta, token);
+    }
+
+    private static String notesBlock(List<SpecialistNote> notes) {
+        return notes.isEmpty()
+                ? "(No specialists were consulted.)"
+                : notes.stream().map(note -> "### " + note.persona().getName() + "\n" + note.content())
+                        .collect(Collectors.joining("\n\n"));
+    }
+
+    /**
+     * Runs the write-capable executor: the specialist notes + synthesis are the brief; every
+     * write/delete/rename still goes through ToolLoopRunner's ActionApprover gate and captures
+     * a checkpoint. Returns the executor's own summary of what it did.
+     */
+    private String runExecutor(LlmClient client, Persona orchestrator, String model, int maxTokens,
+                                String userContent, List<SpecialistNote> notes, String plan, String workspacePath,
+                                String workspaceTree, String conversationId, String messageId,
+                                CancellationToken token, ChatService.Listener listener) {
+        List<String> systemLines = new ArrayList<>(List.of(
+                orchestrator.getSystemPrompt(), "",
+                "You are now APPLYING the agreed changes to the bound workspace folder: " + workspacePath,
+                "Tools: list_dir, read_file, search_file (read); write_file, delete_file, rename_file"
+                        + (isGitRepo(workspacePath) ? ", and git_add / git_commit" : "") + " (write).",
+                "Every write is shown to the user for approval first - if a result says the user declined, "
+                        + "stop that edit and don't retry it.",
+                "Make only the changes the plan calls for; keep them minimal and on-topic. "
+                        + "If nothing actually needs changing, say so and make no edits.",
+                "When finished, give a short bullet summary of what you changed."));
+        if (workspaceTree != null) {
+            systemLines.addAll(List.of("Workspace tree:", workspaceTree));
+        }
+        List<ChatRequestMessage> messages = new ArrayList<>(List.of(
+                ChatRequestMessage.system(String.join("\n", systemLines)),
+                ChatRequestMessage.user("Original request:\n" + userContent
+                        + "\n\nSpecialist notes:\n" + notesBlock(notes)
+                        + "\n\nAgreed plan / synthesis:\n" + plan)));
+
+        return toolLoop.run(client, model, null, maxTokens, messages, workspacePath, conversationId, token,
+                (op, path, status, detail, checkpointId) ->
+                        listener.onWorkspaceOp(conversationId, messageId, op, path, status, detail, checkpointId));
     }
 
     public void cancel(String conversationId) {

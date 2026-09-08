@@ -17,6 +17,12 @@ public class Conversation {
     private String model;
     private String serverId;
     private String personaId;
+    /** Per-chat override of the server's vision model. Blank/null ⇒ fall back to ServerProfile.visionModel. */
+    private String visionModel;
+    /** Orchestrator only: JSON {"specialistId":"modelId"} of per-conversation model overrides. Blank/null ⇒ none. */
+    private String specialistModels;
+    /** Orchestrator only: "1" ⇒ run the write-capable executor phase after synthesis (still approval-gated). */
+    private String orchestratorApply;
 
     public Conversation() {
     }
@@ -110,6 +116,34 @@ public class Conversation {
 
     public void setPersonaId(String personaId) {
         this.personaId = personaId;
+    }
+
+    public String getVisionModel() {
+        return visionModel;
+    }
+
+    public void setVisionModel(String visionModel) {
+        this.visionModel = visionModel;
+    }
+
+    public String getSpecialistModels() {
+        return specialistModels;
+    }
+
+    public void setSpecialistModels(String specialistModels) {
+        this.specialistModels = specialistModels;
+    }
+
+    public String getOrchestratorApply() {
+        return orchestratorApply;
+    }
+
+    public void setOrchestratorApply(String orchestratorApply) {
+        this.orchestratorApply = orchestratorApply;
+    }
+
+    public boolean isOrchestratorApply() {
+        return "1".equals(orchestratorApply);
     }
 
     @Override

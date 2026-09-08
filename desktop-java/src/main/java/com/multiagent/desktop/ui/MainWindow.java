@@ -3,9 +3,11 @@ package com.multiagent.desktop.ui;
 import com.multiagent.desktop.model.Conversation;
 import com.multiagent.desktop.model.ConversationKind;
 import com.multiagent.desktop.model.FolderEntry;
+import com.multiagent.desktop.model.ProjectEntry;
 import com.multiagent.desktop.model.ThemeMode;
 import com.multiagent.desktop.service.ExportFormat;
 import com.multiagent.desktop.ui.components.ChatPaneView;
+import com.multiagent.desktop.ui.components.DebugLogWindow;
 import com.multiagent.desktop.ui.components.SearchDialog;
 import com.multiagent.desktop.ui.components.SettingsDialog;
 import com.multiagent.desktop.ui.components.SplitPickerDialog;
@@ -19,6 +21,7 @@ import javafx.scene.Parent;
 import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
 import javafx.scene.control.ButtonType;
+import javafx.scene.control.ChoiceDialog;
 import javafx.scene.control.ContextMenu;
 import javafx.scene.control.Label;
 import javafx.scene.control.MenuItem;
@@ -62,6 +65,7 @@ public class MainWindow {
     private final ChatPaneView secondaryPane;
     private final SplitPane centerSplit = new SplitPane();
     private final Button closeSplitButton = new Button("× Close split");
+    private DebugLogWindow debugWindow;
 
     public MainWindow(ChatViewModel primary, ChatViewModel secondary) {
         this.primary = primary;
@@ -134,10 +138,13 @@ public class MainWindow {
     }
 
     /**
-     * Folder-grouped sidebar: a TreeView<Object> whose nodes are either a FolderEntry
-     * (header, right-click for "New chat here"/"Side by side"), the literal String
-     * "No folder" (header for folder-less conversations), or a Conversation (leaf,
-     * double-click to rename). Rebuilt from scratch on every conversations/folders change -
+     * Project/folder-grouped sidebar: a TreeView<Object> whose nodes are a ProjectEntry
+     * (header, right-click for Rename/Remove), a FolderEntry (header, right-click for
+     * "New chat here"/"Side by side"/"Assign to project…") nested under its project (if
+     * any) or at the top level otherwise, the literal String "No folder" (header for
+     * folder-less conversations), or a Conversation (leaf, double-click to rename).
+     * Projects are a pure UI grouping - see ProjectEntry's javadoc - a folder belongs to at
+     * most one project. Rebuilt from scratch on every conversations/folders/projects change -
      * the tree is small enough (a handful of chats) that this is simpler and safer than
      * incremental TreeItem patching, matching ConversationList.tsx's approach of just
      * re-rendering. Always bound to the PRIMARY view model.
@@ -163,14 +170,27 @@ public class MainWindow {
                 }
             }
 
-            TreeItem<Object> root = new TreeItem<>();
+            Map<String, List<FolderEntry>> foldersByProject = new LinkedHashMap<>();
+            List<FolderEntry> ungroupedFolders = new ArrayList<>();
             for (FolderEntry folder : primary.folders()) {
-                TreeItem<Object> folderItem = new TreeItem<>(folder);
-                folderItem.setExpanded(true);
-                for (Conversation conversation : byFolder.getOrDefault(folder.path(), List.of())) {
-                    folderItem.getChildren().add(new TreeItem<>(conversation));
+                if (folder.projectId() != null && !folder.projectId().isBlank()) {
+                    foldersByProject.computeIfAbsent(folder.projectId(), k -> new ArrayList<>()).add(folder);
+                } else {
+                    ungroupedFolders.add(folder);
                 }
-                root.getChildren().add(folderItem);
+            }
+
+            TreeItem<Object> root = new TreeItem<>();
+            for (ProjectEntry project : primary.projects()) {
+                TreeItem<Object> projectItem = new TreeItem<>(project);
+                projectItem.setExpanded(true);
+                for (FolderEntry folder : foldersByProject.getOrDefault(project.id(), List.of())) {
+                    projectItem.getChildren().add(folderTreeItem(folder, byFolder));
+                }
+                root.getChildren().add(projectItem);
+            }
+            for (FolderEntry folder : ungroupedFolders) {
+                root.getChildren().add(folderTreeItem(folder, byFolder));
             }
             if (!ungrouped.isEmpty()) {
                 TreeItem<Object> noFolderItem = new TreeItem<>("No folder");
@@ -189,6 +209,7 @@ public class MainWindow {
 
         primary.conversations().addListener((ListChangeListener<Conversation>) c -> refreshHolder[0].run());
         primary.folders().addListener((ListChangeListener<FolderEntry>) c -> refreshHolder[0].run());
+        primary.projects().addListener((ListChangeListener<ProjectEntry>) c -> refreshHolder[0].run());
         primary.activeConversationProperty().addListener((obs, old, val) -> {
             if (!selecting[0]) {
                 selectTreeItemFor(tree, val);
@@ -205,7 +226,14 @@ public class MainWindow {
                     setContextMenu(null);
                     return;
                 }
-                if (item instanceof FolderEntry folder) {
+                if (item instanceof ProjectEntry project) {
+                    setText("🗂 " + project.name());
+                    MenuItem rename = new MenuItem("Rename");
+                    rename.setOnAction(e -> promptRenameProject(project));
+                    MenuItem remove = new MenuItem("Remove project");
+                    remove.setOnAction(e -> confirmRemoveProject(project));
+                    setContextMenu(new ContextMenu(rename, remove));
+                } else if (item instanceof FolderEntry folder) {
                     Path fileName = Path.of(folder.path()).getFileName();
                     setText("📁 " + (fileName != null ? fileName.toString() : folder.path()));
                     MenuItem newChatHere = new MenuItem("New chat here");
@@ -219,9 +247,13 @@ public class MainWindow {
                     sideBySide.setDisable(folderConversations.size() < 2);
                     sideBySide.setOnAction(e -> SplitPickerDialog.ask(folderConversations, ownerWindow())
                             .ifPresent(selection -> openSplit(selection.left(), selection.right())));
+                    MenuItem assignToProject = new MenuItem("Assign to project…");
+                    assignToProject.setDisable(primary.projects().isEmpty() && folder.projectId() == null);
+                    assignToProject.setOnAction(e -> promptAssignFolderToProject(folder));
                     MenuItem removeFolder = new MenuItem("Remove from list");
                     removeFolder.setOnAction(e -> confirmRemoveFolder(folder));
-                    setContextMenu(new ContextMenu(newChatHere, newOrchestratorHere, sideBySide, removeFolder));
+                    setContextMenu(new ContextMenu(
+                            newChatHere, newOrchestratorHere, sideBySide, assignToProject, removeFolder));
                 } else if (item instanceof Conversation conversation) {
                     String icon = conversation.getKind() == ConversationKind.ORCHESTRATOR ? "🧭 " : "";
                     setText(icon + conversation.getTitle());
@@ -273,7 +305,11 @@ public class MainWindow {
             }
         });
 
-        VBox newColumn = new VBox(8, newChatButton, newOrchestratorButton, openFolderButton);
+        Button newProjectButton = new Button("+ New project");
+        newProjectButton.setMaxWidth(Double.MAX_VALUE);
+        newProjectButton.setOnAction(e -> promptNewProject());
+
+        VBox newColumn = new VBox(8, newChatButton, newOrchestratorButton, openFolderButton, newProjectButton);
 
         VBox box = new VBox(8, newColumn, tree);
         box.setPadding(new Insets(10));
@@ -284,19 +320,46 @@ public class MainWindow {
         return box;
     }
 
+    /** One FolderEntry TreeItem with its conversations nested - shared by both the project-grouped and ungrouped folder rendering paths. */
+    private TreeItem<Object> folderTreeItem(FolderEntry folder, Map<String, List<Conversation>> byFolder) {
+        TreeItem<Object> folderItem = new TreeItem<>(folder);
+        folderItem.setExpanded(true);
+        for (Conversation conversation : byFolder.getOrDefault(folder.path(), List.of())) {
+            folderItem.getChildren().add(new TreeItem<>(conversation));
+        }
+        return folderItem;
+    }
+
+    /**
+     * Searches the whole tree, not just two levels deep - a conversation can now sit at
+     * root -> folder -> conversation (ungrouped folder), root -> "No folder" -> conversation,
+     * or root -> project -> folder -> conversation, depending on whether its folder is
+     * grouped into a project.
+     */
     private void selectTreeItemFor(TreeView<Object> tree, Conversation conversation) {
         if (conversation == null || tree.getRoot() == null) {
             tree.getSelectionModel().clearSelection();
             return;
         }
-        for (TreeItem<Object> group : tree.getRoot().getChildren()) {
-            for (TreeItem<Object> item : group.getChildren()) {
-                if (item.getValue() instanceof Conversation c && c.getId().equals(conversation.getId())) {
-                    tree.getSelectionModel().select(item);
-                    return;
-                }
+        TreeItem<Object> match = findConversationItem(tree.getRoot(), conversation.getId());
+        if (match != null) {
+            tree.getSelectionModel().select(match);
+        } else {
+            tree.getSelectionModel().clearSelection();
+        }
+    }
+
+    private TreeItem<Object> findConversationItem(TreeItem<Object> node, String conversationId) {
+        for (TreeItem<Object> child : node.getChildren()) {
+            if (child.getValue() instanceof Conversation c && c.getId().equals(conversationId)) {
+                return child;
+            }
+            TreeItem<Object> nested = findConversationItem(child, conversationId);
+            if (nested != null) {
+                return nested;
             }
         }
+        return null;
     }
 
     /** App-level only: not tied to any one conversation, so it stays out of either chat pane. */
@@ -324,14 +387,27 @@ public class MainWindow {
             dialog.showAndWait();
         });
 
+        Button debugButton = new Button("Debug");
+        debugButton.setOnAction(e -> openDebugWindow());
+
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
 
-        HBox bar = new HBox(10, title, spacer, closeSplitButton, searchButton, refreshButton, settingsButton);
+        HBox bar = new HBox(10, title, spacer, closeSplitButton, searchButton, refreshButton,
+                debugButton, settingsButton);
         bar.setAlignment(Pos.CENTER_LEFT);
         bar.setPadding(new Insets(8, 12, 8, 12));
         bar.getStyleClass().add("global-topbar");
         return bar;
+    }
+
+    /** Opens the raw-API-traffic window, or focuses it if it's already up (one instance, non-modal). */
+    private void openDebugWindow() {
+        if (debugWindow == null || !debugWindow.isShowing()) {
+            debugWindow = new DebugLogWindow(ownerWindow());
+        }
+        debugWindow.show();
+        debugWindow.toFront();
     }
 
     /** The app's own top-level window - used to parent every dialog/alert this class opens, so none of them can end up opening behind it. */
@@ -350,6 +426,74 @@ public class MainWindow {
                 + "ungrouped - nothing on disk is touched.");
         alert.showAndWait().filter(button -> button == ButtonType.OK)
                 .ifPresent(button -> primary.removeFolder(folder.path()));
+    }
+
+    private void promptNewProject() {
+        TextInputDialog dialog = new TextInputDialog();
+        dialog.initOwner(ownerWindow());
+        dialog.setTitle("New project");
+        dialog.setHeaderText(null);
+        dialog.setContentText("Project name:");
+        dialog.showAndWait().ifPresent(name -> {
+            if (!name.isBlank()) {
+                primary.addProject(name.trim());
+            }
+        });
+    }
+
+    private void promptRenameProject(ProjectEntry project) {
+        TextInputDialog dialog = new TextInputDialog(project.name());
+        dialog.initOwner(ownerWindow());
+        dialog.setTitle("Rename project");
+        dialog.setHeaderText(null);
+        dialog.setContentText("Name:");
+        dialog.showAndWait().ifPresent(name -> {
+            if (!name.isBlank()) {
+                primary.renameProject(project, name.trim());
+            }
+        });
+    }
+
+    private void confirmRemoveProject(ProjectEntry project) {
+        Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
+        alert.initOwner(ownerWindow());
+        alert.setTitle("Remove project");
+        alert.setHeaderText(null);
+        alert.setContentText("Remove \"" + project.name() + "\"? Its folders are kept, just "
+                + "ungrouped - nothing on disk or in your chats is touched.");
+        alert.showAndWait().filter(button -> button == ButtonType.OK)
+                .ifPresent(button -> primary.removeProject(project));
+    }
+
+    /** "(no project)" plus every project's name, so a folder can be assigned or ungrouped from the same picker. */
+    private void promptAssignFolderToProject(FolderEntry folder) {
+        String noProject = "(no project)";
+        List<String> choices = new ArrayList<>();
+        choices.add(noProject);
+        for (ProjectEntry project : primary.projects()) {
+            choices.add(project.name());
+        }
+        String current = folder.projectId() == null ? noProject
+                : primary.projects().stream()
+                        .filter(p -> p.id().equals(folder.projectId()))
+                        .findFirst()
+                        .map(ProjectEntry::name)
+                        .orElse(noProject);
+
+        ChoiceDialog<String> dialog = new ChoiceDialog<>(current, choices);
+        dialog.initOwner(ownerWindow());
+        dialog.setTitle("Assign to project");
+        dialog.setHeaderText(null);
+        dialog.setContentText("Project:");
+        dialog.showAndWait().ifPresent(chosenName -> {
+            String projectId = noProject.equals(chosenName) ? null
+                    : primary.projects().stream()
+                            .filter(p -> p.name().equals(chosenName))
+                            .findFirst()
+                            .map(ProjectEntry::id)
+                            .orElse(null);
+            primary.assignFolderToProject(folder.path(), projectId);
+        });
     }
 
     private void exportConversation(Conversation conversation, String format, Node ownerNode) {

@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.multiagent.desktop.llm.streaming.SseLineReader;
 import com.multiagent.desktop.model.HealthStatus;
 import com.multiagent.desktop.model.ModelInfo;
+import com.multiagent.desktop.service.DebugLog;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -81,15 +82,40 @@ public class OpenAiClient implements LlmClient {
     @Override
     public List<ModelInfo> listModels() {
         HttpRequest request = requestBuilder("/models").GET().build();
-        JsonNode root = sendJson(request, null);
+        JsonNode root = sendJson(request, "GET", apiBase() + "/models", null, null);
         List<ModelInfo> models = new ArrayList<>();
         JsonNode data = root.path("data");
         if (data.isArray()) {
             for (JsonNode item : data) {
-                models.add(new ModelInfo(item.path("id").asText(""), item.path("owned_by").asText(null)));
+                models.add(new ModelInfo(item.path("id").asText(""), item.path("owned_by").asText(null),
+                        contextLengthOf(item)));
             }
         }
         return models;
+    }
+
+    /** First of the context-window fields various OpenAI-compatible servers use, if any. */
+    private static Integer contextLengthOf(JsonNode modelEntry) {
+        for (String field : List.of("max_context_window", "max_model_len", "context_length",
+                "context_window", "max_position_embeddings")) {
+            JsonNode value = modelEntry.get(field);
+            if (value != null && value.isIntegralNumber() && value.asInt() > 0) {
+                return value.asInt();
+            }
+        }
+        return null;
+    }
+
+    @Override
+    public java.util.OptionalInt contextWindow(String model) {
+        try {
+            return listModels().stream()
+                    .filter(m -> m.id().equalsIgnoreCase(model) && m.contextLength() != null)
+                    .mapToInt(ModelInfo::contextLength)
+                    .findFirst();
+        } catch (RuntimeException e) {
+            return java.util.OptionalInt.empty();
+        }
     }
 
     /** Generic OpenAI-compatible servers don't expose any load-status signal. */
@@ -122,31 +148,75 @@ public class OpenAiClient implements LlmClient {
     @Override
     public void streamChat(List<ChatRequestMessage> messages, String model, Consumer<String> onDelta,
                             CancellationToken token) {
+        streamChat(messages, model, 0, onDelta, token);
+    }
+
+    /** Shared /chat/completions request body. Package-private for OpenAiClientTest. */
+    ObjectNode chatBody(List<ChatRequestMessage> messages, String model, List<ToolDefinition> tools,
+                         int maxTokens, boolean stream) {
         ObjectNode body = MAPPER.createObjectNode();
         body.put("model", model);
-        body.put("stream", true);
+        body.put("stream", stream);
         body.set("messages", toMessagesNode(messages));
+        if (tools != null && !tools.isEmpty()) {
+            body.set("tools", toToolsNode(tools));
+        }
+        if (maxTokens > 0) {
+            body.put("max_tokens", maxTokens);
+        }
+        return body;
+    }
+
+    @Override
+    public void streamChat(List<ChatRequestMessage> messages, String model, int maxTokens,
+                            Consumer<String> onDelta, CancellationToken token) {
+        ObjectNode body = chatBody(messages, model, null, maxTokens, true);
 
         HttpRequest request = requestBuilder("/chat/completions")
                 .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
                 .build();
 
-        InputStream stream = sendStreaming(request, token);
+        DebugLog.Exchange exchange = DebugLog.begin("POST", apiBase() + "/chat/completions",
+                redactBase64(body.toString()));
+        StringBuilder rawStream = new StringBuilder();
+
+        InputStream stream;
+        try {
+            stream = sendStreaming(request, token);
+        } catch (RuntimeException e) {
+            exchange.fail(e);
+            throw e;
+        }
         try {
             SseLineReader.read(stream, data -> {
+                rawStream.append(data).append('\n');
                 JsonNode chunk;
                 try {
                     chunk = MAPPER.readTree(data);
                 } catch (IOException e) {
                     return;
                 }
+                // Some OpenAI-compatible servers (llama.cpp / Lemonade) return HTTP 200 and
+                // then report failures - e.g. "request exceeds the available context size" -
+                // as an {"error": ...} frame inside the stream. Without this the frame is
+                // dropped, the stream just ends, and the app shows an empty reply with no
+                // error at all.
+                JsonNode error = chunk.get("error");
+                if (error != null && !error.isNull()) {
+                    throw ProviderException.classify(new IOException(errorText(error)));
+                }
                 String delta = chunk.path("choices").path(0).path("delta").path("content").asText(null);
                 if (delta != null && !delta.isEmpty()) {
                     onDelta.accept(delta);
                 }
             }, token);
+            exchange.succeed(200, rawStream.toString());
         } catch (IOException e) {
+            exchange.fail(e);
             throw ProviderException.classify(e);
+        } catch (RuntimeException e) {
+            exchange.fail(e);
+            throw e;
         } finally {
             try {
                 stream.close();
@@ -159,19 +229,21 @@ public class OpenAiClient implements LlmClient {
     @Override
     public ChatCompletionResult completeChat(List<ChatRequestMessage> messages, String model,
                                               List<ToolDefinition> tools, CancellationToken token) {
-        ObjectNode body = MAPPER.createObjectNode();
-        body.put("model", model);
-        body.put("stream", false);
-        body.set("messages", toMessagesNode(messages));
-        if (tools != null && !tools.isEmpty()) {
-            body.set("tools", toToolsNode(tools));
-        }
+        return completeChat(messages, model, tools, 0, token);
+    }
+
+    @Override
+    public ChatCompletionResult completeChat(List<ChatRequestMessage> messages, String model,
+                                              List<ToolDefinition> tools, int maxTokens,
+                                              CancellationToken token) {
+        ObjectNode body = chatBody(messages, model, tools, maxTokens, false);
 
         HttpRequest request = requestBuilder("/chat/completions")
                 .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
                 .build();
 
-        JsonNode root = sendJson(request, token);
+        JsonNode root = sendJson(request, "POST", apiBase() + "/chat/completions",
+                redactBase64(body.toString()), token);
         JsonNode message = root.path("choices").path(0).path("message");
         String content = message.path("content").asText("");
 
@@ -192,18 +264,58 @@ public class OpenAiClient implements LlmClient {
         return new ChatCompletionResult(content, toolCalls);
     }
 
+    @Override
+    public String describeImage(String model, String question, byte[] imageBytes, String mimeType,
+                                 CancellationToken token) {
+        ObjectNode body = MAPPER.createObjectNode();
+        body.put("model", model);
+        body.put("stream", false);
+        ArrayNode messages = body.putArray("messages");
+        ObjectNode userMessage = messages.addObject();
+        userMessage.put("role", "user");
+        ArrayNode parts = userMessage.putArray("content");
+        parts.addObject().put("type", "text").put("text", question);
+        String dataUrl = "data:" + mimeType + ";base64,"
+                + java.util.Base64.getEncoder().encodeToString(imageBytes);
+        parts.addObject().put("type", "image_url").putObject("image_url").put("url", dataUrl);
+
+        HttpRequest request = requestBuilder("/chat/completions")
+                .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
+                .build();
+
+        // Redacted log body - the real payload carries a multi-MB base64 image.
+        JsonNode root = sendJson(request, "POST", apiBase() + "/chat/completions",
+                "<image: \"" + question + "\", " + imageBytes.length + " bytes, " + mimeType + ">", token);
+        return root.path("choices").path(0).path("message").path("content").asText("");
+    }
+
     /** Deferred to Phase 3 - see ARCHITECTURE plan. */
     @Override
     public boolean supportsImageGeneration() {
         return false;
     }
 
-    private ArrayNode toMessagesNode(List<ChatRequestMessage> messages) {
+    /** Collapses long base64 image payloads in a request body so DebugLog doesn't store multi-MB lines. */
+    private static String redactBase64(String json) {
+        return json.replaceAll("(data:[^;\"]+;base64,)[A-Za-z0-9+/=]{48,}", "$1<elided>");
+    }
+
+    // Package-private for OpenAiClientTest (multimodal content serialization).
+    ArrayNode toMessagesNode(List<ChatRequestMessage> messages) {
         ArrayNode array = MAPPER.createArrayNode();
         for (ChatRequestMessage message : messages) {
             ObjectNode node = array.addObject();
             node.put("role", message.role());
-            if (message.content() != null) {
+            if (message.image() != null) {
+                // Multimodal user turn: content becomes an OpenAI parts array.
+                ArrayNode parts = node.putArray("content");
+                if (message.content() != null && !message.content().isEmpty()) {
+                    parts.addObject().put("type", "text").put("text", message.content());
+                }
+                String dataUrl = "data:" + message.image().mimeType() + ";base64,"
+                        + java.util.Base64.getEncoder().encodeToString(message.image().bytes());
+                parts.addObject().put("type", "image_url").putObject("image_url").put("url", dataUrl);
+            } else if (message.content() != null) {
                 node.put("content", message.content());
             } else {
                 node.putNull("content");
@@ -239,14 +351,41 @@ public class OpenAiClient implements LlmClient {
         return array;
     }
 
-    private JsonNode sendJson(HttpRequest request, CancellationToken token) {
-        HttpResponse<String> response = send(request, HttpResponse.BodyHandlers.ofString(), token);
-        checkStatus(response.statusCode(), response.body());
+    private JsonNode sendJson(HttpRequest request, String logMethod, String logUrl, String logBody,
+                              CancellationToken token) {
+        DebugLog.Exchange exchange = DebugLog.begin(logMethod, logUrl, logBody);
+        HttpResponse<String> response;
         try {
-            return MAPPER.readTree(response.body());
+            response = send(request, HttpResponse.BodyHandlers.ofString(), token);
+        } catch (RuntimeException e) {
+            exchange.fail(e);
+            throw e;
+        }
+        exchange.succeed(response.statusCode(), response.body());
+        checkStatus(response.statusCode(), response.body());
+        JsonNode root;
+        try {
+            root = MAPPER.readTree(response.body());
         } catch (IOException e) {
             throw new ProviderException(ErrorCode.UNKNOWN, "Malformed response from server", e);
         }
+        // A 2xx response whose body is actually an error object (llama.cpp / Lemonade do this
+        // for context-size failures) - treat it as the failure it is instead of returning an
+        // empty completion.
+        JsonNode error = root.get("error");
+        if (error != null && !error.isNull()) {
+            throw ProviderException.classify(new IOException(errorText(error)));
+        }
+        return root;
+    }
+
+    /** Pulls a human string out of an OpenAI-style {@code error} node, which may be a bare string or {message, ...}. */
+    private static String errorText(JsonNode error) {
+        if (error.isTextual()) {
+            return error.asText();
+        }
+        String message = error.path("message").asText("");
+        return message.isEmpty() ? error.toString() : message;
     }
 
     private InputStream sendStreaming(HttpRequest request, CancellationToken token) {

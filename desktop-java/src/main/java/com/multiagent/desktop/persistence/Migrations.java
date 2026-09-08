@@ -50,6 +50,9 @@ final class Migrations {
             addColumnIfMissing(st, "conversations", "model", "TEXT");
             addColumnIfMissing(st, "conversations", "serverId", "TEXT");
             addColumnIfMissing(st, "conversations", "personaId", "TEXT");
+            addColumnIfMissing(st, "conversations", "visionModel", "TEXT");
+            addColumnIfMissing(st, "conversations", "specialistModels", "TEXT");
+            addColumnIfMissing(st, "conversations", "orchestratorApply", "TEXT");
 
             st.execute("""
                     CREATE TABLE IF NOT EXISTS folders (
@@ -57,6 +60,17 @@ final class Migrations {
                       addedAt INTEGER NOT NULL
                     )
                     """);
+            st.execute("""
+                    CREATE TABLE IF NOT EXISTS projects (
+                      id TEXT PRIMARY KEY,
+                      name TEXT NOT NULL,
+                      createdAt INTEGER NOT NULL
+                    )
+                    """);
+            // No FK to projects.id - same loose-coupling style as folders -> conversations.workspacePath
+            // below: application code unbinds on delete rather than relying on cascade.
+            addColumnIfMissing(st, "folders", "projectId", "TEXT");
+
             st.execute("""
                     CREATE TABLE IF NOT EXISTS file_checkpoints (
                       id TEXT PRIMARY KEY,

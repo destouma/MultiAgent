@@ -61,6 +61,18 @@ class PlanParserTest {
     }
 
     @Test
+    void noJsonFallbackUsesTheFirstAllowedIdNotAHardcodedOne() {
+        PlanParser.PlanResult result = PlanParser.parsePlan("no plan here", List.of("security", "tester"));
+        assertEquals(List.of("security"), result.specialists());
+    }
+
+    @Test
+    void noJsonWithNoAllowedIdsYieldsAnEmptyPlan() {
+        PlanParser.PlanResult result = PlanParser.parsePlan("no plan here", List.of());
+        assertTrue(result.specialists().isEmpty());
+    }
+
+    @Test
     void handlesAnEmptySpecialistsArray() {
         PlanParser.PlanResult result = PlanParser.parsePlan("{\"specialists\":[],\"rationale\":\"trivial request\"}",
                 ALLOWED);

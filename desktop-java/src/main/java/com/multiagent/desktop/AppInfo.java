@@ -9,12 +9,12 @@ package com.multiagent.desktop;
 public final class AppInfo {
 
     public static final String NAME = "MultiAgent";
-    public static final String VERSION = "1.3.0";
+    public static final String VERSION = "1.3.1";
 
     private AppInfo() {
     }
 
-    /** e.g. {@code "MultiAgent 1.3.0"} - for window titles and the Settings footer. */
+    /** e.g. {@code "MultiAgent 1.3.1"} - for window titles and the Settings footer. */
     public static String nameWithVersion() {
         return NAME + " " + VERSION;
     }

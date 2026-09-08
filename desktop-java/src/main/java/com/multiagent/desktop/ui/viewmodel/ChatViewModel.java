@@ -523,7 +523,8 @@ public class ChatViewModel {
         if (conversation == null) {
             return;
         }
-        Conversation updated = store.setConversationOrchestratorApply(conversation.getId(), on ? "1" : null);
+        // Default (null) already means "on"; only persist an explicit "0" opt-out, clearing back to null to re-enable.
+        Conversation updated = store.setConversationOrchestratorApply(conversation.getId(), on ? null : "0");
         activeConversation.set(updated);
         int index = conversations.indexOf(conversation);
         if (index >= 0) {

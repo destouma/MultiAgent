@@ -21,7 +21,11 @@ public class Conversation {
     private String visionModel;
     /** Orchestrator only: JSON {"specialistId":"modelId"} of per-conversation model overrides. Blank/null ⇒ none. */
     private String specialistModels;
-    /** Orchestrator only: "1" ⇒ run the write-capable executor phase after synthesis (still approval-gated). */
+    /**
+     * Orchestrator only: whether the write-capable executor phase runs after synthesis (every write
+     * is still approval-gated). It's <em>on by default</em> whenever a workspace is bound - {@code "0"}
+     * is an explicit opt-out (pure planning), {@code "1"}/null both mean "run it".
+     */
     private String orchestratorApply;
 
     public Conversation() {
@@ -142,8 +146,9 @@ public class Conversation {
         this.orchestratorApply = orchestratorApply;
     }
 
+    /** True unless the user explicitly opted out ({@code "0"}); the caller still gates this on a workspace being bound. */
     public boolean isOrchestratorApply() {
-        return "1".equals(orchestratorApply);
+        return !"0".equals(orchestratorApply);
     }
 
     @Override

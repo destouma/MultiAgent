@@ -56,6 +56,13 @@
 
 .error-banner {
     -fx-text-fill: #f87171;
+    -fx-wrap-text: true;
+    -fx-background-color: #402626;
+    -fx-border-color: #7f1d1d;
+    -fx-border-width: 1;
+    -fx-border-radius: 6;
+    -fx-background-radius: 6;
+    -fx-padding: 6 10 6 10;
 }
 
 .bubble-user {

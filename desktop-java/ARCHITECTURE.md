@@ -104,7 +104,7 @@ flowchart TB
 
 - **UI (`ui/`, `ui/components/`)** — plain-Java JavaFX construction (no FXML), reacting to `ChatViewModel`'s `ObservableList`/`Property` fields. `MainWindow` owns the sidebar (folder-grouped `TreeView`, bound to the primary view model only) and the global topbar (Search/Refresh/Settings/Close-split); `ChatPaneView` is the per-pane topbar+thread+composer, instantiated twice for split view.
 - **ViewModel (`ui/viewmodel/ChatViewModel`)** — the MVVM layer and the seam that gives each conversation its own isolated state. Holds a `ConversationSession` per conversation id (streaming buffer, workspace-op list, error, orchestrator status) so switching the active conversation never carries over another one's in-flight state, and a `resolveModelFor`/`resolveServerFor`/`resolvePersonaFor` trio that reads each of those off the `Conversation` row itself rather than a single shared field — this is what makes model/server/persona genuinely per-chat (see [§10](#10-differences-from-the-electron-client) for why persona differs from the Electron app here). Background work runs on a per-instance executor and marshals results back via `Platform.runLater`.
-- **Services (`service/`)** — `ChatService` (plain chat + delegates to `ToolLoopRunner` when a workspace is bound), `OrchestratorService` (plan → specialists → synthesize, with its own smaller read-only tool executor), `ToolLoopRunner` (the shared native-tool-calling/XML-tag/JSON-tool-call agent loop, factored out so `ChatService` and future callers don't duplicate it), `CheckpointService` (diff/revert), `PersonaRegistry`, `ConfigService`.
+- **Services (`service/`)** — `ChatService` (plain chat + delegates to `ToolLoopRunner` when a workspace is bound), `OrchestratorService` (plan → specialists → synthesize, with its own smaller read-only tool executor), `ToolLoopRunner` (the shared native-tool-calling/XML-tag/JSON-tool-call agent loop, factored out so `ChatService` and future callers don't duplicate it), `CheckpointService` (diff/revert), `PersonaRegistry`, `ConfigService`, `DebugLog` (opt-in raw HTTP capture — see [§6](#raw-api-debug-log)).
 - **Persistence (`persistence/`)** — `ConversationStore` over `sqlite-jdbc`, `Migrations` (additive, `PRAGMA table_info`-guarded).
 - **Workspace (`workspace/`)** — `WorkspaceService` (sandboxed list/read/write/delete/rename + tree-building), `ActionTagParser` and `JsonToolCallParser` (two independent fallbacks for models without reliable native tool-calling — see [§6](#6-features-in-detail)).
 - **Action approval (`action/`, `ui/components/DialogActionApprover`)** — a small, deliberately generic interface (`ActionApprover.approve(PendingAction)`) sitting between the tool loop and execution, so any future mutating action type (not just files) can gate on the same "describe → ask → execute" pipeline without new plumbing.
@@ -118,6 +118,8 @@ flowchart TB
 5. Callbacks (`onToken`/`onDone`/`onError`/`onWorkspaceOp`) land on `ChatViewModel`'s `Listener`, which updates that conversation's `ConversationSession` and, via `Platform.runLater`, the observable properties the UI is bound to.
 
 For `kind == ORCHESTRATOR`, `ChatViewModel` calls `OrchestratorService.send(...)` instead, which drives its own plan/specialist/synthesize sequence and reports progress through `onStep`/`onMessagesUpdated`.
+
+**Provider errors mid-stream.** llama.cpp / Lemonade answer a streaming request with HTTP 200 and then report failures (most commonly `request … exceeds the available context size`) as an `{"error": …}` SSE frame rather than an HTTP status. `OpenAiClient.streamChat` inspects every frame for that `error` object and throws it as a `ProviderException` (classified to `CONTEXT_EXCEEDED` etc.), instead of the frame being dropped and the turn ending with a silent empty reply. The non-streaming path (`sendJson`) does the same for a 2xx body that is actually an error object.
 
 ### Tool-calling agent loop (`ToolLoopRunner`)
 
@@ -162,6 +164,7 @@ MultiAgent/
         OrchestratorService.java      # plan -> specialists -> synthesize
         CheckpointService.java        # diff/revert
         PersonaRegistry.java  ConfigService.java  ExportFormat.java  PlanParser.java
+        DebugLog.java                 # opt-in raw LLM HTTP capture (in-memory ring + api-debug.log)
       model/
         Persona.java  Conversation.java  ConversationKind.java  ChatMessage.java  MessageRole.java
         ServerProfile.java  ProviderType.java  AppSettings.java  ThemeMode.java
@@ -177,6 +180,7 @@ MultiAgent/
           SettingsDialog.java  ServerEditDialog.java
           SearchDialog.java  SplitPickerDialog.java  DiffDialog.java
           DialogActionApprover.java    # the "ask before writing/deleting/renaming" dialog
+          DebugLogWindow.java          # non-modal viewer for DebugLog (list + raw request/response)
     src/main/resources/com/multiagent/desktop/ui/
       styles.css  theme-dark.css  theme-terminal.css
     src/test/java/com/multiagent/desktop/...   # JUnit 5, one test class per main class above
@@ -202,6 +206,7 @@ MultiAgent/
 | `theme`           | `light`                           | `light` \| `dark` \| `terminal`                                                 |
 | `servers`         | `[]`                              | Saved `ServerProfile` list (id, name, providerType, baseUrl, apiKey, maxHistory) |
 | `activeServerId`  | `null`                            | Id of the `servers` entry currently copied into the active-connection fields    |
+| `debugLogging`    | `false`                           | "Debug: log raw API traffic" — feeds `DebugLog` (in-app panel + `api-debug.log`), see [§6](#raw-api-debug-log) |
 
 `ConfigService.ensureDefaultServer()` seeds one profile from the active-connection fields on first run if `servers` is empty, exactly mirroring `electron/config.ts`'s `ensureDefaultServer()`.
 
@@ -233,6 +238,7 @@ There's no IPC layer in this client — `ChatViewModel` calls services directly,
 | `ChatService.setActionApprover(approver)` | sync | Installs the write/delete/rename confirmation gate |
 | `CheckpointService.diff(checkpointId)` / `.revert(checkpointId)` | sync | Backing calls for the chat thread's View diff / Revert buttons |
 | `ConversationStore.*` | sync, JDBC | CRUD + `search()` + folder/checkpoint tables — called directly by `ChatViewModel`, no separate repository-of-repositories layer |
+| `DebugLog.setEnabled` / `.entries()` / `.clear()` / `.begin(...)` | sync, static | Opt-in raw HTTP capture: `App`/`SettingsDialog` toggle it, `OpenAiClient`/`LemonadeClient` feed it, `DebugLogWindow` reads it |
 
 `ChatViewModel` exposes the UI-facing half of this as JavaFX bindable state (`conversations()`, `messages()`, `activeConversationProperty()`, `streamingProperty()`, `errorMessageProperty()`, etc.) plus action methods (`sendMessage`, `newConversation`, `setPersona`, `setModel`, `setServer`, `search`, `exportConversation`, `diffCheckpoint`/`revertCheckpoint`, ...) that wrap the calls above with the per-conversation session bookkeeping described in [§2](#2-architecture).
 
@@ -285,6 +291,18 @@ Every successful `write_file`/`delete_file` captures a checkpoint (`ToolLoopRunn
 
 **Search** (global topbar) calls `ConversationStore.search(term)` — a `LIKE` match (SQL wildcards escaped) against conversation titles first, then message content, capped at 30 results, deduped by conversation. Each conversation's right-click menu offers **Export as Markdown** / **Export as JSON** (`ExportFormat`), saved via a native `FileChooser` with a slugified-title default filename.
 
+### Raw API debug log
+
+Opt-in capture of every LLM HTTP exchange, for diagnosing "weird behaviour with the server" (a silent empty reply, a model that won't load, a context-size rejection) instead of guessing. Off by default.
+
+- **Toggle:** Settings → **"Debug: log raw API traffic"**, persisted as `AppSettings.debugLogging`. `App.start()` pushes the stored value into `DebugLog` at launch; `SettingsDialog` applies changes live (`DebugLog.setEnabled`), no restart.
+- **`DebugLog`** (`service/`) is a static holder with two sinks, both best-effort — a logging failure never slows or breaks a real request (every path swallows its own errors):
+  - an in-memory `ObservableList<Entry>` capped at 500, mutated only via `Platform.runLater` (so headless unit tests, which never enable it, stay safe), that `DebugLogWindow` binds to;
+  - an append-only JSONL file, `%APPDATA%/MultiAgentJava/api-debug.log`, one object per exchange.
+- **What's captured** (`DebugLog.Entry`): start time, method, URL, request body, response status, response body (for streams, the raw SSE lines accumulated), duration, error. Request/response bodies only — the `Authorization` header is never read or logged, so there's nothing to redact.
+- **Instrumentation points** — `OpenAiClient` wraps each exchange in a `DebugLog.Exchange` handle (`begin` → `succeed`/`fail`): `/chat/completions` streaming and non-streaming, `/models`; `LemonadeClient` adds `/health` and `/load`. When disabled, `begin` returns a shared no-op handle, so call sites need no `if` guard.
+- **Viewer** — `DebugLogWindow`, a non-modal `Stage` opened from the **Debug** button in the global topbar (one instance, re-focused on repeat clicks). Left: the call list, red for errors / 4xx+. Right: the selected call's raw request + response. Buttons: **Copy** (one entry), **Copy all**, **Clear**, **Open log file**, plus a wrap toggle. The window shows a line stating whether capture is currently on.
+
 ### Themes
 
 Three complete, self-contained stylesheets (`styles.css` / `theme-dark.css` / `theme-terminal.css`) swapped wholesale on the `Scene` (`MainWindow.applyTheme`) rather than layered — each overrides Modena's base variables (`-fx-base`, `-fx-background`, `-fx-control-inner-background`, `-fx-text-base-color`) so stock JavaFX controls pick up the theme too, plus this app's own custom style classes. **Terminal** is a black-background, `#33ff33`-text, monospace, square-cornered 1980s-green-screen look. Picked in Settings (applies immediately, persisted to `AppSettings.theme`).
@@ -325,6 +343,12 @@ Or in IntelliJ: open `desktop-java/pom.xml` as a project, then run the `MultiAge
 2. Right-click the folder → **Side by side** → pick Left/Right → **OK**.
 3. **× Close split** (global topbar) hides the second pane without deleting either conversation.
 
+### Inspecting raw API traffic
+
+1. Settings → tick **Debug: log raw API traffic** → **OK**.
+2. Send a message, then click **Debug** in the global topbar.
+3. Pick a call to see its raw request and response; **Copy** / **Copy all** for a bug report, or **Open log file** for `api-debug.log`. Untick the setting to stop capturing.
+
 ---
 
 ## 8. Develop & build
@@ -357,7 +381,7 @@ mvn clean package
 jpackage \
   --type exe \
   --name MultiAgent \
-  --app-version 1.0.0 \
+  --app-version 1.1.0 \
   --vendor MultiAgent \
   --input target/jpackage-input \
   --main-jar multiagent-desktop.jar \
@@ -372,7 +396,9 @@ jpackage \
 
 **Why `--main-class com.multiagent.desktop.Launcher` and not `App` directly:** `App` extends `javafx.application.Application`. The JVM refuses to start an `Application` subclass directly as the manifest/`--main-class` main class unless JavaFX is on the *module path* - which a plain classpath app built from `jpackage`'s input-directory mode never is (confirmed live: `Error: JavaFX runtime components are missing, and are required to run this application`). `Launcher` (`Launcher.java`) exists solely to sidestep this: a plain `main(String[])` that just calls `App.main(args)`. `mvn javafx:run`'s dev loop doesn't need this detour - that plugin sets up the module path itself, so its `<mainClass>` still points straight at `App`.
 
-Output: `target/dist/MultiAgent-<version>.exe`. Verified end-to-end for 1.0.0: builds, installs (Start Menu + desktop shortcut, registers in Add/Remove Programs), and the installed app launches correctly from `C:\Program Files\MultiAgent\MultiAgent.exe`.
+Output: `target/dist/MultiAgent-<version>.exe`. Verified end-to-end for 1.0.0: builds, installs (Start Menu + desktop shortcut, registers in Add/Remove Programs), and the installed app launches correctly from `C:\Program Files\MultiAgent\MultiAgent.exe`. The current `1.1.0` is a version-string bump (`pom.xml`, `AppInfo.VERSION`, `--app-version`) with no packaging changes; the installer flow itself hasn't been re-verified since 1.0.0.
+
+The runtime version string lives in `com.multiagent.desktop.AppInfo` (`NAME` / `VERSION`) — shown in the window title and the Settings dialog footer, and kept in sync by hand with `pom.xml` and `--app-version` on each release (no Maven resource filtering is wired up).
 
 **Not yet done:** Linux/macOS packaging (Windows-only for now, matching where `desktop/`'s own installer effort focused first), and none of this is wired into a Maven plugin or CI - it's a manual two-step process today.
 
@@ -385,6 +411,7 @@ Output: `target/dist/MultiAgent-<version>.exe`. Verified end-to-end for 1.0.0: b
 | Health badge / status shows offline | Server not running, wrong URL, or wrong provider type   | Start the server; check Settings base URL and provider type          |
 | Empty model list                  | Server up but no models loaded                          | Pull/run a model on the server                                       |
 | Model never becomes "ready" (Lemonade) | `/load` failing or model too large for available memory | Check Lemonade's own logs; try a smaller model                        |
+| Reply comes back empty, or an error mentions context size | Request bigger than the server's loaded context window (e.g. Lemonade's default 4096) | Lower **Max history** in Settings, attach less, or load the model with a larger `--ctx-size` on the server. Turn on **Debug: log raw API traffic** to see the exact request/response |
 | Confirmation dialog never appears for a write | Model didn't emit a recognized tool call at all (see [ToolLoopRunner](#tool-calling-agent-loop-toolloopruner)) | Check the raw assistant text in the thread — if it's describing the action in prose instead of emitting one of the three recognized shapes, that model/server combination isn't reliably tool-calling; try a different model or provider |
 | Tool / write errors               | Path outside workspace, or targeting an ignored dir      | Stay under the bound folder; avoid `..`                               |
 | `mvn: command not found`          | Maven not on PATH                                       | Install Maven, or open the project in an IDE with bundled Maven support |
@@ -394,6 +421,7 @@ Output: `target/dist/MultiAgent-<version>.exe`. Verified end-to-end for 1.0.0: b
 
 - Settings: `%APPDATA%\MultiAgentJava\config.json`
 - Database: `%APPDATA%\MultiAgentJava\chats.db`
+- Raw API debug log (only while **Debug: log raw API traffic** is on): `%APPDATA%\MultiAgentJava\api-debug.log`
 
 ---
 
@@ -420,6 +448,25 @@ Everything else — folders, side-by-side split view, per-conversation server pi
 
 Raised in conversation, not yet built. Recorded here so they survive past the chat they were discussed in, not as commitments.
 
+### Triage
+
+Rough scoring — **Effort** is what it takes to ship *well* (not a prototype), **Need** is how often it'd actually matter, **Risk** is blast radius if it goes wrong. Ordered by suggested sequencing.
+
+| Feature | Effort | Need | Risk | Notes |
+| --- | --- | --- | --- | --- |
+| Git commit-message-from-diff | Low | Med–High | Low | `git_diff` + `git_commit` already exist; commit stays approval-gated |
+| Pin/star a conversation | Low | Med–High | Very low | Boolean column + sidebar toggle; folders *and* projects both nest the list now |
+| Cross-folder project "notes" | Low | Med | Low | One prompt-injected text field, like the workspace tree already is; watch prompt bloat |
+| Split view "send to both panes" | Low–Med | Med | Low | Two view models already independent; real model-vs-model A/B. 2× load on a single-slot server |
+| Command palette (Ctrl+K) | Med | Med | Very low | Mostly new code — `SearchDialog` is content search, not a navigator |
+| [Model-invoked HTTP(S) fetch tool](#model-invoked-https-fetch-tool) | Med | **High** | **High** | The call is trivial; the SSRF denylist / allowlist / approval design is the work. Highest-demand item |
+| Replay / send HTTP from the Debug panel | Low–Med | Low–Med | Low–Med | Panel + captured entries exist; human-driven, keep debug-only |
+| SAST/SBOM launcher in-app | Med | Low–Med | Low–Med | Blocked on the user designing its shape first; more third-party tooling to trust |
+| [Vision / image attachments](#vision--image-attachments) | High | Med | Low–Med | Not image *generation* — model reads an attached image. No multimodal `content` path in any `LlmClient` yet; models exist (Qwen2.5-VL, Gemma 3, LLaVA…) |
+| [Docker tool integration](#docker-tool-integration) | Med–High | Low–Med | **High** | `build` = arbitrary host code exec; `logs`/`inspect` leak secrets; blast radius = whole host |
+
+**Sequencing:** the top three are quick, wanted, near-riskless — do those first, then split-send and the palette. The HTTP fetch tool is the highest-value item but the security design must be done deliberately, not rushed. Defer vision and Docker until a concrete need appears; SAST waits on the user's own thinking.
+
 ### Docker tool integration
 
 `GitService`'s shape (allowlisted subcommands, one hand-built argv per tool via `ProcessBuilder` - never a shell string, read-only vs. mutating split, mutating ones behind `ActionApprover`) generalizes naturally to Docker. The gap versus git: git's blast radius is one repo; Docker's is the whole host (`--privileged`, `-v /:/host`, `--network=host`). A regex on refs was enough sanitization for git; Docker's flag surface is much harder to fully close off. Proposed scope if this gets built:
@@ -432,12 +479,77 @@ Raised in conversation, not yet built. Recorded here so they survive past the ch
 
 `run`/`exec` are excluded from the proposal on purpose: sanitizing their flag space properly is a meaningfully bigger problem than anything `GitService` had to solve, and shipping the clearly-safe subset beats half-sanitizing the dangerous one.
 
+### Model-invoked HTTP(S) fetch tool
+
+A workspace-style tool — alongside `read_file` / `list_dir` / the `git_*` set — that lets the **model itself** make an HTTP(S) request (fetch a URL, hit an API, download a page to summarize). Attractive because a lot of "look this up" / "check this endpoint" tasks currently dead-end at the model having no network reach at all.
+
+The blast radius is the reason it isn't built yet — bigger than git's (one repo) or even the proposed Docker tier (the host): an unrestricted fetch tool is a straight-up **SSRF and data-exfiltration primitive**. A prompt-injected or confused model could hit `169.254.169.254` cloud metadata, `localhost` admin ports, or the LLM server's own control endpoints, or POST the workspace contents to an attacker URL. So it can't ship on the same "read-only ⇒ no approval" logic the file/git read tools use.
+
+Sketch of a shape that could be defensible:
+
+| Concern | Proposed handling |
+| --- | --- |
+| Methods | `GET`/`HEAD` only in the auto-allowed tier; `POST`/`PUT`/`DELETE` always gated through `ActionApprover` with the full URL + body shown |
+| Destinations | Deny by default: block private/link-local/loopback ranges and the configured LLM server's own host; optional user allowlist of hosts in Settings |
+| Redirects | Not followed automatically across hosts (a same-host redirect is fine; a cross-host one re-checks the denylist / re-prompts) |
+| Response | Size-capped and returned as text only (like `read_file`'s cap); no cookie jar, no auth headers unless the user set them per-allowlisted-host |
+| Visibility | Every call still flows through `DebugLog` like the LLM traffic does, and shows as a workspace-op row in the thread |
+| Orchestrator specialists | Excluded entirely, same as mutating tools — a read-only-looking tool with this much reach shouldn't be in the low-friction path |
+
+Related but distinct from the debug-panel "replay a request" idea below: that one is a human clicking resend on traffic the app already made; this one is the model originating new requests, which is a much larger trust decision.
+
+### Vision / image attachments
+
+**Not the same as image generation.** Two different capabilities that both get called "vision":
+
+| | Direction | Examples | Status |
+| --- | --- | --- | --- |
+| Image *generation* | text → image | DALL·E, Stable Diffusion, Flux | Deferred — the separate "image generation" item, out of scope for the port |
+| Vision / VLM | image → text | the model *reads* an attached screenshot / diagram / PDF page and answers about it | This item |
+
+This one is about attaching an image to the composer and having the model interpret it — nothing is generated.
+
+**Models that could do it** (all open-weight, run through an OpenAI-compatible or Ollama server):
+
+- **Qwen2.5-VL** (3B / 7B / 32B / 72B), and the newer **Qwen3-VL** — strongest open VLMs for OCR, documents, charts, UI screenshots; GGUF + `mmproj` for llama.cpp.
+- **Gemma 3** (4B / 12B / 27B) — multimodal all-rounder, llama.cpp + Ollama.
+- **Llama 3.2 Vision** (11B / 90B) — check the license/region terms.
+- **MiniCPM-V 2.6** (8B) — small, strong OCR. **LLaVA 1.5 / 1.6** — the classic llama.cpp path (model GGUF + `mmproj`).
+- **Moondream2** (~2B), **SmolVLM** (256M–2.2B) — tiny/fast, fine for captioning and simple Q&A on modest hardware.
+- **Phi-3.5-vision** (4.2B), **InternVL2.5**, **Pixtral 12B** — other viable options.
+
+**Why it isn't wired up:**
+
+1. **Message format** — `OpenAiClient.toMessagesNode` sends `content` as a plain string. Vision needs `content` as an array of parts (`{type:"text"}` + `{type:"image_url", image_url:{url:"data:image/png;base64,…"}}`). None of the three `LlmClient` implementations build that shape.
+2. **Server support** — llama.cpp does vision only when started with `--mmproj`; **Lemonade**'s VLM support is backend-dependent and still landing (confirm against its current model list); **Ollama** has the cleanest story (`ollama run qwen2.5-vl` / `gemma3` / `llava`, base64 `images` array) but this app rejects the Ollama provider at connect time.
+3. **Composer** — the attachment path handles UTF-8 text only today (see [§6](#6-features-in-detail)); binary/image handling and thumbnail rendering would be new.
+
+Same payload/context-budget caveat as large text attachments — an image is a few hundred to a few thousand tokens and can blow a small context window (cf. the 4096-token rejection in [§9](#9-troubleshooting)).
+
+**Design note — a code model and a vision model working together.** Loading both at once is not the hard part: Lemonade's `/health` reports `all_models_loaded` as an array, so two models can be resident simultaneously, and `LemonadeClient.ensureModelLoaded(name)` already loads one by id on demand. The open question is how they collaborate. Four shapes, cheapest first:
+
+| Approach | What it is | Build size |
+| --- | --- | --- |
+| **A. Vision-as-a-tool** | A `describe_image(path, question)` tool alongside `read_file`. On call: `ensureModelLoaded(visionModel)` → one-shot multimodal `/chat/completions` to the VLM → return its text answer as the tool result. The code model keeps driving; `ToolLoopRunner`, sandboxing, `DebugLog` and the workspace-op row all apply unchanged. | Small |
+| **B. Preprocessing pass** | On image attach, auto-run the VLM once ("transcribe everything, including text/code/diagrams") and inject that text into the code model's context. The code model never sees pixels. Deterministic, no tool-calling-reliability worry — but lossy and can't re-look. | Smallest |
+| **C. New `ConversationKind` (`VISION`)** | A chat with two pinned models + a routing service (image turns → VLM, else → code model) and two model pickers in the topbar, mirroring how `ORCHESTRATOR` is its own kind + service. | Large — migration, new service, dual-model resolution (`resolveModelFor` returns one today), UI |
+| **D. Multi-model orchestrator** | Let an orchestrator *specialist* pin a different model; "vision" becomes a specialist persona whose model is the VLM, and the code-model coordinator delegates to it. Reuses plan/specialist/synthesize wholesale. | Medium — "specialist can override model" + the multimodal builder |
+
+Recommended path: **A**, optionally with a light **B** (auto-describe once on attach so the code model has *something* even if it never calls the tool; the tool then answers follow-ups). A new window / `ConversationKind` (**C**) only earns its keep if the two models should be co-equal and user-visible as a pair, or 3+ models are foreseen. Minimum concrete steps for **A**:
+
+1. `AppSettings` / `ServerProfile` — add a `visionModel` id (the already-present unused `imageModel` field is the same pattern).
+2. `LlmClient` — extend `completeChat` to accept multimodal `content` parts (build the `data:` URL from file bytes); this is the "message format" gap above.
+3. `WorkspaceService.workspaceTools()` — a `describe_image` def: `path` (via `resolveSafe`) + `question`, byte-capped. Read-only ⇒ no `ActionApprover` prompt.
+4. `WorkspaceService.executeTool` / `ToolLoopRunner` — on `describe_image`: ensure the vision model is loaded, one-shot call, return text.
+5. `ChatService.buildSystemPrompt` / `WorkspaceService.workspaceTools()` — advertise `describe_image` (its instruction line *and* its native-tool `ToolDefinition`) only when a `visionModel` is configured in Settings, the same way the `git_*` tools are listed only for a git-repo workspace. Otherwise a model told the tool exists will call it and get "no vision model configured" back — a wasted round-trip.
+6. Composer (optional) — binary/image attach; until then the tool can only point at images already inside the bound workspace folder.
+
 ### Other ideas raised, not yet built
 
 - **SAST/SBOM launcher inside the app** — running Syft/Grype/CodeQL-style scans as a first-class in-app action (the current `release-verify/security-scan/` workflow is a manual, outside-the-app process). Explicitly deferred - the user wants to think through the shape of this one before it's designed.
-- **Vision/binary attachments** — the composer's text-file attachment only handles UTF-8 text today (see [§6](#6-features-in-detail)); images would need a multimodal request format none of the three `LlmClient` implementations speak yet, and there's no local vision-model story either. Same category as image *generation*, already out of scope for this port.
 - **Cross-folder project "notes"** — when project grouping ([§6](#6-features-in-detail)) was designed, a shared free-text notes field per project (injected into every chat's system prompt across that project's folders, like the workspace tree already is) was floated as a middle ground between "no shared context" (what shipped) and full cross-chat memory. Deliberately deferred - per-chat memory was judged enough for now.
 - **Split view "send to both panes"** — split view today is two fully independent panes; firing the same prompt at both at once (e.g. two different models/servers side by side) would turn it into real A/B comparison, which nothing else in the app currently offers.
 - **Git commit-message-from-diff quick action** — a one-click "draft a commit message from what's staged," built on the `git_diff`/`git_commit` tools that already exist.
 - **Pin/star a conversation** — easy to lose one specific chat now that folders *and* projects both add nesting levels to the sidebar.
 - **Command palette (Ctrl+K)** — jump to any conversation/folder/project by typing; `SearchDialog` today is content search, not a fast navigator.
+- **Send / replay an HTTP request from the Debug panel** — the raw-API-traffic viewer ([§6](#raw-api-debug-log)) is read-only today. A "resend" on a captured exchange (optionally after editing method/URL/headers/body in place), plus a blank free-form request form, would turn it into a small built-in REST client — useful for poking a local LLM server's non-chat endpoints (`/health`, `/load`, `/models`, custom extensions) without leaving the app or reaching for curl/Postman. Would need its own outbound call path separate from `OpenAiClient` (arbitrary method + headers, no response parsing), and stays a *human-driven* debug action — the model originating its own requests is the separate, much larger "Model-invoked HTTP(S) fetch tool" idea above.

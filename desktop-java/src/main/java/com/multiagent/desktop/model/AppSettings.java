@@ -22,6 +22,7 @@ public class AppSettings {
     private ProviderType providerType = ProviderType.LEMONADE;
     private List<ServerProfile> servers = new ArrayList<>();
     private String activeServerId;
+    private boolean debugLogging = false;
 
     public String getBaseUrl() {
         return baseUrl;
@@ -93,5 +94,13 @@ public class AppSettings {
 
     public void setActiveServerId(String activeServerId) {
         this.activeServerId = activeServerId;
+    }
+
+    public boolean isDebugLogging() {
+        return debugLogging;
+    }
+
+    public void setDebugLogging(boolean debugLogging) {
+        this.debugLogging = debugLogging;
     }
 }

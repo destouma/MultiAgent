@@ -5,11 +5,18 @@ import com.multiagent.desktop.ui.viewmodel.ChatViewModel;
 import javafx.beans.binding.Bindings;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
+import javafx.scene.Cursor;
 import javafx.scene.control.Button;
+import javafx.scene.control.ContextMenu;
 import javafx.scene.control.Label;
+import javafx.scene.control.MenuItem;
 import javafx.scene.control.TextArea;
+import javafx.scene.control.Tooltip;
+import javafx.scene.input.Clipboard;
+import javafx.scene.input.ClipboardContent;
 import javafx.scene.input.Dragboard;
 import javafx.scene.input.KeyCode;
+import javafx.scene.input.MouseButton;
 import javafx.scene.input.TransferMode;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
@@ -53,12 +60,20 @@ public class Composer extends VBox {
 
         Label error = new Label();
         error.getStyleClass().add("error-banner");
+        // Model-load / provider errors can be long (a 404 body echoes the whole model id).
+        // Wrap to the composer width instead of truncating with an ellipsis.
+        error.setWrapText(true);
+        error.setMaxWidth(Double.MAX_VALUE);
+        makeCopyable(error);
         error.visibleProperty().bind(viewModel.errorMessageProperty().isNotEmpty());
         error.managedProperty().bind(error.visibleProperty());
         error.textProperty().bind(viewModel.errorMessageProperty());
 
         Label attachError = new Label();
         attachError.getStyleClass().add("error-banner");
+        attachError.setWrapText(true);
+        attachError.setMaxWidth(Double.MAX_VALUE);
+        makeCopyable(attachError);
         attachError.setVisible(false);
         attachError.setManaged(false);
 
@@ -209,6 +224,33 @@ public class Composer extends VBox {
 
     private static String formatBytes(long bytes) {
         return bytes < 1024 ? bytes + " bytes" : String.format("%.1f KB", bytes / 1024.0);
+    }
+
+    /**
+     * Makes an error banner {@link Label} copyable: left-click or the right-click "Copy error"
+     * item puts the current text on the system clipboard. A plain Label can't be selected, and
+     * these messages (model-load 404s, provider errors) are exactly what a user wants to paste
+     * into a bug report.
+     */
+    private static void copyToClipboard(String text) {
+        ClipboardContent content = new ClipboardContent();
+        content.putString(text == null ? "" : text);
+        Clipboard.getSystemClipboard().setContent(content);
+    }
+
+    private static void makeCopyable(Label banner) {
+        banner.setCursor(Cursor.HAND);
+        banner.setTooltip(new Tooltip("Click to copy"));
+
+        MenuItem copyItem = new MenuItem("Copy error");
+        copyItem.setOnAction(e -> copyToClipboard(banner.getText()));
+        banner.setContextMenu(new ContextMenu(copyItem));
+
+        banner.setOnMouseClicked(e -> {
+            if (e.getButton() == MouseButton.PRIMARY) {
+                copyToClipboard(banner.getText());
+            }
+        });
     }
 
     /**

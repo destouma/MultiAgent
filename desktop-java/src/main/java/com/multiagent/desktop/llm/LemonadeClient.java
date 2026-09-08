@@ -1,6 +1,7 @@
 package com.multiagent.desktop.llm;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.multiagent.desktop.service.DebugLog;
 
 import java.io.IOException;
 import java.net.http.HttpRequest;
@@ -32,14 +33,17 @@ public class LemonadeClient extends OpenAiClient {
     }
 
     private JsonNode tryGetServerHealth(CancellationToken token) {
+        DebugLog.Exchange exchange = DebugLog.begin("GET", apiBase() + "/health", null);
         try {
             HttpRequest request = requestBuilder("/health").GET().build();
             HttpResponse<String> response = HTTP.send(request, HttpResponse.BodyHandlers.ofString());
+            exchange.succeed(response.statusCode(), response.body());
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
                 return null;
             }
             return MAPPER.readTree(response.body());
         } catch (IOException | InterruptedException e) {
+            exchange.fail(e);
             return null;
         }
     }
@@ -68,18 +72,21 @@ public class LemonadeClient extends OpenAiClient {
     }
 
     private void loadModel(String model, CancellationToken token) {
+        String requestBody = MAPPER.createObjectNode().put("model_name", model).toString();
+        DebugLog.Exchange exchange = DebugLog.begin("POST", apiBase() + "/load", requestBody);
         try {
             HttpRequest request = requestBuilder("/load")
-                    .POST(HttpRequest.BodyPublishers.ofString(
-                            MAPPER.createObjectNode().put("model_name", model).toString()))
+                    .POST(HttpRequest.BodyPublishers.ofString(requestBody))
                     .build();
             HttpResponse<String> response = HTTP.send(request, HttpResponse.BodyHandlers.ofString());
+            exchange.succeed(response.statusCode(), response.body());
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
                 throw new ProviderException(ErrorCode.MODEL_NOT_LOADED,
                         "Failed to load model \"" + model + "\" (" + response.statusCode() + "): "
                                 + response.body());
             }
         } catch (IOException | InterruptedException e) {
+            exchange.fail(e);
             throw ProviderException.classify(e);
         }
     }

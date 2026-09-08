@@ -7,6 +7,7 @@ import com.multiagent.desktop.model.ProjectEntry;
 import com.multiagent.desktop.model.ThemeMode;
 import com.multiagent.desktop.service.ExportFormat;
 import com.multiagent.desktop.ui.components.ChatPaneView;
+import com.multiagent.desktop.ui.components.DebugLogWindow;
 import com.multiagent.desktop.ui.components.SearchDialog;
 import com.multiagent.desktop.ui.components.SettingsDialog;
 import com.multiagent.desktop.ui.components.SplitPickerDialog;
@@ -64,6 +65,7 @@ public class MainWindow {
     private final ChatPaneView secondaryPane;
     private final SplitPane centerSplit = new SplitPane();
     private final Button closeSplitButton = new Button("× Close split");
+    private DebugLogWindow debugWindow;
 
     public MainWindow(ChatViewModel primary, ChatViewModel secondary) {
         this.primary = primary;
@@ -385,14 +387,27 @@ public class MainWindow {
             dialog.showAndWait();
         });
 
+        Button debugButton = new Button("Debug");
+        debugButton.setOnAction(e -> openDebugWindow());
+
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
 
-        HBox bar = new HBox(10, title, spacer, closeSplitButton, searchButton, refreshButton, settingsButton);
+        HBox bar = new HBox(10, title, spacer, closeSplitButton, searchButton, refreshButton,
+                debugButton, settingsButton);
         bar.setAlignment(Pos.CENTER_LEFT);
         bar.setPadding(new Insets(8, 12, 8, 12));
         bar.getStyleClass().add("global-topbar");
         return bar;
+    }
+
+    /** Opens the raw-API-traffic window, or focuses it if it's already up (one instance, non-modal). */
+    private void openDebugWindow() {
+        if (debugWindow == null || !debugWindow.isShowing()) {
+            debugWindow = new DebugLogWindow(ownerWindow());
+        }
+        debugWindow.show();
+        debugWindow.toFront();
     }
 
     /** The app's own top-level window - used to parent every dialog/alert this class opens, so none of them can end up opening behind it. */

@@ -124,7 +124,10 @@ public class ChatPaneView extends BorderPane {
 
         ComboBox<String> modelBox = new ComboBox<>();
         modelBox.setPromptText("Model");
-        modelBox.setEditable(true);
+        // Non-editable: the model id must be one the server actually reported. An editable
+        // box let stray keystrokes prepend to the id (e.g. "analyse this file" + a real id),
+        // which the server then 404s as model_not_found.
+        modelBox.setEditable(false);
         syncModelItems(modelBox, viewModel.models());
         viewModel.models().addListener((ListChangeListener<ModelInfo>) c -> syncModelItems(modelBox, viewModel.models()));
         modelBox.valueProperty().addListener((obs, old, val) -> {

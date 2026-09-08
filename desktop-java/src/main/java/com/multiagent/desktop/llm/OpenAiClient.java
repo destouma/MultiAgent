@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.multiagent.desktop.llm.streaming.SseLineReader;
 import com.multiagent.desktop.model.HealthStatus;
 import com.multiagent.desktop.model.ModelInfo;
+import com.multiagent.desktop.service.DebugLog;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -81,7 +82,7 @@ public class OpenAiClient implements LlmClient {
     @Override
     public List<ModelInfo> listModels() {
         HttpRequest request = requestBuilder("/models").GET().build();
-        JsonNode root = sendJson(request, null);
+        JsonNode root = sendJson(request, "GET", apiBase() + "/models", null, null);
         List<ModelInfo> models = new ArrayList<>();
         JsonNode data = root.path("data");
         if (data.isArray()) {
@@ -131,22 +132,46 @@ public class OpenAiClient implements LlmClient {
                 .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
                 .build();
 
-        InputStream stream = sendStreaming(request, token);
+        DebugLog.Exchange exchange = DebugLog.begin("POST", apiBase() + "/chat/completions", body.toString());
+        StringBuilder rawStream = new StringBuilder();
+
+        InputStream stream;
+        try {
+            stream = sendStreaming(request, token);
+        } catch (RuntimeException e) {
+            exchange.fail(e);
+            throw e;
+        }
         try {
             SseLineReader.read(stream, data -> {
+                rawStream.append(data).append('\n');
                 JsonNode chunk;
                 try {
                     chunk = MAPPER.readTree(data);
                 } catch (IOException e) {
                     return;
                 }
+                // Some OpenAI-compatible servers (llama.cpp / Lemonade) return HTTP 200 and
+                // then report failures - e.g. "request exceeds the available context size" -
+                // as an {"error": ...} frame inside the stream. Without this the frame is
+                // dropped, the stream just ends, and the app shows an empty reply with no
+                // error at all.
+                JsonNode error = chunk.get("error");
+                if (error != null && !error.isNull()) {
+                    throw ProviderException.classify(new IOException(errorText(error)));
+                }
                 String delta = chunk.path("choices").path(0).path("delta").path("content").asText(null);
                 if (delta != null && !delta.isEmpty()) {
                     onDelta.accept(delta);
                 }
             }, token);
+            exchange.succeed(200, rawStream.toString());
         } catch (IOException e) {
+            exchange.fail(e);
             throw ProviderException.classify(e);
+        } catch (RuntimeException e) {
+            exchange.fail(e);
+            throw e;
         } finally {
             try {
                 stream.close();
@@ -171,7 +196,7 @@ public class OpenAiClient implements LlmClient {
                 .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
                 .build();
 
-        JsonNode root = sendJson(request, token);
+        JsonNode root = sendJson(request, "POST", apiBase() + "/chat/completions", body.toString(), token);
         JsonNode message = root.path("choices").path(0).path("message");
         String content = message.path("content").asText("");
 
@@ -239,14 +264,41 @@ public class OpenAiClient implements LlmClient {
         return array;
     }
 
-    private JsonNode sendJson(HttpRequest request, CancellationToken token) {
-        HttpResponse<String> response = send(request, HttpResponse.BodyHandlers.ofString(), token);
-        checkStatus(response.statusCode(), response.body());
+    private JsonNode sendJson(HttpRequest request, String logMethod, String logUrl, String logBody,
+                              CancellationToken token) {
+        DebugLog.Exchange exchange = DebugLog.begin(logMethod, logUrl, logBody);
+        HttpResponse<String> response;
         try {
-            return MAPPER.readTree(response.body());
+            response = send(request, HttpResponse.BodyHandlers.ofString(), token);
+        } catch (RuntimeException e) {
+            exchange.fail(e);
+            throw e;
+        }
+        exchange.succeed(response.statusCode(), response.body());
+        checkStatus(response.statusCode(), response.body());
+        JsonNode root;
+        try {
+            root = MAPPER.readTree(response.body());
         } catch (IOException e) {
             throw new ProviderException(ErrorCode.UNKNOWN, "Malformed response from server", e);
         }
+        // A 2xx response whose body is actually an error object (llama.cpp / Lemonade do this
+        // for context-size failures) - treat it as the failure it is instead of returning an
+        // empty completion.
+        JsonNode error = root.get("error");
+        if (error != null && !error.isNull()) {
+            throw ProviderException.classify(new IOException(errorText(error)));
+        }
+        return root;
+    }
+
+    /** Pulls a human string out of an OpenAI-style {@code error} node, which may be a bare string or {message, ...}. */
+    private static String errorText(JsonNode error) {
+        if (error.isTextual()) {
+            return error.asText();
+        }
+        String message = error.path("message").asText("");
+        return message.isEmpty() ? error.toString() : message;
     }
 
     private InputStream sendStreaming(HttpRequest request, CancellationToken token) {

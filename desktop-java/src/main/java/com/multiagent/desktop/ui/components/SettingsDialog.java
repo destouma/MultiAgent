@@ -1,9 +1,11 @@
 package com.multiagent.desktop.ui.components;
 
+import com.multiagent.desktop.AppInfo;
 import com.multiagent.desktop.model.AppSettings;
 import com.multiagent.desktop.model.ServerProfile;
 import com.multiagent.desktop.model.ThemeMode;
 import com.multiagent.desktop.service.ConfigService;
+import com.multiagent.desktop.service.DebugLog;
 import com.multiagent.desktop.ui.viewmodel.ChatViewModel;
 
 import javafx.collections.FXCollections;
@@ -13,6 +15,7 @@ import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.control.Button;
 import javafx.scene.control.ButtonType;
+import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Dialog;
 import javafx.scene.control.Label;
@@ -54,6 +57,15 @@ public class SettingsDialog extends Dialog<Void> {
         themeBox.setValue(settings.getTheme());
         HBox themeRow = new HBox(8, new Label("Theme"), themeBox);
         themeRow.setAlignment(Pos.CENTER_LEFT);
+
+        // --- Debug: raw API traffic capture (global, like theme). ---
+        CheckBox debugBox = new CheckBox("Debug: log raw API traffic");
+        debugBox.setSelected(settings.isDebugLogging());
+        Label debugHint = new Label("Records every request/response to the Debug panel and "
+                + "api-debug.log next to config.json.");
+        debugHint.setWrapText(true);
+        debugHint.setStyle("-fx-text-fill: gray; -fx-font-size: 11px;");
+        VBox debugRow = new VBox(2, debugBox, debugHint);
 
         // --- Servers: "+ Add new" above the list; each row gets Edit/Remove on the right. ---
         Label serversLabel = new Label("Servers");
@@ -138,7 +150,10 @@ public class SettingsDialog extends Dialog<Void> {
         // default marker recomputed, not just the changed row.
         servers.addListener((ListChangeListener<ServerProfile>) c -> serverList.refresh());
 
-        VBox layout = new VBox(12, themeRow, serversHeader, serverList);
+        Label versionLabel = new Label(AppInfo.nameWithVersion());
+        versionLabel.setStyle("-fx-text-fill: gray; -fx-font-size: 11px;");
+
+        VBox layout = new VBox(12, themeRow, debugRow, serversHeader, serverList, versionLabel);
         layout.setPadding(new Insets(12));
         layout.setPrefWidth(420);
 
@@ -157,6 +172,7 @@ public class SettingsDialog extends Dialog<Void> {
             config.updateSettings(s -> {
                 s.setServers(new ArrayList<>(servers));
                 s.setTheme(themeBox.getValue());
+                s.setDebugLogging(debugBox.isSelected());
                 if (defaultProfile != null) {
                     s.setActiveServerId(defaultProfile.getId());
                     s.setBaseUrl(defaultProfile.getBaseUrl());
@@ -165,6 +181,7 @@ public class SettingsDialog extends Dialog<Void> {
                     s.setMaxHistory(defaultProfile.getMaxHistory());
                 }
             });
+            DebugLog.setEnabled(debugBox.isSelected());
             viewModel.applySettingsChange();
             if (onThemeApplied != null) {
                 onThemeApplied.accept(themeBox.getValue());

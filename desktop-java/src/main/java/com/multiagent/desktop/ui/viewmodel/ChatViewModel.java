@@ -509,6 +509,17 @@ public class ChatViewModel {
             return false;
         }
 
+        // If we have a model list from this server, the target must be in it. Catches a
+        // stale conversation pin or a corrupted id before it becomes a doomed request that
+        // the server rejects with model_not_found.
+        if (!models.isEmpty() && models.stream().noneMatch(m -> m.id().equals(model))) {
+            String msg = "Model \"" + model + "\" isn't available on " + profile.getName()
+                    + ". Pick one from the Model dropdown.";
+            sessionFor(conversation.getId()).errorMessage = msg;
+            errorMessage.set(msg);
+            return false;
+        }
+
         String conversationId = conversation.getId();
         ConversationSession session = sessionFor(conversationId);
         session.errorMessage = "";

@@ -64,7 +64,7 @@ public class ConversationStore implements AutoCloseable {
     }
 
     public List<Conversation> listConversations() {
-        String sql = "SELECT id, title, createdAt, updatedAt, workspacePath, kind, model, serverId, personaId, visionModel, specialistModels, orchestratorApply "
+        String sql = "SELECT id, title, createdAt, updatedAt, workspacePath, kind, model, serverId, personaId, visionModel, specialistModels "
                 + "FROM conversations ORDER BY updatedAt DESC";
         List<Conversation> conversations = new ArrayList<>();
         try (PreparedStatement stmt = connection.prepareStatement(sql);
@@ -162,18 +162,6 @@ public class ConversationStore implements AutoCloseable {
         return getConversation(id);
     }
 
-    public Conversation setConversationOrchestratorApply(String id, String value) {
-        try (PreparedStatement stmt = connection.prepareStatement(
-                "UPDATE conversations SET orchestratorApply = ? WHERE id = ?")) {
-            stmt.setString(1, value);
-            stmt.setString(2, id);
-            stmt.executeUpdate();
-        } catch (SQLException e) {
-            throw new IllegalStateException(e);
-        }
-        return getConversation(id);
-    }
-
     public Conversation setConversationServer(String id, String serverId) {
         try (PreparedStatement stmt = connection.prepareStatement(
                 "UPDATE conversations SET serverId = ? WHERE id = ?")) {
@@ -219,7 +207,7 @@ public class ConversationStore implements AutoCloseable {
     }
 
     public Conversation getConversation(String id) {
-        String sql = "SELECT id, title, createdAt, updatedAt, workspacePath, kind, model, serverId, personaId, visionModel, specialistModels, orchestratorApply "
+        String sql = "SELECT id, title, createdAt, updatedAt, workspacePath, kind, model, serverId, personaId, visionModel, specialistModels "
                 + "FROM conversations WHERE id = ?";
         try (PreparedStatement stmt = connection.prepareStatement(sql)) {
             stmt.setString(1, id);
@@ -604,7 +592,6 @@ public class ConversationStore implements AutoCloseable {
                 rs.getString("personaId"));
         conversation.setVisionModel(rs.getString("visionModel"));
         conversation.setSpecialistModels(rs.getString("specialistModels"));
-        conversation.setOrchestratorApply(rs.getString("orchestratorApply"));
         return conversation;
     }
 

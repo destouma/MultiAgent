@@ -52,6 +52,9 @@ final class Migrations {
             addColumnIfMissing(st, "conversations", "personaId", "TEXT");
             addColumnIfMissing(st, "conversations", "visionModel", "TEXT");
             addColumnIfMissing(st, "conversations", "specialistModels", "TEXT");
+            // Legacy: the orchestrator "executor phase" opt-out. Specialists now write directly
+            // (approval-gated), so nothing reads this column any more - kept so existing DBs
+            // don't need a drop, and re-adding it stays a harmless no-op.
             addColumnIfMissing(st, "conversations", "orchestratorApply", "TEXT");
 
             st.execute("""

@@ -6,7 +6,6 @@ import com.multiagent.desktop.model.Persona;
 import javafx.collections.FXCollections;
 import javafx.geometry.Insets;
 import javafx.scene.control.ButtonType;
-import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Dialog;
 import javafx.scene.control.Label;
@@ -21,22 +20,16 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Orchestrator only: pick which model each specialist runs on for THIS conversation (a blank
- * pick means "use the specialist's persona default, else this conversation's model"), and
- * whether the coordinator may run the write-capable executor phase after synthesis. Returns
- * an {@link OrchestratorConfig} on OK, null on Cancel.
+ * Orchestrator only: pick which model each specialist runs on for THIS conversation. A blank
+ * pick means "use the specialist's persona default, else this conversation's model". Returns
+ * the map of non-blank picks on OK, null on Cancel.
  */
-public class SpecialistModelsDialog extends Dialog<SpecialistModelsDialog.OrchestratorConfig> {
+public class SpecialistModelsDialog extends Dialog<Map<String, String>> {
 
     private static final String DEFAULT_SENTINEL = "";
 
-    /** @param specialistModels non-blank per-specialist model picks; @param apply run the executor phase. */
-    public record OrchestratorConfig(Map<String, String> specialistModels, boolean apply) {
-    }
-
     public SpecialistModelsDialog(List<Persona> specialists, Map<String, String> current,
-                                   List<ModelInfo> models, String conversationModel,
-                                   String workspacePath, boolean applyEnabled) {
+                                   List<ModelInfo> models, String conversationModel) {
         setTitle("Specialist models");
 
         Map<String, ComboBox<String>> boxes = new LinkedHashMap<>();
@@ -80,21 +73,6 @@ public class SpecialistModelsDialog extends Dialog<SpecialistModelsDialog.Orches
             row++;
         }
 
-        CheckBox applyBox = new CheckBox("Apply changes to the workspace after synthesizing"
-                + " (each write still asks for approval)");
-        applyBox.setSelected(applyEnabled && hasWorkspace(workspacePath));
-        Label applyHint = new Label(hasWorkspace(workspacePath)
-                ? "On by default once a folder is bound. Untick to make this a planning-only chat."
-                : "Bind a workspace folder to this chat to let it apply changes.");
-        applyHint.setStyle("-fx-text-fill: gray;");
-        applyHint.setWrapText(true);
-        if (!hasWorkspace(workspacePath)) {
-            applyBox.setSelected(false);
-            applyBox.setDisable(true);
-        }
-        grid.add(applyBox, 0, row++, 2, 1);
-        grid.add(applyHint, 0, row++, 2, 1);
-
         getDialogPane().setContent(grid);
         getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
 
@@ -109,11 +87,7 @@ public class SpecialistModelsDialog extends Dialog<SpecialistModelsDialog.Orches
                     result.put(id, value);
                 }
             });
-            return new OrchestratorConfig(result, applyBox.isSelected());
+            return result;
         });
-    }
-
-    private static boolean hasWorkspace(String workspacePath) {
-        return workspacePath != null && !workspacePath.isBlank();
     }
 }

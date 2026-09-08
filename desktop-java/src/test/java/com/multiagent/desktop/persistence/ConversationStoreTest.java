@@ -116,26 +116,6 @@ class ConversationStoreTest {
     }
 
     @Test
-    void setConversationOrchestratorApplyRoundTripsAndDefaultsOn() {
-        Conversation a = store.createConversation();
-        Conversation b = store.createConversation();
-
-        // Default (never set) means "apply" - the executor runs whenever a workspace is bound.
-        assertNull(store.getConversation(b.getId()).getOrchestratorApply());
-        assertTrue(store.getConversation(b.getId()).isOrchestratorApply());
-
-        // Explicit "0" is the opt-out (planning-only chat).
-        store.setConversationOrchestratorApply(a.getId(), "0");
-        assertEquals("0", store.getConversation(a.getId()).getOrchestratorApply());
-        assertFalse(store.getConversation(a.getId()).isOrchestratorApply());
-
-        // Clearing it back to null re-enables the default.
-        store.setConversationOrchestratorApply(a.getId(), null);
-        assertNull(store.getConversation(a.getId()).getOrchestratorApply());
-        assertTrue(store.getConversation(a.getId()).isOrchestratorApply());
-    }
-
-    @Test
     void setConversationPersonaPersistsIndependentlyPerConversation() {
         Conversation a = store.createConversation();
         Conversation b = store.createConversation();

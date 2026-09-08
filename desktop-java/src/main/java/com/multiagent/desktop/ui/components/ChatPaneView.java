@@ -190,15 +190,11 @@ public class ChatPaneView extends BorderPane {
             SpecialistModelsDialog dialog = new SpecialistModelsDialog(
                     viewModel.availableSpecialistPersonas(),
                     com.multiagent.desktop.service.SpecialistModels.parse(c.getSpecialistModels()),
-                    viewModel.models(), viewModel.activeModelProperty().get(),
-                    c.getWorkspacePath(), c.isOrchestratorApply());
+                    viewModel.models(), viewModel.activeModelProperty().get());
             if (specialistsButton.getScene() != null) {
                 dialog.initOwner(specialistsButton.getScene().getWindow());
             }
-            dialog.showAndWait().ifPresent(cfg -> {
-                viewModel.setSpecialistModels(cfg.specialistModels());
-                viewModel.setOrchestratorApply(cfg.apply());
-            });
+            dialog.showAndWait().ifPresent(viewModel::setSpecialistModels);
         });
         // "Vision" and "Persona" don't apply to an orchestrator chat (specialists don't do
         // vision; the persona box picks the *coordinator* instead) - hide Vision, relabel

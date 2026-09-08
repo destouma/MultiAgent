@@ -253,6 +253,8 @@ There's no IPC layer in this client — `ChatViewModel` calls services directly,
 
 Loaded from `personas/*.json` at the repo root (`PersonaRegistry`, sorted general/researcher/coder/critic first, then alphabetically, with a hard-coded fallback if the directory can't be found). Unlike the Electron app, **persona is pinned per conversation** here (`Conversation.personaId`), not a single pane-wide field — see [§10](#10-differences-from-the-electron-client). The topbar persona box is kind-filtered: a normal chat lists every persona *except* `orchestrator` (its "I coordinate specialists" prompt is meaningless with no specialists); an orchestrator chat lists all of them, since the box is the **Coordinator** picker there.
 
+Each persona's `color` (a `#hex` in its JSON) drives a 3px accent bar on the outer edge of every user bubble (the conversation's persona) and, in an orchestrator thread, on each specialist reply (its own persona) with a matching persona-name caption above it — `ChatThread` renders the bar as a sibling `Region`, not a CSS border, so it doesn't collide with the Terminal theme's own bubble outline. Colors are sanitized to a bare `#hex` before reaching an inline style.
+
 ### Folders
 
 **+ Add folder** in the sidebar registers a folder (native `DirectoryChooser`); it appears as a group in the folder-grouped `TreeView`. Right-click a folder → **New chat here** / **New orchestrator here** creates a session bound to it. Once a folder has 2+ conversations, its right-click menu also offers **Side by side**.

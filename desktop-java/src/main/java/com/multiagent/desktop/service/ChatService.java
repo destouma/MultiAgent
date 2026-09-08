@@ -81,8 +81,8 @@ public class ChatService {
 
     /** Persists the user message, then generates+persists the assistant reply on a background thread. */
     public void send(LlmClient client, Conversation conversation, String content, Persona persona,
-                      String model, String visionModel, int maxHistory, ImageAttachment image,
-                      Listener listener) {
+                      String model, String visionModel, int maxHistory, int contextTokens,
+                      ImageAttachment image, Listener listener) {
         String persistedContent = image != null
                 ? (content.isBlank() ? "" : content + "\n\n") + "[🖼️ " + image.name() + "]"
                 : content;
@@ -122,15 +122,28 @@ public class ChatService {
                 client.ensureModelLoaded(model,
                         status -> listener.onModelStatus(conversation.getId(), status), token);
 
+                // Fit the request to the server's context window: drop the oldest turns until
+                // the estimate leaves room for the reply, and cap generation to that room so
+                // the server can't overflow either. ctx <= 0 ⇒ unknown, keep maxHistory only.
+                int maxTokens = 0;
+                if (contextTokens > 0) {
+                    int reserve = Math.max(512, Math.min(contextTokens / 4, 4096));
+                    int budget = contextTokens - reserve;
+                    while (messages.size() > 2 && TokenEstimate.estimateMessages(messages) > budget) {
+                        messages.remove(1); // index 0 is the system prompt; keep it + the final turn
+                    }
+                    maxTokens = reserve;
+                }
+
                 if (workspacePath != null && !workspacePath.isBlank()) {
-                    String finalText = toolLoopRunner.run(client, model, visionModel, messages, workspacePath,
-                            conversation.getId(), token,
+                    String finalText = toolLoopRunner.run(client, model, visionModel, maxTokens, messages,
+                            workspacePath, conversation.getId(), token,
                             (op, path, status, detail, checkpointId) -> listener.onWorkspaceOp(
                                     conversation.getId(), assistantMessageId, op, path, status, detail, checkpointId));
                     buffer.append(finalText);
                     listener.onToken(conversation.getId(), assistantMessageId, finalText);
                 } else {
-                    client.streamChat(messages, model, delta -> {
+                    client.streamChat(messages, model, maxTokens, delta -> {
                         buffer.append(delta);
                         listener.onToken(conversation.getId(), assistantMessageId, delta);
                     }, token);
@@ -201,6 +214,8 @@ public class ChatService {
                     "Prefer tools when available. If tools are unavailable, emit exact XML actions:",
                     "<list_dir path=\".\" />",
                     "<read_file path=\"relative/path.ext\" />  (add offset=\"1\" limit=\"200\" to read only a line range)",
+                    "<search_file path=\"relative/path.ext\" pattern=\"text\" ignore_case=\"true\" context=\"2\" />  "
+                            + "(grep a large file for matching lines + line numbers; use before read_file on anything big)",
                     "<write_file path=\"relative/path.ext\">FULL FILE CONTENT</write_file>",
                     "<delete_file path=\"relative/path.ext\" />",
                     "<rename_file path=\"relative/old.ext\" newPath=\"relative/new.ext\" />",

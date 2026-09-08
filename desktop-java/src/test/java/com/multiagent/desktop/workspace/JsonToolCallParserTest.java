@@ -27,6 +27,18 @@ class JsonToolCallParserTest {
     }
 
     @Test
+    void parsesASearchFileJsonToolCall() {
+        String content = "{\"name\": \"search_file\", \"arguments\": {\"path\": \"scan.sarif\", "
+                + "\"pattern\": \"\\\"level\\\": \\\"error\\\"\", \"context\": 2}}";
+        List<ActionTagParser.ParsedAction> actions = JsonToolCallParser.parse(content);
+        assertEquals(1, actions.size());
+        assertEquals("search_file", actions.get(0).name());
+        assertEquals("scan.sarif", actions.get(0).args().get("path"));
+        assertEquals("\"level\": \"error\"", actions.get(0).args().get("pattern"));
+        assertEquals("2", actions.get(0).args().get("context"));
+    }
+
+    @Test
     void parsesADescribeImageJsonToolCall() {
         String content = "{\"name\": \"describe_image\", \"arguments\": {\"path\": \"ui/mock.png\", "
                 + "\"question\": \"list every button\"}}";

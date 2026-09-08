@@ -63,7 +63,7 @@ public class ToolLoopRunner {
         void onOp(String op, String path, String status, String detail, String checkpointId);
     }
 
-    public String run(LlmClient client, String model, String visionModel,
+    public String run(LlmClient client, String model, String visionModel, int maxTokens,
                        List<ChatRequestMessage> initialMessages,
                        String workspacePath, String conversationId, CancellationToken token,
                        ToolOpListener listener) {
@@ -83,11 +83,11 @@ public class ToolLoopRunner {
 
             ChatCompletionResult completion;
             try {
-                completion = client.completeChat(messages, model, toolsEnabled ? tools : List.of(), token);
+                completion = client.completeChat(messages, model, toolsEnabled ? tools : List.of(), maxTokens, token);
             } catch (RuntimeException e) {
                 if (toolsEnabled) {
                     toolsEnabled = false;
-                    completion = client.completeChat(messages, model, List.of(), token);
+                    completion = client.completeChat(messages, model, List.of(), maxTokens, token);
                 } else {
                     throw e;
                 }

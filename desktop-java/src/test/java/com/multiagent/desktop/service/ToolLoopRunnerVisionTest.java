@@ -54,7 +54,7 @@ class ToolLoopRunnerVisionTest {
                 msgs -> new ChatCompletionResult("The screenshot shows a login form.", List.of())));
 
         List<String> ops = new ArrayList<>();
-        String finalText = new ToolLoopRunner(store).run(client, "code-model", "vision-model",
+        String finalText = new ToolLoopRunner(store).run(client, "code-model", "vision-model", 0,
                 new ArrayList<>(List.of(ChatRequestMessage.user("look at shot.png"))),
                 workspace.toString(), "conv1", new CancellationToken(),
                 (op, path, status, detail, checkpointId) -> ops.add(op + ":" + status));
@@ -73,7 +73,7 @@ class ToolLoopRunnerVisionTest {
         VisionFake client = new VisionFake(List.of(
                 msgs -> new ChatCompletionResult("done", List.of())));
 
-        new ToolLoopRunner(store).run(client, "code-model", "  ",
+        new ToolLoopRunner(store).run(client, "code-model", "  ", 0,
                 new ArrayList<>(List.of(ChatRequestMessage.user("hi"))),
                 workspace.toString(), "conv2", new CancellationToken(),
                 (op, path, status, detail, checkpointId) -> { });

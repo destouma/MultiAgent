@@ -32,7 +32,7 @@ See [Differences from the Electron client](#10-differences-from-the-electron-cli
 | LLM          | `llm/` — `OpenAiClient` (generic OpenAI-compatible, via `java.net.http.HttpClient`), `LemonadeClient` (extends it with Lemonade's load-status extension), picked by `AppSettings.providerType` |
 | Settings     | Jackson-backed JSON file → `%APPDATA%/MultiAgentJava/config.json`                                                |
 | Chats        | SQLite via **sqlite-jdbc** (JDBC, no WASM) → `%APPDATA%/MultiAgentJava/chats.db`                                  |
-| Build/run    | Maven — `mvn javafx:run` for the dev loop; no packaged installer yet (see [§8](#8-develop--build))               |
+| Build/run    | Maven — `mvn javafx:run` for the dev loop; `mvn package` + `jpackage` for a per-OS installer, driven by CI (see [§8](#8-develop--build)) |
 
 **Security rule, ported as-is:** all file-system access is still funneled through `WorkspaceService`'s sandboxed `resolveSafe()` (relative-path check plus a `Path.toRealPath()` symlink check), exactly like `shared/workspace/workspaceService.ts`. There's no separate process boundary to enforce it — this is a single JVM — but the workspace tools never touch a path outside the bound folder regardless of what a model asks for.
 
@@ -204,7 +204,7 @@ MultiAgent/
 | `model`           | `""`                              | Fallback chat/orchestrator model for conversations without their own            |
 | `maxHistory`      | `40`                              | Max messages sent as history                                                    |
 | `theme`           | `light`                           | `light` \| `dark` \| `terminal`                                                 |
-| `servers`         | `[]`                              | Saved `ServerProfile` list (id, name, providerType, baseUrl, apiKey, maxHistory, visionModel) |
+| `servers`         | `[]`                              | Saved `ServerProfile` list (id, name, providerType, baseUrl, apiKey, maxHistory, visionModel, contextTokens) |
 | `activeServerId`  | `null`                            | Id of the `servers` entry currently copied into the active-connection fields    |
 | `debugLogging`    | `false`                           | "Debug: log raw API traffic" — feeds `DebugLog` (in-app panel + `api-debug.log`), see [§6](#raw-api-debug-log) |
 
@@ -263,7 +263,7 @@ Right-click a folder with 2+ conversations → **Side by side** opens `SplitPick
 A chat created from a folder has `workspacePath` set for its whole lifetime (fixed at creation). When bound:
 
 - The system prompt gets the workspace's directory tree plus tool-usage instructions.
-- Tools available: `list_dir`, `read_file`, `write_file`, `delete_file`, `rename_file`, and — only when the active server has a vision model configured — `describe_image` (see [Vision](#vision-describe_image--image-attachments)). `generate_image` is defined in the tool schema for forward-compat but rejected by `WorkspaceService.executeTool` — image *generation* isn't ported.
+- Tools available: `list_dir`, `read_file`, `search_file` (grep -n over one file — streamed line-by-line, so it takes a 10 MB SARIF/log the 200 KB attach path can't; returns matching lines + numbers, capped at 40 KB output; use it to find the ranges worth `read_file`-ing), `write_file`, `delete_file`, `rename_file`, and — only when the active server has a vision model configured — `describe_image` (see [Vision](#vision-describe_image--image-attachments)). `generate_image` is defined in the tool schema for forward-compat but rejected by `WorkspaceService.executeTool` — image *generation* isn't ported.
 - **Mutating tools ask first** — see [Approval gate](#approval-gate-for-file-writesdeletesrenames) below. This is new relative to the Electron app.
 - **Safety**, unchanged from the TS original: every path resolves under the workspace root via `WorkspaceService.resolveSafe()` — a plain `..`-rejection check, then a `Path.toRealPath()` symlink-resolved check so a symlink planted inside the workspace can't point files outside it. `node_modules`/`.git`/`dist`/etc. are skipped when building the tree.
 
@@ -369,6 +369,33 @@ Not wired: persisting images, multi-turn image memory, orchestrator specialists
 calling the tool, non-image binaries. See [§11](#11-ideas-not-yet-implemented)
 for choosing a VLM (Qwen2.5-VL etc.) and why Omni models aren't worth it yet.
 
+### Context-window fitting
+
+The blunt `maxHistory` message-count cap is backed by a token budget when the
+server's context window is known.
+
+- **Read it** — `LlmClient.contextWindow(model)`. `LemonadeClient` reads
+  `GET /health` → `all_models_loaded[].recipe_options.ctx_size` (the *loaded*
+  window; falls back to `max_context_window`); `OpenAiClient` reads `/models`
+  fields (`max_context_window` / `max_model_len` / `context_length` …, carried on
+  `ModelInfo.contextLength`). A manual `ServerProfile.contextTokens` (a spinner in
+  `ServerEditDialog`, 0 = auto) overrides. `ChatViewModel.refreshContextTokens`
+  resolves it on a background thread — on conversation switch, model/server
+  change, Settings save, Refresh — into `activeContextTokens` (0 = unknown).
+- **Fit to it** — in `ChatService.send`'s background block: `reserve =
+  clamp(ctx/4, 512, 4096)`; drop `messages.get(1)` (oldest after the system
+  prompt) while `TokenEstimate.estimateMessages` (chars/4 + ~4/msg + ~1200 for an
+  inline image) exceeds `ctx − reserve`; then send `max_tokens = reserve` so the
+  server also can't overflow. `LlmClient.streamChat` / `completeChat` gained
+  `maxTokens` overloads (default-delegating, so no provider/test-fake churn);
+  `OpenAiClient` puts `max_tokens` in the body when > 0.
+- **Show it** — `ContextUsageBar` renders `~N / <ctx>` when known, WARN at ¾,
+  DANGER at `ctx − reserve`.
+
+Not wired: the Orchestrator (keeps the message-count cap); a live re-probe if the
+model is reloaded at a different `ctx_size` mid-turn (the cache refreshes on the
+events above).
+
 ### Themes
 
 Three complete, self-contained stylesheets (`styles.css` / `theme-dark.css` / `theme-terminal.css`) swapped wholesale on the `Scene` (`MainWindow.applyTheme`) rather than layered — each overrides Modena's base variables (`-fx-base`, `-fx-background`, `-fx-control-inner-background`, `-fx-text-base-color`) so stock JavaFX controls pick up the theme too, plus this app's own custom style classes. **Terminal** is a black-background, `#33ff33`-text, monospace, square-cornered 1980s-green-screen look. Picked in Settings (applies immediately, persisted to `AppSettings.theme`).
@@ -453,7 +480,7 @@ mvn clean package
 jpackage \
   --type exe \
   --name MultiAgent \
-  --app-version 1.1.0 \
+  --app-version 1.2.0 \
   --vendor MultiAgent \
   --input target/jpackage-input \
   --main-jar multiagent-desktop.jar \
@@ -468,11 +495,21 @@ jpackage \
 
 **Why `--main-class com.multiagent.desktop.Launcher` and not `App` directly:** `App` extends `javafx.application.Application`. The JVM refuses to start an `Application` subclass directly as the manifest/`--main-class` main class unless JavaFX is on the *module path* - which a plain classpath app built from `jpackage`'s input-directory mode never is (confirmed live: `Error: JavaFX runtime components are missing, and are required to run this application`). `Launcher` (`Launcher.java`) exists solely to sidestep this: a plain `main(String[])` that just calls `App.main(args)`. `mvn javafx:run`'s dev loop doesn't need this detour - that plugin sets up the module path itself, so its `<mainClass>` still points straight at `App`.
 
-Output: `target/dist/MultiAgent-<version>.exe`. Verified end-to-end for 1.0.0: builds, installs (Start Menu + desktop shortcut, registers in Add/Remove Programs), and the installed app launches correctly from `C:\Program Files\MultiAgent\MultiAgent.exe`. The current `1.1.0` is a version-string bump (`pom.xml`, `AppInfo.VERSION`, `--app-version`) with no packaging changes; the installer flow itself hasn't been re-verified since 1.0.0.
+Output: `target/dist/MultiAgent-<version>.exe`. Verified end-to-end for 1.0.0: builds, installs (Start Menu + desktop shortcut, registers in Add/Remove Programs), and the installed app launches correctly from `C:\Program Files\MultiAgent\MultiAgent.exe`. 1.1.0 built a working `.exe` (WiX 5 + JDK 26) and its app-image was launch-checked; 1.2.0 is a version bump on top. The full install-and-run has not been re-verified since 1.0.0.
 
 The runtime version string lives in `com.multiagent.desktop.AppInfo` (`NAME` / `VERSION`) — shown in the window title and the Settings dialog footer, and kept in sync by hand with `pom.xml` and `--app-version` on each release (no Maven resource filtering is wired up).
 
-**Not yet done:** Linux/macOS packaging (Windows-only for now, matching where `desktop/`'s own installer effort focused first), and none of this is wired into a Maven plugin or CI - it's a manual two-step process today.
+### macOS / Linux
+
+`jpackage` can only target the OS it runs on (no cross-compile), so each installer is built on its own machine. Two pieces make that work:
+
+- **OpenJFX native classifier** — `pom.xml` has os-activated profiles (`jfx-windows` / `jfx-linux` / `jfx-mac-intel` / `jfx-mac-arm`) that set `${javafx.classifier}` to `win` / `linux` / `mac` / `mac-aarch64`, so a plain `mvn package` on each runner assembles `target/jpackage-input/` with that platform's jars. Override with `-Djavafx.classifier=…`.
+- **`jpackage` step** — same `--input` / `--main-jar` / `--main-class Launcher`, but per-OS `--type` and flags:
+  - **Windows** — `--type exe` (needs WiX v5), `--win-menu --win-shortcut --win-dir-chooser`, `.ico` icon.
+  - **Linux** — `--type deb` (needs `fakeroot`) or `rpm` (needs `rpmbuild`), `--linux-shortcut --linux-menu-group`, `.png` icon.
+  - **macOS** — `--type dmg` (or `pkg`), `--mac-package-identifier` / `--mac-package-name`, `.icns` icon (CI derives it from `icon.png` via `sips`). Distribution to other machines also needs Apple Developer signing (`--mac-sign …`) + notarization; unsigned builds run locally but Gatekeeper warns.
+
+**CI:** `.github/workflows/desktop-java.yml` — a `test` job (`mvn verify` on Ubuntu, every push/PR) plus an `installers` matrix (`windows-latest`, `ubuntu-latest`, `macos-13` Intel, `macos-14` arm64) that runs `mvn package` + the per-OS `jpackage` and uploads each artifact. It fires on `workflow_dispatch`, `v*` tags, and pushes to `master`.
 
 ---
 
@@ -483,7 +520,7 @@ The runtime version string lives in `com.multiagent.desktop.AppInfo` (`NAME` / `
 | Health badge / status shows offline | Server not running, wrong URL, or wrong provider type   | Start the server; check Settings base URL and provider type          |
 | Empty model list                  | Server up but no models loaded                          | Pull/run a model on the server                                       |
 | Model never becomes "ready" (Lemonade) | `/load` failing or model too large for available memory | Check Lemonade's own logs; try a smaller model                        |
-| Reply comes back empty, or an error mentions context size | Request bigger than the server's loaded context window (e.g. Lemonade's default 4096) | Lower **Max history** in Settings, attach less, or load the model with a larger `--ctx-size` on the server. Turn on **Debug: log raw API traffic** to see the exact request/response |
+| Reply comes back empty, or an error mentions context size | Request bigger than the server's loaded context window, and the app couldn't read that window (non-Lemonade server, or it doesn't report it) | Set **Context tokens** on the server profile (Edit server) so the app trims to fit; or lower **Max history**, attach less, or load the model with a larger `--ctx-size`. **Debug: log raw API traffic** shows the exact request |
 | Confirmation dialog never appears for a write | Model didn't emit a recognized tool call at all (see [ToolLoopRunner](#tool-calling-agent-loop-toolloopruner)) | Check the raw assistant text in the thread — if it's describing the action in prose instead of emitting one of the three recognized shapes, that model/server combination isn't reliably tool-calling; try a different model or provider |
 | Tool / write errors               | Path outside workspace, or targeting an ignored dir      | Stay under the bound folder; avoid `..`                               |
 | `mvn: command not found`          | Maven not on PATH                                       | Install Maven, or open the project in an IDE with bundled Maven support |

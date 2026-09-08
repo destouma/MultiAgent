@@ -48,6 +48,24 @@ class ActionTagParserTest {
     }
 
     @Test
+    void parsesASearchFileTagWithUnderscoreAttributes() {
+        List<ActionTagParser.ParsedAction> a = ActionTagParser.parse(
+                "<search_file path=\"scan.sarif\" pattern=\"level\" ignore_case=\"true\" max_matches=\"10\" />");
+        assertEquals(1, a.size());
+        assertEquals("search_file", a.get(0).name());
+        assertEquals("scan.sarif", a.get(0).args().get("path"));
+        assertEquals("level", a.get(0).args().get("pattern"));
+        assertEquals("true", a.get(0).args().get("ignore_case"));
+        assertEquals("10", a.get(0).args().get("max_matches"));
+    }
+
+    @Test
+    void ignoresASearchFileTagMissingPathOrPattern() {
+        assertTrue(ActionTagParser.parse("<search_file path=\"a.log\" />").isEmpty());
+        assertTrue(ActionTagParser.parse("<search_file pattern=\"x\" />").isEmpty());
+    }
+
+    @Test
     void parsesAReadFileTagWithOffsetAndLimit() {
         List<ActionTagParser.ParsedAction> actions = ActionTagParser.parse(
                 "<read_file path=\"src/Big.java\" offset=\"120\" limit=\"60\" />");

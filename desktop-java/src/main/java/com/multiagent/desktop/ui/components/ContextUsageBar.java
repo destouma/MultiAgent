@@ -45,6 +45,7 @@ public class ContextUsageBar extends HBox {
         viewModel.activeConversationProperty().addListener((obs, old, val) -> update.run());
         viewModel.activePersonaProperty().addListener((obs, old, val) -> update.run());
         viewModel.activeServerProperty().addListener((obs, old, val) -> update.run());
+        viewModel.activeContextTokensProperty().addListener((obs, old, val) -> update.run());
         update.run();
     }
 
@@ -71,7 +72,20 @@ public class ContextUsageBar extends HBox {
         }
 
         int tokens = TokenEstimate.estimateTokens(texts);
-        TokenEstimate.Level level = TokenEstimate.levelFor(tokens);
+        int ctx = viewModel.activeContextTokensProperty().get();
+
+        TokenEstimate.Level level;
+        String sizePart;
+        if (ctx > 0) {
+            int reserve = Math.max(512, Math.min(ctx / 4, 4096));
+            level = tokens >= ctx - reserve ? TokenEstimate.Level.DANGER
+                    : tokens >= ctx * 3 / 4 ? TokenEstimate.Level.WARN
+                    : TokenEstimate.Level.OK;
+            sizePart = "~" + tokens + " / " + ctx + " tokens";
+        } else {
+            level = TokenEstimate.levelFor(tokens);
+            sizePart = "~" + tokens + " tokens";
+        }
         dot.setTextFill(switch (level) {
             case OK -> Color.GRAY;
             case WARN -> Color.web("#d97706");
@@ -80,7 +94,7 @@ public class ContextUsageBar extends HBox {
 
         setVisible(true);
         setManaged(true);
-        text.setText("~" + tokens + " tokens · last " + capped.size()
+        text.setText(sizePart + " · last " + capped.size()
                 + " message" + (capped.size() == 1 ? "" : "s"));
     }
 }

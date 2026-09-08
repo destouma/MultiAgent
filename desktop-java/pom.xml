@@ -6,7 +6,7 @@
 
   <groupId>com.multiagent</groupId>
   <artifactId>desktop-java</artifactId>
-  <version>1.1.0</version>
+  <version>1.2.0</version>
   <packaging>jar</packaging>
 
   <name>MultiAgent Desktop (Java)</name>
@@ -26,13 +26,18 @@
          Launcher.java's javadoc. -->
     <main.class>com.multiagent.desktop.App</main.class>
     <packaged.main.class>com.multiagent.desktop.Launcher</packaged.main.class>
+    <!-- OpenJFX native-bearing classifier. Defaults to Windows; the os-activated
+         profiles below switch it to mac / mac-aarch64 / linux, and
+         `-Djavafx.classifier=…` overrides everything. -->
+    <javafx.classifier>win</javafx.classifier>
   </properties>
 
   <dependencies>
-    <!-- JavaFX. Classifier pinned to "win" explicitly on all four modules (base/graphics
+    <!-- JavaFX. The ${javafx.classifier} is set explicitly on all four modules (base/graphics
          included, not just the two this app imports directly - Maven doesn't reliably
-         propagate a classifier through transitive resolution) - Windows is the only
-         packaging target for now, matching desktop/'s own Windows-first NSIS installer. The
+         propagate a classifier through transitive resolution). It defaults to "win" and is
+         switched to mac / mac-aarch64 / linux by the os-activated <profiles> at the bottom of
+         this POM (so `mvn package` picks the right native jars on each CI runner). The
          classifier-less artifact has no native graphics/glass libraries at all, so
          mvn javafx:run's dev loop happens to work only because the javafx-maven-plugin
          resolves the platform-specific jars itself, separately from these plain
@@ -45,13 +50,13 @@
       <groupId>org.openjfx</groupId>
       <artifactId>javafx-base</artifactId>
       <version>${javafx.version}</version>
-      <classifier>win</classifier>
+      <classifier>${javafx.classifier}</classifier>
     </dependency>
     <dependency>
       <groupId>org.openjfx</groupId>
       <artifactId>javafx-graphics</artifactId>
       <version>${javafx.version}</version>
-      <classifier>win</classifier>
+      <classifier>${javafx.classifier}</classifier>
       <exclusions>
         <exclusion>
           <groupId>org.openjfx</groupId>
@@ -63,7 +68,7 @@
       <groupId>org.openjfx</groupId>
       <artifactId>javafx-controls</artifactId>
       <version>${javafx.version}</version>
-      <classifier>win</classifier>
+      <classifier>${javafx.classifier}</classifier>
       <exclusions>
         <exclusion>
           <groupId>org.openjfx</groupId>
@@ -75,7 +80,7 @@
       <groupId>org.openjfx</groupId>
       <artifactId>javafx-fxml</artifactId>
       <version>${javafx.version}</version>
-      <classifier>win</classifier>
+      <classifier>${javafx.classifier}</classifier>
       <exclusions>
         <exclusion>
           <groupId>org.openjfx</groupId>
@@ -241,4 +246,32 @@
       </plugin>
     </plugins>
   </build>
+
+  <!-- Selects the OpenJFX native classifier for the build host, so `mvn package` on a CI
+       runner assembles target/jpackage-input/ with the jars that OS's jpackage needs. Only
+       the property changes; the jpackage invocation itself stays a per-OS shell step (see
+       .github/workflows/desktop-java.yml and ARCHITECTURE.md §8). Override with
+       `-Djavafx.classifier=…` on the command line. -->
+  <profiles>
+    <profile>
+      <id>jfx-windows</id>
+      <activation><os><family>windows</family></os></activation>
+      <properties><javafx.classifier>win</javafx.classifier></properties>
+    </profile>
+    <profile>
+      <id>jfx-linux</id>
+      <activation><os><name>linux</name></os></activation>
+      <properties><javafx.classifier>linux</javafx.classifier></properties>
+    </profile>
+    <profile>
+      <id>jfx-mac-intel</id>
+      <activation><os><family>mac</family><arch>x86_64</arch></os></activation>
+      <properties><javafx.classifier>mac</javafx.classifier></properties>
+    </profile>
+    <profile>
+      <id>jfx-mac-arm</id>
+      <activation><os><family>mac</family><arch>aarch64</arch></os></activation>
+      <properties><javafx.classifier>mac-aarch64</javafx.classifier></properties>
+    </profile>
+  </profiles>
 </project>

@@ -43,6 +43,11 @@ public class ServerEditDialog extends Dialog<ServerProfile> {
         Spinner<Integer> maxHistorySpinner = new Spinner<>(1, 500,
                 existing != null ? existing.getMaxHistory() : AppSettings.DEFAULT_MAX_HISTORY);
         maxHistorySpinner.setEditable(true);
+        Spinner<Integer> contextTokensSpinner = new Spinner<>(0, 2_000_000,
+                existing != null ? existing.getContextTokens() : 0, 1024);
+        contextTokensSpinner.setEditable(true);
+        contextTokensSpinner.setTooltip(new javafx.scene.control.Tooltip(
+                "0 = ask the server (Lemonade reports it); set a value for servers that don't"));
 
         // Editable so an id the server doesn't currently list (not loaded yet, server down)
         // can still be typed; the dropdown is a convenience seeded from /models.
@@ -105,8 +110,9 @@ public class ServerEditDialog extends Dialog<ServerProfile> {
         grid.addRow(2, new Label("Base URL"), baseUrlField);
         grid.addRow(3, new Label("API key"), apiKeyField);
         grid.addRow(4, new Label("Max history"), maxHistorySpinner);
-        grid.addRow(5, new Label("Vision model"), visionRow);
-        grid.add(modelsStatus, 1, 6);
+        grid.addRow(5, new Label("Context tokens"), contextTokensSpinner);
+        grid.addRow(6, new Label("Vision model"), visionRow);
+        grid.add(modelsStatus, 1, 7);
 
         getDialogPane().setContent(grid);
         getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
@@ -123,7 +129,8 @@ public class ServerEditDialog extends Dialog<ServerProfile> {
             String visionModel = visionModelBox.getEditor().getText() == null
                     ? "" : visionModelBox.getEditor().getText().trim();
             return new ServerProfile(id, name, providerBox.getValue(), baseUrlField.getText(),
-                    apiKeyField.getText(), maxHistorySpinner.getValue(), visionModel);
+                    apiKeyField.getText(), maxHistorySpinner.getValue(), visionModel,
+                    contextTokensSpinner.getValue());
         });
     }
 }

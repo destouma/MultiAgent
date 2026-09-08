@@ -1,10 +1,14 @@
 package com.multiagent.desktop.service;
 
+import com.multiagent.desktop.llm.ChatRequestMessage;
+import com.multiagent.desktop.model.ImageAttachment;
+
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class TokenEstimateTest {
 
@@ -21,6 +25,23 @@ class TokenEstimateTest {
     @Test
     void treatsNullTextsAsZeroChars() {
         assertEquals(1, TokenEstimate.estimateTokens(java.util.Arrays.asList("ab", null)));
+    }
+
+    @Test
+    void estimateMessagesSumsContentPlusPerMessageOverhead() {
+        // "abcd" (4 chars -> 1) + "abcdefgh" (8 -> 2) = 3 content tokens, + 4 overhead per message
+        int estimate = TokenEstimate.estimateMessages(List.of(
+                ChatRequestMessage.user("abcd"), ChatRequestMessage.assistant("abcdefgh")));
+        assertEquals(3 + 2 * 4, estimate);
+    }
+
+    @Test
+    void estimateMessagesAddsAFlatCostForAnInlineImage() {
+        int text = TokenEstimate.estimateMessages(List.of(ChatRequestMessage.user("hi")));
+        int withImage = TokenEstimate.estimateMessages(List.of(ChatRequestMessage.userWithImage(
+                "hi", new ImageAttachment("a.png", "image/png", new byte[]{1, 2, 3}))));
+        assertEquals(text + TokenEstimate.IMAGE_TOKENS, withImage);
+        assertTrue(withImage > 1000);
     }
 
     @Test

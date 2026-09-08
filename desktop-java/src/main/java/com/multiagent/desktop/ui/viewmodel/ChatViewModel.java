@@ -26,9 +26,11 @@ import com.multiagent.desktop.service.PersonaRegistry;
 
 import javafx.application.Platform;
 import javafx.beans.property.BooleanProperty;
+import javafx.beans.property.IntegerProperty;
 import javafx.beans.property.LongProperty;
 import javafx.beans.property.ObjectProperty;
 import javafx.beans.property.SimpleBooleanProperty;
+import javafx.beans.property.SimpleIntegerProperty;
 import javafx.beans.property.SimpleLongProperty;
 import javafx.beans.property.SimpleObjectProperty;
 import javafx.beans.property.SimpleStringProperty;
@@ -96,6 +98,8 @@ public class ChatViewModel {
     private final ObjectProperty<ServerProfile> activeServer = new SimpleObjectProperty<>();
     private final StringProperty activeModel = new SimpleStringProperty("");
     private final StringProperty activeVisionModel = new SimpleStringProperty("");
+    /** Resolved context window for the active chat's server/model (0 = unknown). Drives request trimming + the usage bar. */
+    private final IntegerProperty activeContextTokens = new SimpleIntegerProperty(0);
     private final StringProperty streamingContent = new SimpleStringProperty("");
     private final BooleanProperty streaming = new SimpleBooleanProperty(false);
     private final StringProperty errorMessage = new SimpleStringProperty("");
@@ -305,6 +309,36 @@ public class ChatViewModel {
         activePersona.set(resolvePersonaFor(conversation));
         refreshModels(profile);
         refreshHealth(profile);
+        refreshContextTokens(profile, conversation);
+    }
+
+    /**
+     * Resolve the server's context window for this conversation's model - the manual
+     * {@code ServerProfile.contextTokens} override if set, else asked from the server (a
+     * cheap /health for Lemonade). Cached into {@link #activeContextTokens}; 0 = unknown.
+     */
+    private void refreshContextTokens(ServerProfile profile, Conversation conversation) {
+        int override = profile.getContextTokens();
+        if (override > 0) {
+            activeContextTokens.set(override);
+            return;
+        }
+        String model = resolveModelFor(conversation);
+        LlmClient client = clientFor(profile);
+        runAsync(() -> {
+            int resolved;
+            try {
+                resolved = client.contextWindow(model).orElse(0);
+            } catch (RuntimeException e) {
+                resolved = 0;
+            }
+            int finalResolved = resolved;
+            Platform.runLater(() -> {
+                if (activeServer.get() == profile) {
+                    activeContextTokens.set(finalResolved);
+                }
+            });
+        });
     }
 
     public void refreshModels() {
@@ -473,6 +507,7 @@ public class ChatViewModel {
         if (index >= 0) {
             conversations.set(index, updated);
         }
+        refreshContextTokens(resolveServerFor(updated), updated); // ctx window is per-model on Lemonade
         notifySiblings();
     }
 
@@ -677,7 +712,8 @@ public class ChatViewModel {
             orchestratorService.send(client, conversation, messageText, model, profile.getMaxHistory(), listener);
         } else {
             chatService.send(client, conversation, messageText, persona, model,
-                    resolveVisionModelFor(conversation), profile.getMaxHistory(), image, listener);
+                    resolveVisionModelFor(conversation), profile.getMaxHistory(),
+                    activeContextTokens.get(), image, listener);
         }
 
         // The user message is persisted synchronously inside ChatService/OrchestratorService's
@@ -767,6 +803,10 @@ public class ChatViewModel {
 
     public StringProperty activeVisionModelProperty() {
         return activeVisionModel;
+    }
+
+    public IntegerProperty activeContextTokensProperty() {
+        return activeContextTokens;
     }
 
     public StringProperty streamingContentProperty() {

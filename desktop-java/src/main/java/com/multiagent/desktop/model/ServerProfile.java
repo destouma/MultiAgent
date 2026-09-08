@@ -10,17 +10,24 @@ public class ServerProfile {
     private int maxHistory = 40;
     /** Id of a vision/multimodal model loaded on this server, enabling the describe_image tool + image attachments. Blank = off. */
     private String visionModel = "";
+    /** Manual context-window size (tokens) for this server; 0 = auto (ask the server, else fall back to maxHistory only). */
+    private int contextTokens = 0;
 
     public ServerProfile() {
     }
 
     public ServerProfile(String id, String name, ProviderType providerType, String baseUrl,
                           String apiKey, int maxHistory) {
-        this(id, name, providerType, baseUrl, apiKey, maxHistory, "");
+        this(id, name, providerType, baseUrl, apiKey, maxHistory, "", 0);
     }
 
     public ServerProfile(String id, String name, ProviderType providerType, String baseUrl,
                           String apiKey, int maxHistory, String visionModel) {
+        this(id, name, providerType, baseUrl, apiKey, maxHistory, visionModel, 0);
+    }
+
+    public ServerProfile(String id, String name, ProviderType providerType, String baseUrl,
+                          String apiKey, int maxHistory, String visionModel, int contextTokens) {
         this.id = id;
         this.name = name;
         this.providerType = providerType;
@@ -28,6 +35,7 @@ public class ServerProfile {
         this.apiKey = apiKey;
         this.maxHistory = maxHistory;
         this.visionModel = visionModel == null ? "" : visionModel;
+        this.contextTokens = Math.max(0, contextTokens);
     }
 
     public String getId() {
@@ -84,6 +92,14 @@ public class ServerProfile {
 
     public void setVisionModel(String visionModel) {
         this.visionModel = visionModel == null ? "" : visionModel;
+    }
+
+    public int getContextTokens() {
+        return contextTokens;
+    }
+
+    public void setContextTokens(int contextTokens) {
+        this.contextTokens = Math.max(0, contextTokens);
     }
 
     @Override

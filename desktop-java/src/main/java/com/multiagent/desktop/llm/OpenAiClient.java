@@ -87,10 +87,35 @@ public class OpenAiClient implements LlmClient {
         JsonNode data = root.path("data");
         if (data.isArray()) {
             for (JsonNode item : data) {
-                models.add(new ModelInfo(item.path("id").asText(""), item.path("owned_by").asText(null)));
+                models.add(new ModelInfo(item.path("id").asText(""), item.path("owned_by").asText(null),
+                        contextLengthOf(item)));
             }
         }
         return models;
+    }
+
+    /** First of the context-window fields various OpenAI-compatible servers use, if any. */
+    private static Integer contextLengthOf(JsonNode modelEntry) {
+        for (String field : List.of("max_context_window", "max_model_len", "context_length",
+                "context_window", "max_position_embeddings")) {
+            JsonNode value = modelEntry.get(field);
+            if (value != null && value.isIntegralNumber() && value.asInt() > 0) {
+                return value.asInt();
+            }
+        }
+        return null;
+    }
+
+    @Override
+    public java.util.OptionalInt contextWindow(String model) {
+        try {
+            return listModels().stream()
+                    .filter(m -> m.id().equalsIgnoreCase(model) && m.contextLength() != null)
+                    .mapToInt(ModelInfo::contextLength)
+                    .findFirst();
+        } catch (RuntimeException e) {
+            return java.util.OptionalInt.empty();
+        }
     }
 
     /** Generic OpenAI-compatible servers don't expose any load-status signal. */
@@ -123,10 +148,29 @@ public class OpenAiClient implements LlmClient {
     @Override
     public void streamChat(List<ChatRequestMessage> messages, String model, Consumer<String> onDelta,
                             CancellationToken token) {
+        streamChat(messages, model, 0, onDelta, token);
+    }
+
+    /** Shared /chat/completions request body. Package-private for OpenAiClientTest. */
+    ObjectNode chatBody(List<ChatRequestMessage> messages, String model, List<ToolDefinition> tools,
+                         int maxTokens, boolean stream) {
         ObjectNode body = MAPPER.createObjectNode();
         body.put("model", model);
-        body.put("stream", true);
+        body.put("stream", stream);
         body.set("messages", toMessagesNode(messages));
+        if (tools != null && !tools.isEmpty()) {
+            body.set("tools", toToolsNode(tools));
+        }
+        if (maxTokens > 0) {
+            body.put("max_tokens", maxTokens);
+        }
+        return body;
+    }
+
+    @Override
+    public void streamChat(List<ChatRequestMessage> messages, String model, int maxTokens,
+                            Consumer<String> onDelta, CancellationToken token) {
+        ObjectNode body = chatBody(messages, model, null, maxTokens, true);
 
         HttpRequest request = requestBuilder("/chat/completions")
                 .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
@@ -185,13 +229,14 @@ public class OpenAiClient implements LlmClient {
     @Override
     public ChatCompletionResult completeChat(List<ChatRequestMessage> messages, String model,
                                               List<ToolDefinition> tools, CancellationToken token) {
-        ObjectNode body = MAPPER.createObjectNode();
-        body.put("model", model);
-        body.put("stream", false);
-        body.set("messages", toMessagesNode(messages));
-        if (tools != null && !tools.isEmpty()) {
-            body.set("tools", toToolsNode(tools));
-        }
+        return completeChat(messages, model, tools, 0, token);
+    }
+
+    @Override
+    public ChatCompletionResult completeChat(List<ChatRequestMessage> messages, String model,
+                                              List<ToolDefinition> tools, int maxTokens,
+                                              CancellationToken token) {
+        ObjectNode body = chatBody(messages, model, tools, maxTokens, false);
 
         HttpRequest request = requestBuilder("/chat/completions")
                 .POST(HttpRequest.BodyPublishers.ofString(body.toString()))

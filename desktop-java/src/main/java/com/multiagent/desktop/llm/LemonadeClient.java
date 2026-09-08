@@ -71,6 +71,38 @@ public class LemonadeClient extends OpenAiClient {
         return loadStatusSupported;
     }
 
+    /**
+     * Lemonade's loaded context window: /health -> all_models_loaded[] matched by model_name,
+     * preferring recipe_options.ctx_size (what the model is actually loaded with) over
+     * max_context_window (the model's theoretical max). Falls back to the /models field.
+     */
+    @Override
+    public java.util.OptionalInt contextWindow(String model) {
+        java.util.OptionalInt fromHealth = parseContextWindow(tryGetServerHealth(null), model);
+        return fromHealth.isPresent() ? fromHealth : super.contextWindow(model);
+    }
+
+    /** Package-private + static for LemonadeClientTest: pulls the loaded ctx_size (else max_context_window) for {@code model} out of a /health payload. */
+    static java.util.OptionalInt parseContextWindow(JsonNode health, String model) {
+        JsonNode loaded = health == null ? null : health.path("all_models_loaded");
+        if (loaded == null || !loaded.isArray() || model == null) {
+            return java.util.OptionalInt.empty();
+        }
+        for (JsonNode entry : loaded) {
+            if (!model.equalsIgnoreCase(entry.path("model_name").asText(""))) {
+                continue;
+            }
+            int ctx = entry.path("recipe_options").path("ctx_size").asInt(0);
+            if (ctx <= 0) {
+                ctx = entry.path("max_context_window").asInt(0);
+            }
+            if (ctx > 0) {
+                return java.util.OptionalInt.of(ctx);
+            }
+        }
+        return java.util.OptionalInt.empty();
+    }
+
     private void loadModel(String model, CancellationToken token) {
         String requestBody = MAPPER.createObjectNode().put("model_name", model).toString();
         DebugLog.Exchange exchange = DebugLog.begin("POST", apiBase() + "/load", requestBody);

@@ -91,7 +91,7 @@ class ChatServiceWorkspaceSharingTest {
             throws InterruptedException {
         CountDownLatch latch = new CountDownLatch(1);
         AtomicReference<ChatMessage> result = new AtomicReference<>();
-        chatService.send(client, conversation, prompt, persona, "fake-model", null, 40, null, new ChatService.Listener() {
+        chatService.send(client, conversation, prompt, persona, "fake-model", null, 40, 0, null, new ChatService.Listener() {
             @Override
             public void onToken(String conversationId, String messageId, String delta) {
             }

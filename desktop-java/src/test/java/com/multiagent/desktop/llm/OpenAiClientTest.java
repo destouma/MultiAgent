@@ -22,6 +22,14 @@ class OpenAiClientTest {
     }
 
     @Test
+    void chatBodyIncludesMaxTokensOnlyWhenPositive() {
+        var msgs = List.of(ChatRequestMessage.user("hi"));
+        assertEquals(2048, client.chatBody(msgs, "m", null, 2048, false).path("max_tokens").asInt(-1));
+        assertTrue(client.chatBody(msgs, "m", null, 0, false).path("max_tokens").isMissingNode());
+        assertTrue(client.chatBody(msgs, "m", null, -5, true).path("max_tokens").isMissingNode());
+    }
+
+    @Test
     void imageMessageSerializesContentAsAPartsArrayWithADataUrl() {
         ChatRequestMessage m = ChatRequestMessage.userWithImage("what is this?",
                 new ImageAttachment("shot.png", "image/png", new byte[]{1, 2, 3, 4}));

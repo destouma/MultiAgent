@@ -36,6 +36,7 @@ import java.util.function.Function;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -286,6 +287,50 @@ class OrchestratorServiceTest {
         assertNotNull(doneMessage.get());
         assertTrue(doneMessage.get().getContent().contains("**Applied changes**"),
                 "final message should carry the Applied changes section: " + doneMessage.get().getContent());
+    }
+
+    /**
+     * The tetris-report scenario: a brand-new orchestrator chat with a folder bound and no
+     * "apply" preference ever set. {@code isOrchestratorApply()} must default to true so
+     * re-sending "write the files" actually runs the executor and writes them - this is what
+     * regressed the reported bug where the model only described the files.
+     */
+    @Test
+    void freshOrchestratorChatWithABoundFolderRunsTheExecutorByDefault(@TempDir Path ws) throws Exception {
+        Conversation conversation = store.createConversation(
+                "propose an architecture", ConversationKind.ORCHESTRATOR, ws.toString());
+        assertNull(conversation.getOrchestratorApply(), "a fresh chat has no apply preference");
+        assertTrue(conversation.isOrchestratorApply(), "default must be on when a folder is bound");
+
+        FakeLlmClient client = new FakeLlmClient(
+                List.of(
+                        messages -> new ChatCompletionResult(
+                                "{\"specialists\":[\"coder\"],\"rationale\":\"scaffold it\"}", List.of()),
+                        messages -> new ChatCompletionResult("main.rs holds the event loop.", List.of()),
+                        // executor round 1: write the file the plan called for.
+                        messages -> new ChatCompletionResult(null, List.of(new ToolCall(
+                                "w1", "write_file",
+                                "{\"path\":\"src/main.rs\",\"content\":\"fn main() {}\\n\"}"))),
+                        messages -> new ChatCompletionResult("- Created src/main.rs", List.of())),
+                "Here is the layout.");
+
+        ConcurrentLinkedQueue<String> ops = new ConcurrentLinkedQueue<>();
+        CountDownLatch latch = new CountDownLatch(1);
+        // Pass what ChatViewModel passes: apply = conversation.isOrchestratorApply().
+        orchestratorService.send(client, conversation, "write the files in the folders", "fake-model", 40,
+                java.util.Map.of(), 0, conversation.isOrchestratorApply(), new ChatService.Listener() {
+                    @Override public void onToken(String c, String m, String d) { }
+                    @Override public void onDone(String c, ChatMessage m) { latch.countDown(); }
+                    @Override public void onError(String c, String m, ErrorCode e, String msg) { latch.countDown(); }
+                    @Override public void onWorkspaceOp(String c, String m, String op, String p, String s,
+                                                       String detail, String cp) {
+                        ops.add(op + ":" + s);
+                    }
+                });
+
+        assertTrue(latch.await(10, TimeUnit.SECONDS));
+        assertTrue(ops.stream().anyMatch(s -> s.equals("write_file:ok")), "ops were: " + ops);
+        assertEquals("fn main() {}\n", Files.readString(ws.resolve("src/main.rs")));
     }
 
     @Test

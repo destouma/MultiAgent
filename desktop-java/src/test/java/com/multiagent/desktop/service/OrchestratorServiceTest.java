@@ -320,6 +320,61 @@ class OrchestratorServiceTest {
         assertTrue(!doneMessage.get().getContent().contains("**Applied changes**"));
     }
 
+    @Test
+    void synthesisIsToldNotToClaimFileWritesWhenTheExecutorIsOff(@TempDir Path ws) throws Exception {
+        Files.writeString(ws.resolve("notes.txt"), "hi\n");
+        Conversation conversation = store.createConversation(
+                "orchestrator chat", ConversationKind.ORCHESTRATOR, ws.toString());
+
+        FakeLlmClient client = new FakeLlmClient(
+                List.of(
+                        messages -> new ChatCompletionResult(
+                                "{\"specialists\":[\"coder\"],\"rationale\":\"draft it\"}", List.of()),
+                        messages -> new ChatCompletionResult("Here is the code.", List.of())),
+                "Final answer.");
+
+        CountDownLatch latch = new CountDownLatch(1);
+        orchestratorService.send(client, conversation, "write the files in the folder", "fake-model", 40,
+                java.util.Map.of(), 0, false, new ChatService.Listener() {
+                    @Override public void onToken(String c, String m, String d) { }
+                    @Override public void onDone(String c, ChatMessage m) { latch.countDown(); }
+                    @Override public void onError(String c, String m, ErrorCode e, String msg) { latch.countDown(); }
+                });
+
+        assertTrue(latch.await(5, TimeUnit.SECONDS));
+        assertTrue(client.lastStreamSystemPrompt.contains("no files can be created or modified"),
+                "synthesis prompt should forbid claiming writes when apply is off: " + client.lastStreamSystemPrompt);
+        assertTrue(client.lastStreamSystemPrompt.contains("apply changes"),
+                "synthesis prompt should point at the apply-changes toggle: " + client.lastStreamSystemPrompt);
+    }
+
+    @Test
+    void synthesisIsToldTheExecutorWillApplyWhenItIsOn(@TempDir Path ws) throws Exception {
+        Conversation conversation = store.createConversation(
+                "orchestrator chat", ConversationKind.ORCHESTRATOR, ws.toString());
+
+        FakeLlmClient client = new FakeLlmClient(
+                List.of(
+                        messages -> new ChatCompletionResult(
+                                "{\"specialists\":[\"coder\"],\"rationale\":\"draft it\"}", List.of()),
+                        messages -> new ChatCompletionResult("Here is the code.", List.of()),
+                        // executor round 1: no writes needed, just summarize.
+                        messages -> new ChatCompletionResult("Nothing to change.", List.of())),
+                "Final answer.");
+
+        CountDownLatch latch = new CountDownLatch(1);
+        orchestratorService.send(client, conversation, "apply the plan", "fake-model", 40,
+                java.util.Map.of(), 0, true, new ChatService.Listener() {
+                    @Override public void onToken(String c, String m, String d) { }
+                    @Override public void onDone(String c, ChatMessage m) { latch.countDown(); }
+                    @Override public void onError(String c, String m, ErrorCode e, String msg) { latch.countDown(); }
+                });
+
+        assertTrue(latch.await(10, TimeUnit.SECONDS));
+        assertTrue(client.lastStreamSystemPrompt.contains("an executor step will apply file changes"),
+                "synthesis prompt should mention the executor step when apply is on: " + client.lastStreamSystemPrompt);
+    }
+
     private static boolean hasGit() {
         try {
             Process process = new ProcessBuilder("git", "--version").redirectErrorStream(true).start();
@@ -356,6 +411,8 @@ class OrchestratorServiceTest {
         private final List<Function<List<ChatRequestMessage>, ChatCompletionResult>> completions;
         private final String synthesizedAnswer;
         private int callIndex = 0;
+        /** The system prompt from the most recent streamChat call (the synthesis step). */
+        volatile String lastStreamSystemPrompt;
 
         FakeLlmClient(List<Function<List<ChatRequestMessage>, ChatCompletionResult>> completions,
                        String synthesizedAnswer) {
@@ -394,6 +451,10 @@ class OrchestratorServiceTest {
         @Override
         public void streamChat(List<ChatRequestMessage> messages, String model, Consumer<String> onDelta,
                                 CancellationToken token) {
+            lastStreamSystemPrompt = messages.stream()
+                    .filter(m -> "system".equals(m.role()))
+                    .map(ChatRequestMessage::content)
+                    .findFirst().orElse("");
             onDelta.accept(synthesizedAnswer);
         }
 

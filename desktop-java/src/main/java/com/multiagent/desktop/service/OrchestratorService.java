@@ -177,9 +177,11 @@ public class OrchestratorService {
                 listener.onStep(conversation.getId(), "synthesizing", orchestrator.getId(),
                         "Synthesizing final answer...");
 
+                boolean willApply = apply && workspacePath != null && !workspacePath.isBlank();
+
                 StringBuilder full = new StringBuilder();
                 synthesize(client, orchestrator, model, maxTokens, content, plan.rationale(), notes, workspacePath,
-                        workspaceTree, token, delta -> {
+                        workspaceTree, willApply, token, delta -> {
                             full.append(delta);
                             listener.onToken(conversation.getId(), assistantMessageId, delta);
                         });
@@ -188,7 +190,7 @@ public class OrchestratorService {
                     finalText = "I could not produce a final answer from the specialist notes.";
                 }
 
-                if (apply && workspacePath != null && !workspacePath.isBlank()) {
+                if (willApply) {
                     listener.onStep(conversation.getId(), "executing", orchestrator.getId(),
                             "Applying changes...");
                     String applied = runExecutor(client, orchestrator, model, maxTokens, content, notes, finalText,
@@ -414,7 +416,8 @@ public class OrchestratorService {
 
     private void synthesize(LlmClient client, Persona orchestrator, String model, int maxTokens, String userContent,
                              String planRationale, List<SpecialistNote> notes, String workspacePath,
-                             String workspaceTree, CancellationToken token, java.util.function.Consumer<String> onDelta) {
+                             String workspaceTree, boolean willApply,
+                             CancellationToken token, java.util.function.Consumer<String> onDelta) {
         List<String> systemLines = new ArrayList<>(List.of(
                 orchestrator.getSystemPrompt(), "",
                 "Synthesize a final answer for the user from the specialist notes.",
@@ -426,6 +429,22 @@ public class OrchestratorService {
                     "Workspace folder bound to this conversation: " + workspacePath,
                     "Workspace tree (for reference; specialist notes already reflect its actual contents):",
                     workspaceTree));
+        }
+        // Neither the specialists nor this synthesis step can write to disk - only the opt-in
+        // executor phase can, and it runs *after* this. So the answer must not claim files were
+        // created/written unless that phase is actually going to run.
+        if (willApply) {
+            systemLines.add("");
+            systemLines.add("After your answer, an executor step will apply file changes to the workspace "
+                    + "using your plan (each write is approved by the user). You may describe the changes as "
+                    + "the plan to be applied.");
+        } else if (workspaceTree != null) {
+            systemLines.add("");
+            systemLines.add("IMPORTANT: no files can be created or modified in this turn - there is no write "
+                    + "step, and the user has not enabled \"apply changes\". Present any code and file layout as "
+                    + "a proposal. Do NOT say that files were created, written, generated, or placed in folders. "
+                    + "If the user asked you to write files, tell them to enable \"Let the coordinator apply "
+                    + "changes to the workspace\" in the Specialists… dialog (or use a normal workspace chat).");
         }
 
         String userBlock = "User request:\n" + userContent + "\n\nSpecialist notes:\n" + notesBlock(notes);

@@ -1,7 +1,10 @@
 package com.multiagent.desktop.ui.components;
 
 import com.multiagent.desktop.model.ChatMessage;
+import com.multiagent.desktop.model.Conversation;
+import com.multiagent.desktop.model.ConversationKind;
 import com.multiagent.desktop.model.MessageRole;
+import com.multiagent.desktop.model.Persona;
 import com.multiagent.desktop.ui.viewmodel.ChatViewModel;
 import com.multiagent.desktop.ui.viewmodel.WorkspaceOpEntry;
 
@@ -205,7 +208,10 @@ public class ChatThread extends ScrollPane {
     private HBox plainBubble(MessageRole role, String content) {
         boolean fromUser = role == MessageRole.USER;
         VBox container = styledContainer(content, fromUser);
-        HBox row = new HBox(container);
+        // Match what the persisted synthesis bubble will get once streaming ends, so the
+        // coordinator's accent doesn't "pop in" only after the last token lands.
+        String accent = isOrchestratorChat() ? conversationPersonaColor() : null;
+        HBox row = new HBox(accent == null ? container : withAccent(container, accent, fromUser));
         row.setAlignment(fromUser ? Pos.CENTER_RIGHT : Pos.CENTER_LEFT);
         HBox.setHgrow(row, Priority.ALWAYS);
         return row;
@@ -217,6 +223,78 @@ public class ChatThread extends ScrollPane {
         container.setPadding(new Insets(8, 12, 8, 12));
         container.getStyleClass().add(fromUser ? "bubble-user" : "bubble-assistant");
         return container;
+    }
+
+    /**
+     * Wraps a bubble with a 3px persona-coloured bar on its outer edge (right for a
+     * right-aligned user bubble, left for an assistant one) - a sibling node rather than a
+     * CSS border so it never fights a theme's own bubble border (Terminal draws one).
+     */
+    private HBox withAccent(VBox bubble, String colorHex, boolean fromUser) {
+        Region bar = new Region();
+        bar.setMinWidth(3);
+        bar.setPrefWidth(3);
+        bar.setMaxWidth(3);
+        bar.setMaxHeight(Double.MAX_VALUE); // HBox fills height, so the bar matches the bubble
+        bar.setStyle("-fx-background-color: " + colorHex + "; -fx-background-radius: 2;");
+        HBox box = fromUser ? new HBox(6, bubble, bar) : new HBox(6, bar, bubble);
+        box.setAlignment(Pos.CENTER_LEFT);
+        box.setMaxWidth(Region.USE_PREF_SIZE);
+        return box;
+    }
+
+    /** Small persona-name caption above an orchestrator specialist's reply, tinted to match its accent. */
+    private Label personaHeader(String personaId, String colorHex) {
+        String name = personaNameById(personaId);
+        if (name == null) {
+            return null;
+        }
+        Label label = new Label(name);
+        label.setPadding(new Insets(0, 0, 2, 9));
+        label.setStyle("-fx-font-size: 11px; -fx-font-weight: bold;"
+                + (colorHex != null ? " -fx-text-fill: " + colorHex + ";" : ""));
+        return label;
+    }
+
+    private boolean isOrchestratorChat() {
+        Conversation c = viewModel.activeConversationProperty().get();
+        return c != null && c.getKind() == ConversationKind.ORCHESTRATOR;
+    }
+
+    /** The colour of the conversation's resolved (coordinator) persona, or null. */
+    private String conversationPersonaColor() {
+        Persona persona = viewModel.activePersonaProperty().get();
+        return persona == null ? null : sanitizeColor(persona.getColor());
+    }
+
+    private String personaColorById(String personaId) {
+        if (personaId == null) {
+            return null;
+        }
+        for (Persona persona : viewModel.personas()) {
+            if (persona.getId().equals(personaId)) {
+                return sanitizeColor(persona.getColor());
+            }
+        }
+        return null;
+    }
+
+    private String personaNameById(String personaId) {
+        for (Persona persona : viewModel.personas()) {
+            if (persona.getId().equals(personaId)) {
+                return persona.getName();
+            }
+        }
+        return null;
+    }
+
+    /** Only a plain #hex literal reaches an inline -fx- style, so a hand-edited persona JSON can't inject CSS. */
+    private static String sanitizeColor(String raw) {
+        if (raw == null) {
+            return null;
+        }
+        String trimmed = raw.trim();
+        return trimmed.matches("#([0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})") ? trimmed : null;
     }
 
     /**
@@ -240,7 +318,23 @@ public class ChatThread extends ScrollPane {
             wrapper.getChildren().add(editBox(message));
         } else {
             VBox container = styledContainer(message.getContent(), fromUser);
-            wrapper.getChildren().add(container);
+
+            // A thin persona-coloured bar hugging the outer edge of the bubble: for a user
+            // message it's the conversation's (coordinator) persona; for an assistant message
+            // in an orchestrator thread it's that reply's own specialist persona, and the
+            // specialist's name sits above the bubble in the same colour so interleaved
+            // specialist notes are tellable apart at a glance.
+            boolean orchestrator = isOrchestratorChat();
+            String accent = fromUser
+                    ? conversationPersonaColor()
+                    : (orchestrator ? personaColorById(message.getPersonaId()) : null);
+            if (!fromUser && orchestrator && message.getPersonaId() != null) {
+                Label who = personaHeader(message.getPersonaId(), accent);
+                if (who != null) {
+                    wrapper.getChildren().add(who);
+                }
+            }
+            wrapper.getChildren().add(accent == null ? container : withAccent(container, accent, fromUser));
 
             boolean editable = fromUser && !streaming;
             boolean canRegenerate = isLast && !fromUser && !streaming;

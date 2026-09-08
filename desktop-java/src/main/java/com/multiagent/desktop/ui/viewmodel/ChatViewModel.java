@@ -286,6 +286,13 @@ public class ChatViewModel {
                 return pinned.get();
             }
         }
+        // An unpinned orchestrator chat defaults its "Coordinator" box to the orchestrator persona.
+        if (conversation != null && conversation.getKind() == ConversationKind.ORCHESTRATOR) {
+            Optional<Persona> orchestrator = personaRegistry.get("orchestrator");
+            if (orchestrator.isPresent()) {
+                return orchestrator.get();
+            }
+        }
         return !personas.isEmpty() ? personas.get(0) : null;
     }
 
@@ -492,6 +499,29 @@ public class ChatViewModel {
             conversations.set(index, updated);
         }
         notifySiblings();
+    }
+
+    /** Orchestrator only: per-conversation specialist-model overrides (specialistId -> modelId). */
+    public void setSpecialistModels(java.util.Map<String, String> models) {
+        Conversation conversation = activeConversation.get();
+        if (conversation == null) {
+            return;
+        }
+        Conversation updated = store.setConversationSpecialistModels(conversation.getId(),
+                com.multiagent.desktop.service.SpecialistModels.write(models));
+        activeConversation.set(updated);
+        int index = conversations.indexOf(conversation);
+        if (index >= 0) {
+            conversations.set(index, updated);
+        }
+        notifySiblings();
+    }
+
+    /** Every loaded persona except the orchestrator - the roster the planner can pick from. */
+    public java.util.List<Persona> availableSpecialistPersonas() {
+        return personaRegistry.list().stream()
+                .filter(p -> !"orchestrator".equals(p.getId()))
+                .toList();
     }
 
     /** Pins the ACTIVE conversation (and only that one) to this model - other conversations are untouched. */
@@ -709,7 +739,9 @@ public class ChatViewModel {
         };
 
         if (conversation.getKind() == ConversationKind.ORCHESTRATOR) {
-            orchestratorService.send(client, conversation, messageText, model, profile.getMaxHistory(), listener);
+            orchestratorService.send(client, conversation, messageText, model, profile.getMaxHistory(),
+                    com.multiagent.desktop.service.SpecialistModels.parse(conversation.getSpecialistModels()),
+                    activeContextTokens.get(), listener);
         } else {
             chatService.send(client, conversation, messageText, persona, model,
                     resolveVisionModelFor(conversation), profile.getMaxHistory(),

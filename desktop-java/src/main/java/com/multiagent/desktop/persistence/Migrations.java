@@ -51,6 +51,7 @@ final class Migrations {
             addColumnIfMissing(st, "conversations", "serverId", "TEXT");
             addColumnIfMissing(st, "conversations", "personaId", "TEXT");
             addColumnIfMissing(st, "conversations", "visionModel", "TEXT");
+            addColumnIfMissing(st, "conversations", "specialistModels", "TEXT");
 
             st.execute("""
                     CREATE TABLE IF NOT EXISTS folders (

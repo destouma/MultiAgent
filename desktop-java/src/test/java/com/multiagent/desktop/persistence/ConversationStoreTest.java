@@ -103,6 +103,19 @@ class ConversationStoreTest {
     }
 
     @Test
+    void setConversationSpecialistModelsRoundTripsAndClears() {
+        Conversation a = store.createConversation();
+        Conversation b = store.createConversation();
+
+        store.setConversationSpecialistModels(a.getId(), "{\"coder\":\"code-model\"}");
+        assertEquals("{\"coder\":\"code-model\"}", store.getConversation(a.getId()).getSpecialistModels());
+        assertNull(store.getConversation(b.getId()).getSpecialistModels());
+
+        store.setConversationSpecialistModels(a.getId(), "");
+        assertEquals("", store.getConversation(a.getId()).getSpecialistModels());
+    }
+
+    @Test
     void setConversationPersonaPersistsIndependentlyPerConversation() {
         Conversation a = store.createConversation();
         Conversation b = store.createConversation();

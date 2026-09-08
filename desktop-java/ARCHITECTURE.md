@@ -165,6 +165,8 @@ MultiAgent/
         CheckpointService.java        # diff/revert
         PersonaRegistry.java  ConfigService.java  ExportFormat.java  PlanParser.java
         DebugLog.java                 # opt-in raw LLM HTTP capture (in-memory ring + api-debug.log)
+        SpecialistModels.java         # (de)serialize Conversation.specialistModels JSON
+        TokenEstimate.java  VisionResponses.java
       model/
         Persona.java  Conversation.java  ConversationKind.java  ChatMessage.java  MessageRole.java
         ServerProfile.java  ProviderType.java  AppSettings.java  ThemeMode.java
@@ -181,6 +183,7 @@ MultiAgent/
           SearchDialog.java  SplitPickerDialog.java  DiffDialog.java
           DialogActionApprover.java    # the "ask before writing/deleting/renaming" dialog
           DebugLogWindow.java          # non-modal viewer for DebugLog (list + raw request/response)
+          SpecialistModelsDialog.java  # orchestrator: model per specialist for this chat
     src/main/resources/com/multiagent/desktop/ui/
       styles.css  theme-dark.css  theme-terminal.css
     src/test/java/com/multiagent/desktop/...   # JUnit 5, one test class per main class above
@@ -214,7 +217,7 @@ Path: `%APPDATA%/MultiAgentJava/config.json` (its own folder — deliberately se
 
 ### Conversations / messages (SQLite via sqlite-jdbc)
 
-- `conversations(id, title, createdAt, updatedAt, workspacePath, kind, model, serverId, personaId, visionModel)` — `personaId` and `visionModel` are Java-client-only additions (see [§10](#10-differences-from-the-electron-client)); everything else matches the Electron schema field-for-field.
+- `conversations(id, title, createdAt, updatedAt, workspacePath, kind, model, serverId, personaId, visionModel, specialistModels)` — `personaId`, `visionModel` and `specialistModels` (orchestrator per-specialist model overrides, JSON) are Java-client-only additions (see [§10](#10-differences-from-the-electron-client)); everything else matches the Electron schema field-for-field.
 - `messages(id, conversationId, role, content, personaId, createdAt)`, indexed on `(conversationId, createdAt)`.
 - `folders(path, addedAt)`.
 - `file_checkpoints(id, conversationId, relativePath, previousContent, previousExisted, createdAt)` — one row per successful `write_file`/`delete_file`, capturing pre-op content (`previousContent: null` + `previousExisted: false` means the op created the file).
@@ -248,7 +251,7 @@ There's no IPC layer in this client — `ChatViewModel` calls services directly,
 
 ### Personas
 
-Loaded from `personas/*.json` at the repo root (`PersonaRegistry`, sorted general/researcher/coder/critic first, then alphabetically, with a hard-coded fallback if the directory can't be found). Unlike the Electron app, **persona is pinned per conversation** here (`Conversation.personaId`), not a single pane-wide field — see [§10](#10-differences-from-the-electron-client).
+Loaded from `personas/*.json` at the repo root (`PersonaRegistry`, sorted general/researcher/coder/critic first, then alphabetically, with a hard-coded fallback if the directory can't be found). Unlike the Electron app, **persona is pinned per conversation** here (`Conversation.personaId`), not a single pane-wide field — see [§10](#10-differences-from-the-electron-client). The topbar persona box is kind-filtered: a normal chat lists every persona *except* `orchestrator` (its "I coordinate specialists" prompt is meaningless with no specialists); an orchestrator chat lists all of them, since the box is the **Coordinator** picker there.
 
 ### Folders
 
@@ -285,7 +288,12 @@ Every successful `write_file`/`delete_file` captures a checkpoint (`ToolLoopRunn
 
 ### Orchestrator sessions
 
-**+ Orchestrator** creates a `kind: ORCHESTRATOR` conversation. Each user message runs: **Plan** (orchestrator persona picks 1-3 specialists from researcher/coder/critic via a small JSON-only completion, parsed by `PlanParser`) → **Specialists** (each runs in turn, with read-only `list_dir`/`read_file` tools only if a workspace is bound — never write/delete/rename — persisted as its own message as it completes) → **Synthesize** (final streamed answer from the specialist notes). Progress surfaces via `onStep` events into `orchestratorStatusProperty()`.
+**+ Orchestrator** creates a `kind: ORCHESTRATOR` conversation. Each user message runs: **Plan** (orchestrator persona picks 1-3 specialists via a small JSON-only completion, parsed by `PlanParser`) → **Specialists** (each runs in turn, with read-only `list_dir`/`read_file`/`search_file` tools plus read-only `git_*` when a workspace is bound — never write/delete/rename or `git_add`/`git_commit` — persisted as its own message as it completes) → **Synthesize** (final streamed answer from the specialist notes). Progress surfaces via `onStep` events into `orchestratorStatusProperty()`.
+
+- **Coordinator** — the persona that runs the plan + synthesis. For an orchestrator chat the pane topbar relabels the **Persona** box to **Coordinator** (and hides **Vision** — specialists don't do vision); it pins `Conversation.personaId`, which `OrchestratorService` resolves as coordinator → falls back to the `orchestrator` persona, then `general`.
+- **Roster** — any loaded persona except `orchestrator` (`OrchestratorService.availableSpecialistIds()`), so dropping in `personas/security.json` just extends it; the planner is told each candidate's name and resolved model.
+- **Per-specialist model** — resolved `Conversation.specialistModels[id]` (the **Specialists…** dialog, per orchestrator chat) → `persona.defaultModel` → the conversation's model. The step line shows which model a specialist is on.
+- **Context fit** — `priorContext` is trimmed to the server's context-window budget (like `ChatService`), and every specialist / plan / synthesis call carries `max_tokens` = the reply reserve.
 
 ### Message search & export
 
@@ -392,9 +400,10 @@ server's context window is known.
 - **Show it** — `ContextUsageBar` renders `~N / <ctx>` when known, WARN at ¾,
   DANGER at `ctx − reserve`.
 
-Not wired: the Orchestrator (keeps the message-count cap); a live re-probe if the
-model is reloaded at a different `ctx_size` mid-turn (the cache refreshes on the
-events above).
+The Orchestrator applies the same budget to its `priorContext` and passes
+`max_tokens` on every plan / specialist / synthesis call. Not wired: a live
+re-probe if the model is reloaded at a different `ctx_size` mid-turn (the cache
+refreshes on the events above).
 
 ### Themes
 
@@ -434,7 +443,8 @@ Or in IntelliJ: open `desktop-java/pom.xml` as a project, then run the `MultiAge
 ### Orchestrator
 
 1. Click **+ Orchestrator**.
-2. Ask a question. Watch the status banner while specialists run; each reply appears in the thread as it completes, followed by the final synthesis.
+2. (Optional) **Coordinator** box — which persona runs the plan + synthesis (default: the Orchestrator persona). **Specialists…** — set a model per specialist for this chat (blank = the persona's / conversation's model). Add a `personas/*.json` to extend the roster.
+3. Ask a question. Watch the status banner while specialists run (each line shows the specialist's model); each reply appears in the thread as it completes, followed by the final synthesis.
 
 ### Side by side
 

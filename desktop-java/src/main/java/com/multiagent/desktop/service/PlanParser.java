@@ -23,17 +23,16 @@ public final class PlanParser {
     public record PlanResult(List<String> specialists, String rationale) {
     }
 
-    private static final PlanResult FALLBACK = new PlanResult(List.of("researcher"), "Default plan");
     private static final Pattern JSON_BLOCK = Pattern.compile("\\{[\\s\\S]*\\}");
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     public static PlanResult parsePlan(String raw, List<String> allowedIds) {
         if (raw == null) {
-            return FALLBACK;
+            return fallback(allowedIds);
         }
         Matcher matcher = JSON_BLOCK.matcher(raw);
         if (!matcher.find()) {
-            return FALLBACK;
+            return fallback(allowedIds);
         }
 
         try {
@@ -60,7 +59,14 @@ public final class PlanParser {
 
             return new PlanResult(limited, rationale);
         } catch (Exception e) {
-            return FALLBACK;
+            return fallback(allowedIds);
         }
+    }
+
+    private static PlanResult fallback(List<String> allowedIds) {
+        if (allowedIds == null || allowedIds.isEmpty()) {
+            return new PlanResult(List.of(), "Default plan");
+        }
+        return new PlanResult(List.of(allowedIds.get(0)), "Default plan");
     }
 }

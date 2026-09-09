@@ -103,13 +103,13 @@ jobs:
             macOS)
               # `sips -s format icns` is flaky on the runners (Error 13). Build a proper
               # .iconset with reliable resizes, then iconutil - the documented path.
-              set="$RUNNER_TEMP/icon.iconset"
-              mkdir -p "$set"
+              iconset="$RUNNER_TEMP/icon.iconset"
+              mkdir -p "$iconset"
               for s in 16 32 128 256 512; do
-                sips -z $s $s        "$ICONS/icon.png" --out "$set/icon_${s}x${s}.png"
-                sips -z $((s*2)) $((s*2)) "$ICONS/icon.png" --out "$set/icon_${s}x${s}@2x.png"
+                sips -z $s $s        "$ICONS/icon.png" --out "$iconset/icon_${s}x${s}.png"
+                sips -z $((s*2)) $((s*2)) "$ICONS/icon.png" --out "$iconset/icon_${s}x${s}@2x.png"
               done
-              iconutil -c icns "$set" -o "$RUNNER_TEMP/icon.icns"
+              iconutil -c icns "$iconset" -o "$RUNNER_TEMP/icon.icns"
               # Unsigned: fine as a CI artifact; Gatekeeper will warn on other machines.
               jpackage --type ${{ matrix.jptype }} "${COMMON[@]}" \
                 --icon "$RUNNER_TEMP/icon.icns" \

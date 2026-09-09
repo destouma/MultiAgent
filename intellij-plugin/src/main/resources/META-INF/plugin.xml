@@ -1,0 +1,30 @@
+<idea-plugin>
+    <id>com.multiagent.intellij</id>
+    <name>MultiAgent</name>
+    <vendor>MultiAgent</vendor>
+
+    <description><![CDATA[
+        Multi-agent chat over a local LLM server, in a JetBrains IDE tool window.
+        Connects to Lemonade, any OpenAI-compatible server, or a native Ollama server.
+        The core (LLM clients, workspace tools, orchestrator, persistence) is a deliberate
+        fork of the desktop-java client - the two projects are kept independent.
+    ]]></description>
+
+    <depends>com.intellij.modules.platform</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <toolWindow id="MultiAgent"
+                    anchor="right"
+                    icon="AllIcons.Toolwindows.ToolWindowMessages"
+                    factoryClass="com.multiagent.intellij.ui.MultiAgentToolWindowFactory"/>
+    </extensions>
+
+    <actions>
+        <action id="MultiAgent.SpikeStorage"
+                class="com.multiagent.intellij.ui.SpikeStorageAction"
+                text="MultiAgent: Storage Spike"
+                description="Phase-0 spike: open ConversationStore under the plugin config dir and round-trip a row.">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+        </action>
+    </actions>
+</idea-plugin>

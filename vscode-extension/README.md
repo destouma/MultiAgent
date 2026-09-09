@@ -2,7 +2,7 @@
 
 Multi-agent chat over a local LLM server, in the editor sidebar. Connects to [Lemonade](https://github.com/lemonade-sdk/lemonade) (default), any other OpenAI-compatible server (NoLlama, LM Studio, vLLM, ...), or a native Ollama server, switchable via `multiagent.providerType`.
 
-This is the VS Code client. It shares persona definitions (`../personas/`) and the TypeScript `../shared/` code (`types.ts`, `llm/`, `workspace/`) — see the repo root [README.md](../README.md). (`../desktop-java/` is a separate from-scratch Java port, not a consumer of `shared/`.)
+This is the VS Code client. It reads persona definitions from `../personas/` at build time, and its `shared/` subtree holds the TypeScript core (`types.ts`, `llm/`, `workspace/`) — see the repo root [README.md](../README.md). (`../desktop-java/` is a separate from-scratch Java port of the same ideas.)
 
 ## v1 scope
 
@@ -51,7 +51,7 @@ Click the server icon in the Chat view's title bar (or run **MultiAgent: Switch 
 
 ### Workspace tools
 
-Click the folder icon in the Chat view's title bar (or run **MultiAgent: Toggle Workspace Tools**) to let the assistant read and write files in the first open workspace folder — `list_dir`, `read_file`, `write_file`, `delete_file`, scoped to that folder and unable to escape it (backed by [`../shared/workspace/workspaceService.ts`](../shared/workspace/workspaceService.ts), shared with the desktop app). Off by default (`multiagent.enableWorkspaceTools`); the Chat view shows a `📁 folder-name` pill when active, and each tool call streams as a status line (`→ read_file(...)`) before the assistant's reply. Requires a model that supports tool-calling, or falls back to an XML-tag convention the same way the desktop app does. Image generation isn't part of this yet — that still needs the desktop app's ImageService.
+Click the folder icon in the Chat view's title bar (or run **MultiAgent: Toggle Workspace Tools**) to let the assistant read and write files in the first open workspace folder — `list_dir`, `read_file`, `write_file`, `delete_file`, scoped to that folder and unable to escape it (backed by [`shared/workspace/workspaceService.ts`](shared/workspace/workspaceService.ts)). Off by default (`multiagent.enableWorkspaceTools`); the Chat view shows a `📁 folder-name` pill when active, and each tool call streams as a status line (`→ read_file(...)`) before the assistant's reply. Requires a model that supports tool-calling, or falls back to an XML-tag convention. Image generation isn't part of this extension.
 
 ## Package
 

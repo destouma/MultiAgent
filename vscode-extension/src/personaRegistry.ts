@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import type { Persona } from '../../shared/types';
+import type { Persona } from '../shared/types';
 
 const FALLBACK_PERSONA: Persona = {
   id: 'general',

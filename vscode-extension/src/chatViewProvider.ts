@@ -5,15 +5,15 @@ import type {
   ChatCompletionMessageParam,
   ChatCompletionTool,
 } from 'openai/resources/chat/completions';
-import type { ChatMessage, ModelInfo, Persona, ProviderType } from '../../shared/types';
-import { createLlmClient } from '../../shared/llm/createLlmClient';
-import { ProviderError, type LlmClient, type ProviderSettings } from '../../shared/llm/types';
-import { parseActionTags } from '../../shared/workspace/actionTags';
+import type { ChatMessage, ModelInfo, Persona, ProviderType } from '../shared/types';
+import { createLlmClient } from '../shared/llm/createLlmClient';
+import { ProviderError, type LlmClient, type ProviderSettings } from '../shared/llm/types';
+import { parseActionTags } from '../shared/workspace/actionTags';
 import {
   WorkspaceError,
   WorkspaceService,
   workspaceTools,
-} from '../../shared/workspace/workspaceService';
+} from '../shared/workspace/workspaceService';
 import { loadPersonas } from './personaRegistry';
 
 const OPENAI_DEFAULT_URL = 'http://localhost:13305/api/v1';

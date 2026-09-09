@@ -262,9 +262,11 @@ public class OrchestratorService {
                     "A workspace folder is bound to this conversation: " + workspacePath,
                     "You can inspect AND change files in it. Read tools: list_dir, read_file, search_file. "
                             + "Write tools: write_file, delete_file, rename_file"
-                            + (isGitRepo(workspacePath) ? ", git_add, git_commit" : "") + ".",
-                    "Every write is shown to the user for approval first - if a result says the user declined, "
-                            + "stop that edit and don't retry it.",
+                            + (isGitRepo(workspacePath) ? ", git_add, git_commit" : "") + ". "
+                            + "run_command runs ONE build/test/lint command with the project's own toolchain "
+                            + "(no shell/pipes/cd; non-zero exit comes back as text to read and fix).",
+                    "Every write and every command is shown to the user for approval first - if a result says "
+                            + "the user declined, stop that action and don't retry it.",
                     "Inspect real files with read_file/search_file before changing them - don't guess from the "
                             + "tree alone. The tree shows only the top levels; list_dir into any folder marked "
                             + "with a trailing \"…\". If the request asks you to create or edit files, DO IT with "

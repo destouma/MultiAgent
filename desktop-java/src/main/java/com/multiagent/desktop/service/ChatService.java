@@ -237,8 +237,12 @@ public class ChatService {
                 lines.add("<git_commit message=\"Short summary of the change\" all=\"true\" />");
             }
 
-            lines.add("Changes to files and git_add/git_commit require the user's approval and may be declined - "
-                    + "if a tool result says the user declined, respect that and don't retry the same action.");
+            lines.add("You also have run_command (a native tool): run ONE build/test/lint/run command with the "
+                    + "project's own toolchain (read the project files first to know which - npm, cargo, mvn, "
+                    + "dotnet, pytest, ./gradlew, …). No shell, no pipes, no chaining, no cd; it runs in the "
+                    + "workspace root. A non-zero exit code comes back as text - read it and fix the cause.");
+            lines.add("Changes to files, git_add/git_commit and run_command require the user's approval and may be "
+                    + "declined - if a tool result says the user declined, respect that and don't retry the same action.");
             lines.add("After file work, give a short summary of what changed.");
             lines.add("Workspace tree (top levels only; a trailing \"…\" means use list_dir to see inside):");
             lines.add(tree);

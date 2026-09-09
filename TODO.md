@@ -4,59 +4,30 @@ Not scheduled, not committed to anything — just a running list of features tha
 would be worth building next. Grouped by area; roughly ordered by how useful
 they'd be vs. how much work they are, not by priority.
 
-## Desktop
-
-### Proposed
-
-- **AI dev loop.** Extend the workspace tool loop (`list_dir`/`read_file`/
-  `write_file`/`delete_file` in `shared/workspace/workspaceService.ts`) with a
-  `run_command` tool that executes a shell command in the bound folder,
-  captures stdout/stderr/exit code, and feeds it back to the model — so it can
-  run `npm test` / `npm run build`, read the failure, fix it, and re-run,
-  looping until it passes or hits a cap (mirroring the existing
-  `MAX_TOOL_ROUNDS/MAX_SPECIALIST_TOOL_ROUNDS` pattern in `chatService.ts`/
-  `orchestratorService.ts`). **Safety note:** running arbitrary commands is a
-  materially bigger risk than sandboxed file I/O under the workspace root —
-  this should default off (like the VS Code extension's
-  `enableWorkspaceTools`), probably need per-command confirmation or a scoped
-  allowlist (`npm test`, `npm run build`, `npm run lint`, ...) rather than
-  free-form shell access, and a hard wall-clock timeout per command.
-
-### Suggested
-
-- **Code-sign the Windows installer.** Confirmed unsigned today — CI has no
-  `CSC_LINK`/certificate wired in, so the NSIS installer trips SmartScreen and
-  can't be verified as coming from a specific publisher.
-- **Auto-updater** (`electron-updater`) so installed copies can update without
-  a manual reinstall — relevant now that CI produces a real installer artifact
-  on every master push.
+The `desktop-java/` client is the reference implementation; its own backlog
+lives in [`desktop-java/ARCHITECTURE.md` §11](./desktop-java/ARCHITECTURE.md#11-ideas-not-yet-implemented).
 
 ## VS Code extension
 
-- **Port orchestrator mode** (plan → specialists → synthesize) — desktop-only
-  today.
-- **Port image generation** — needs an `ImageService` equivalent; currently
-  the extension's workspace tools intentionally exclude `generate_image` for
-  this reason.
-- **Multi-conversation history** — the extension persists a single
-  conversation per workspace (`workspaceState`); desktop has full
-  create/switch/delete.
-- **Per-conversation server selection** — desktop can now pin a conversation
-  to a specific saved server profile (`Conversation.serverId`, independent
-  per-conversation `LlmClient`); the extension still only has the single
-  app-wide active connection since it has no multi-conversation store to
-  attach a `serverId` to. Would piggyback on the multi-conversation-history
-  item above.
+The extension is the remaining TypeScript client (`../shared/`). Most of these
+are "port what `desktop-java/` already has":
+
+- **Port orchestrator mode** (plan → specialists → synthesize).
+- **Port image generation** — needs an `ImageService` equivalent; the
+  extension's workspace tools intentionally exclude `generate_image` for now.
+- **Multi-conversation history** — the extension persists a single conversation
+  per workspace (`workspaceState`); `desktop-java/` has full
+  create/switch/delete. Prerequisite for most of the items below.
+- **Per-conversation server selection** — `desktop-java/` pins a conversation to
+  a saved server profile (`Conversation.serverId`, independent per-conversation
+  `LlmClient`); the extension still has one app-wide connection. Piggybacks on
+  multi-conversation history.
+- **Message edit/regenerate, conversation search/export, file-write diff/undo**
+  — all in `desktop-java/` (`ConversationStore`-backed); porting needs the
+  multi-conversation-history item first (no per-message ids or checkpoint table
+  in the single `workspaceState` conversation).
+- **`run_command` / build-test loop** — shipped in `desktop-java/`
+  (`RunCommandService`, approval-gated); the extension could pick up an
+  equivalent in `shared/workspace/`.
 - **Publish somewhere durable** (Open VSX or an internal registry) once it's
   worth distributing beyond `npm run package` + manual `.vsix` install.
-- **Message edit/regenerate, conversation search/export, and file-write
-  diff/undo** — all desktop-only today (`ConversationStore`-backed, see
-  ARCHITECTURE.md); porting them needs the multi-conversation-history item
-  above first, since the extension's single `workspaceState` conversation has
-  no per-message ids or checkpoint table to hang them off of.
-
-## Shared / infra
-
-- **`run_command` tool** above is a natural fit for
-  `shared/workspace/workspaceService.ts`, so both clients would pick it up
-  with comparatively little duplicated work.

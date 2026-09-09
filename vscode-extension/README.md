@@ -2,7 +2,7 @@
 
 Multi-agent chat over a local LLM server, in the editor sidebar. Connects to [Lemonade](https://github.com/lemonade-sdk/lemonade) (default), any other OpenAI-compatible server (NoLlama, LM Studio, vLLM, ...), or a native Ollama server, switchable via `multiagent.providerType`.
 
-This is the VS Code client. It shares persona definitions (`../personas/`) and message types (`../shared/types.ts`) with [`../desktop/`](../desktop) — see the repo root [README.md](../README.md).
+This is the VS Code client. It shares persona definitions (`../personas/`) and the TypeScript `../shared/` code (`types.ts`, `llm/`, `workspace/`) — see the repo root [README.md](../README.md). (`../desktop-java/` is a separate from-scratch Java port, not a consumer of `shared/`.)
 
 ## v1 scope
 
@@ -12,7 +12,7 @@ This is the VS Code client. It shares persona definitions (`../personas/`) and m
 - Conversation history persisted per-workspace, single conversation
 - Optional read/write access to the open workspace folder (see below)
 
-Not yet ported from the desktop app: orchestrator mode, image generation, multi-conversation history. See [`../desktop/ARCHITECTURE.md`](../desktop/ARCHITECTURE.md) for what those look like there.
+Not yet in this extension: orchestrator mode, image generation, multi-conversation history. See [`../desktop-java/ARCHITECTURE.md`](../desktop-java/ARCHITECTURE.md) for what those look like in the desktop client.
 
 ## Develop
 

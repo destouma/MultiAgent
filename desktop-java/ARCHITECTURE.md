@@ -515,7 +515,7 @@ jpackage \
   --input target/jpackage-input \
   --main-jar multiagent-desktop.jar \
   --main-class com.multiagent.desktop.Launcher \
-  --icon ../desktop/build/icon.ico \
+  --icon packaging/icon.ico \
   --dest target/dist \
   --java-options "--enable-native-access=ALL-UNNAMED" \
   --win-menu --win-shortcut --win-dir-chooser \

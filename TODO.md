@@ -75,12 +75,82 @@ Most of these are "port what `desktop-java/` already has":
 
 ---
 
+## JetBrains plugin
+
+Planned fourth surface, and the cheapest port so far: it's JVM, so it can **reuse
+`desktop-java/`'s non-UI code directly** instead of reimplementing it the way the
+VS Code extension had to. Everything from `ChatViewModel` down —
+`service/` (`ChatService`, `OrchestratorService`, `ToolLoopRunner`,
+`CheckpointService`, …), `llm/`, `workspace/`, `persistence/`, `model/`,
+`action/` — has no JavaFX dependency and is already callback-based. That's ~7–8k
+of ~10.5k LOC reused; the work is swapping the JavaFX layer (~2–3k LOC) for
+IntelliJ Platform equivalents, most of which are platform widgets you get for
+free.
+
+### How the layers map
+
+| `desktop-java/` today | Plugin equivalent |
+| --- | --- |
+| `App` / `MainWindow` (Stage, sidebar `TreeView`, topbar) | `ToolWindowFactory` + tool-window panel; the IDE Project view replaces the folder sidebar |
+| `ChatPaneView` / `ChatThread` / `Composer` (JavaFX) | Swing / `JBUI` components + a small markdown renderer, **or** a `JBCefBrowser` webview shared with `vscode-extension/` |
+| `ChatViewModel` `Observable*` + `Platform.runLater` | plain listeners + `Application.invokeLater(…, ModalityState)` onto the EDT |
+| `%APPDATA%/MultiAgentJava/config.json` via `ConfigService` | same file under `PathManager.getConfigPath()/multiagent/`, or `PersistentStateComponent` |
+| `chats.db` (sqlite-jdbc) | same, under the plugin config/system dir — **native-lib extraction under the plugin classloader is the one real technical risk; spike it first** |
+| `DirectoryChooser` to bind a folder | nothing — the chat binds to the open `Project` (`project.getBasePath()`) automatically |
+| `DialogActionApprover` (JavaFX) | `DialogWrapper` / `Messages`; `ActionApprover` interface unchanged |
+| `DiffDialog` (custom, java-diff-utils) | `DiffManager.showDiff(...)` — drop the custom one |
+| `GitService` (shells out, allowlisted) | keep as-is; revisit `Git4Idea` later |
+| after `write_file` | `VfsUtil.markDirtyAndRefresh(...)` so open editors update |
+| `mvn javafx:run` / `jpackage` / WiX | Gradle + IntelliJ Platform Gradle Plugin 2.x; distribute via Marketplace or a plugin zip |
+| 3 bundled themes incl. Terminal | follow the IDE theme via `JBColor` |
+
+### Not worth carrying over
+
+| Feature | Why |
+| --- | --- |
+| Side-by-side split view of two conversations | the IDE already splits editors; two chat panes in a narrow tool window is cramped. If model-vs-model A/B matters, do it as two tool-window tabs later |
+| Bundled light / dark / terminal themes | the IDE owns theming; Terminal is a novelty |
+| `jpackage` / WiX / `Launcher` indirection | Marketplace / plugin zip handles distribution |
+| `MainWindow` sidebar folder `TreeView` | replaced by the IDE Project view + a conversation list in the tool window |
+| Directory chooser for workspace binding | the open project *is* the binding |
+| Raw API debug-log window | niche; IntelliJ ships an HTTP Client — keep at most a log file |
+| In-app persona *editor* dialog | personas matter; "edit the JSON + a Settings list" is enough for a long time |
+
+### Reuse strategy — pick one
+
+- **A. Shared `core` module (recommended).** Extract the UI-free packages into a
+  module both `desktop-java/` and `intellij-plugin/` depend on. Finally fixes the
+  `shared/`-is-TS-only lesson with a real JVM core. Cost: a build restructure
+  (Maven multi-module, or the plugin consumes `core` from `mavenLocal`; the plugin
+  itself must be Gradle).
+- **B. Fork the core into the plugin** — same move as `desktop/` → `desktop-java/`.
+  Faster start, but two copies of `ToolLoopRunner` et al. Only if the plugin is a
+  short experiment.
+
+### Phases
+
+| Phase | Scope | Exit |
+| --- | --- | --- |
+| **0 — Foundations** | Extract `core` (strategy A); confirm zero `javafx.*` leaks and `desktop-java/` still builds. Gradle plugin skeleton, empty tool window, `runIde`. **Spike sqlite-jdbc under the plugin classloader.** Decide Swing vs JCEF. | Sandbox IDE opens the tool window; a throwaway button round-trips a `ConversationStore` row |
+| **1 — Minimal chat** | Single conversation (thread + composer). Server / model / persona config as an IDE `Configurable` reusing `AppSettings`. Health indicator. Streaming plain chat via `ChatService`. Persistence via reused `ConversationStore`. Callback→EDT helper. | Streaming conversation; history survives IDE restart |
+| **2 — Workspace-assisted chat** | Auto-bind to the open `Project`. Wire `ToolLoopRunner` + `WorkspaceService` + `GitService` + `RunCommandService`. Approval gate → `DialogWrapper`. Tool-activity rows. `VfsUtil.markDirtyAndRefresh` after writes. Checkpoint diff/revert via `DiffManager`. `run_command` output surfaced. | "add a null check and run the tests" → approval → edits visible in the editor → diff/revert → test output |
+| **3 — IDE-native integration** | Editor context-menu actions (**Add selection**, **Explain**); auto-include active file / selection as context. Conversation list + per-conversation model/server/persona pinning. Search + export MD/JSON. Status-bar widget (server + model + health). | Driven from the editor, not just the tool window; several conversations |
+| **4 — Orchestrator** | Wire `OrchestratorService` (plan → specialists → synthesize) with progress in the tool window. Coordinator picker + per-specialist models dialog. Specialists write through the same approval-gated loop (already true in `core`). | Orchestrator conversation plans, shows specialist progress, edits the project under the gate |
+| **5 — Polish / optional** | Vision (paste a screenshot, `describe_image`). Context-window usage bar. Persona list/editor in Settings. Optional raw-API log file. Marketplace prep (icon, `since/until-build`, publish). | Published to Marketplace |
+
+### Open decisions
+
+1. Reuse strategy **A** (shared `core` module) or **B** (fork into the plugin)?
+2. Build: convert the Java side to Gradle, or keep `core` on Maven + consume from `mavenLocal`?
+3. UI: native Swing, or JCEF webview shared with `vscode-extension/`?
+4. Language: all Java, or Java `core` + Kotlin plugin glue?
+
+---
+
 ## Repo / infra
 
 - **`release-verify/` has no tracked content** — it's only a `.gitignore` target
   for scan output. Commit the actual SAST/SBOM scripts + config if it should be a
   real component.
-- **JetBrains plugin** — planned fourth surface. It's JVM, so it could reuse
-  `desktop-java/`'s `service/` + `llm/` layer rather than reimplement.
 - **Merge `dev` → `master` + tag** on each `desktop-java/` release (the CI
   installer matrix in `.github/workflows/desktop-java.yml` fires on `v*` tags).

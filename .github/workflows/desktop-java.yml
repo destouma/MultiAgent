@@ -101,7 +101,15 @@ jobs:
                 --icon "$ICONS/icon.png" \
                 --linux-shortcut --linux-menu-group Development ;;
             macOS)
-              sips -s format icns "$ICONS/icon.png" --out "$RUNNER_TEMP/icon.icns"
+              # `sips -s format icns` is flaky on the runners (Error 13). Build a proper
+              # .iconset with reliable resizes, then iconutil - the documented path.
+              iconset="$RUNNER_TEMP/icon.iconset"
+              mkdir -p "$iconset"
+              for s in 16 32 128 256 512; do
+                sips -z $s $s        "$ICONS/icon.png" --out "$iconset/icon_${s}x${s}.png"
+                sips -z $((s*2)) $((s*2)) "$ICONS/icon.png" --out "$iconset/icon_${s}x${s}@2x.png"
+              done
+              iconutil -c icns "$iconset" -o "$RUNNER_TEMP/icon.icns"
               # Unsigned: fine as a CI artifact; Gatekeeper will warn on other machines.
               jpackage --type ${{ matrix.jptype }} "${COMMON[@]}" \
                 --icon "$RUNNER_TEMP/icon.icns" \

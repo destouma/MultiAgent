@@ -159,6 +159,7 @@
     "build": "node esbuild.js",
     "watch": "node esbuild.js --watch",
     "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run",
     "vscode:prepublish": "node esbuild.js",
     "package": "vsce package --no-dependencies"
   },
@@ -170,6 +171,7 @@
     "@types/vscode": "^1.85.0",
     "@vscode/vsce": "^3.2.1",
     "esbuild": "^0.28.1",
-    "typescript": "^5.8.3"
+    "typescript": "^5.8.3",
+    "vitest": "^4.1.10"
   }
 }

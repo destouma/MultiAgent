@@ -211,6 +211,10 @@ public class ChatService {
             List<String> lines = new ArrayList<>(List.of(
                     "You have a writable workspace folder bound to this chat: " + workspacePath,
                     "You may inspect and modify files inside this folder only.",
+                    "This folder IS the project root. Scaffold a new project directly into it (write `Cargo.toml`, "
+                            + "`package.json`, `src/main.rs`, … at the top level) - do NOT create a subfolder named "
+                            + "after the project, and do NOT run `cargo new` / `npm init <name>` style commands that "
+                            + "would nest one.",
                     "Prefer tools when available. If tools are unavailable, emit exact XML actions:",
                     "<list_dir path=\".\" />",
                     "<read_file path=\"relative/path.ext\" />  (add offset=\"1\" limit=\"200\" to read only a line range)",
@@ -237,8 +241,14 @@ public class ChatService {
                 lines.add("<git_commit message=\"Short summary of the change\" all=\"true\" />");
             }
 
-            lines.add("Changes to files and git_add/git_commit require the user's approval and may be declined - "
-                    + "if a tool result says the user declined, respect that and don't retry the same action.");
+            lines.add("You also have run_command (a native tool): run ONE build/test/lint/run command with the "
+                    + "project's own toolchain (read the project files first to know which - npm, cargo, mvn, "
+                    + "dotnet, pytest, ./gradlew, …). No shell, no pipes, no chaining. It runs in the workspace "
+                    + "root by default; pass cwd only for a monorepo subdirectory. A non-zero exit code comes "
+                    + "back as text - read it and fix the cause (a \"could not find Cargo.toml/package.json\" "
+                    + "means the project files aren't where you ran it - check with list_dir).");
+            lines.add("Changes to files, git_add/git_commit and run_command require the user's approval and may be "
+                    + "declined - if a tool result says the user declined, respect that and don't retry the same action.");
             lines.add("After file work, give a short summary of what changed.");
             lines.add("Workspace tree (top levels only; a trailing \"…\" means use list_dir to see inside):");
             lines.add(tree);

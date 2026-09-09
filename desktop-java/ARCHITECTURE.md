@@ -1,6 +1,6 @@
 # MultiAgent Desktop (Java) — Architecture & User Guide
 
-MultiAgent Desktop (Java) is a JavaFX port of [`desktop/`](../desktop) (the Electron/React client) that started as a **separate, parallel client** in the same repo and is now **the actively developed one** — `desktop/` is deprecated, kept for reference only. It connects to **Lemonade**, any other **OpenAI-compatible server** (NoLlama, LM Studio, vLLM, real OpenAI, ...), or a native **Ollama** server — save multiple named connections in Settings and switch between them, or pin different conversations to different servers. It supports switchable agent personas (pinned per conversation), folder-bound workspace chats with read/write/rename/git tools gated behind an approval dialog, project grouping over folders, text-file attachments, message edit/regenerate, a token-usage estimate, orchestrator sessions that route work across specialists, and a side-by-side split view for comparing two conversations from the same folder. Messages persist to SQLite, conversations can be searched and exported, and AI file writes can be reviewed as a diff and reverted.
+MultiAgent Desktop (Java) is a JavaFX port of [`desktop/`](../desktop) (the Electron/React client) that started as a **separate, parallel client** in the same repo and is now **the actively developed one** — `desktop/` is deprecated, kept for reference only. It connects to **Lemonade**, any other **OpenAI-compatible server** (NoLlama, LM Studio, vLLM, real OpenAI, ...), or a native **Ollama** server — save multiple named connections in Settings and switch between them, or pin different conversations to different servers. It supports switchable agent personas (pinned per conversation), folder-bound workspace chats with read/write/rename/git plus a sandboxed `run_command` (build/test) tool, all gated behind an approval dialog, project grouping over folders, text-file attachments, message edit/regenerate, a token-usage estimate, orchestrator sessions that route work across specialists, and a side-by-side split view for comparing two conversations from the same folder. Messages persist to SQLite, conversations can be searched and exported, and AI file writes can be reviewed as a diff and reverted.
 
 See [Differences from the Electron client](#10-differences-from-the-electron-client) for what this port intentionally does or doesn't carry over, and what it's since gained that never made it back into `desktop/`.
 
@@ -104,7 +104,7 @@ flowchart TB
 
 - **UI (`ui/`, `ui/components/`)** — plain-Java JavaFX construction (no FXML), reacting to `ChatViewModel`'s `ObservableList`/`Property` fields. `MainWindow` owns the sidebar (folder-grouped `TreeView`, bound to the primary view model only) and the global topbar (Search/Refresh/Settings/Close-split); `ChatPaneView` is the per-pane topbar+thread+composer, instantiated twice for split view.
 - **ViewModel (`ui/viewmodel/ChatViewModel`)** — the MVVM layer and the seam that gives each conversation its own isolated state. Holds a `ConversationSession` per conversation id (streaming buffer, workspace-op list, error, orchestrator status) so switching the active conversation never carries over another one's in-flight state, and a `resolveModelFor`/`resolveServerFor`/`resolvePersonaFor` trio that reads each of those off the `Conversation` row itself rather than a single shared field — this is what makes model/server/persona genuinely per-chat (see [§10](#10-differences-from-the-electron-client) for why persona differs from the Electron app here). Background work runs on a per-instance executor and marshals results back via `Platform.runLater`.
-- **Services (`service/`)** — `ChatService` (plain chat + delegates to `ToolLoopRunner` when a workspace is bound), `OrchestratorService` (plan → specialists → synthesize, with its own smaller read-only tool executor for specialists, and a write-capable executor phase — on by default when a workspace is bound — that reuses `ToolLoopRunner`), `ToolLoopRunner` (the shared native-tool-calling/XML-tag/JSON-tool-call agent loop, factored out so `ChatService` and future callers don't duplicate it), `CheckpointService` (diff/revert), `PersonaRegistry`, `ConfigService`, `DebugLog` (opt-in raw HTTP capture — see [§6](#raw-api-debug-log)).
+- **Services (`service/`)** — `ChatService` (plain chat + delegates to `ToolLoopRunner` when a workspace is bound), `OrchestratorService` (plan → specialists → synthesize; each specialist runs through the shared `ToolLoopRunner` — full read+write tools, approval-gated — when a workspace is bound), `ToolLoopRunner` (the shared native-tool-calling/XML-tag/JSON-tool-call agent loop — file tools + `GitService` + `RunCommandService`, factored out so `ChatService` and `OrchestratorService` don't duplicate it), `CheckpointService` (diff/revert), `PersonaRegistry`, `ConfigService`, `DebugLog` (opt-in raw HTTP capture — see [§6](#raw-api-debug-log)).
 - **Persistence (`persistence/`)** — `ConversationStore` over `sqlite-jdbc`, `Migrations` (additive, `PRAGMA table_info`-guarded).
 - **Workspace (`workspace/`)** — `WorkspaceService` (sandboxed list/read/write/delete/rename + tree-building), `ActionTagParser` and `JsonToolCallParser` (two independent fallbacks for models without reliable native tool-calling — see [§6](#6-features-in-detail)).
 - **Action approval (`action/`, `ui/components/DialogActionApprover`)** — a small, deliberately generic interface (`ActionApprover.approve(PendingAction)`) sitting between the tool loop and execution, so any future mutating action type (not just files) can gate on the same "describe → ask → execute" pipeline without new plumbing.
@@ -153,15 +153,17 @@ MultiAgent/
         streaming/SseLineReader.java
       workspace/
         WorkspaceService.java         # sandboxed list/read/write/delete/rename + tree
+        GitService.java               # fixed-allowlist git_* subcommands, cwd-pinned
+        RunCommandService.java        # run_command: single-process build/test, argv-only, cwd-locked, approval-gated
         ActionTagParser.java          # XML action-tag fallback
         JsonToolCallParser.java       # JSON-shaped tool-call text fallback
-        WorkspaceException.java
+        WorkspaceException.java  RunCommandException.java
       persistence/
         ConversationStore.java  Migrations.java
       service/
         ChatService.java              # plain chat + workspace delegation
         ToolLoopRunner.java           # shared tool-calling agent loop
-        OrchestratorService.java      # plan -> specialists -> synthesize -> (opt-in) executor
+        OrchestratorService.java      # plan -> specialists (full tools when a folder is bound) -> synthesize
         CheckpointService.java        # diff/revert
         PersonaRegistry.java  ConfigService.java  ExportFormat.java  PlanParser.java
         DebugLog.java                 # opt-in raw LLM HTTP capture (in-memory ring + api-debug.log)
@@ -183,7 +185,7 @@ MultiAgent/
           SearchDialog.java  SplitPickerDialog.java  DiffDialog.java
           DialogActionApprover.java    # the "ask before writing/deleting/renaming" dialog
           DebugLogWindow.java          # non-modal viewer for DebugLog (list + raw request/response)
-          SpecialistModelsDialog.java  # orchestrator: model per specialist + executor-phase opt-in
+          SpecialistModelsDialog.java  # orchestrator: model per specialist for this chat
     src/main/resources/com/multiagent/desktop/ui/
       styles.css  theme-dark.css  theme-terminal.css
     src/test/java/com/multiagent/desktop/...   # JUnit 5, one test class per main class above
@@ -218,7 +220,7 @@ Path: `%APPDATA%/MultiAgentJava/config.json` (its own folder — deliberately se
 
 ### Conversations / messages (SQLite via sqlite-jdbc)
 
-- `conversations(id, title, createdAt, updatedAt, workspacePath, kind, model, serverId, personaId, visionModel, specialistModels, orchestratorApply)` — `personaId`, `visionModel`, `specialistModels` (orchestrator per-specialist model overrides, JSON) and `orchestratorApply` (`"0"` ⇒ opt out of the write-capable executor phase; null/`"1"` ⇒ run it when a workspace is bound) are Java-client-only additions (see [§10](#10-differences-from-the-electron-client)); everything else matches the Electron schema field-for-field.
+- `conversations(id, title, createdAt, updatedAt, workspacePath, kind, model, serverId, personaId, visionModel, specialistModels, orchestratorApply)` — `personaId`, `visionModel` and `specialistModels` (orchestrator per-specialist model overrides, JSON) are Java-client-only additions (see [§10](#10-differences-from-the-electron-client)); `orchestratorApply` is a legacy no-op column (see [§6](#orchestrator-sessions)); everything else matches the Electron schema field-for-field.
 - `messages(id, conversationId, role, content, personaId, createdAt)`, indexed on `(conversationId, createdAt)`.
 - `folders(path, addedAt)`.
 - `file_checkpoints(id, conversationId, relativePath, previousContent, previousExisted, createdAt)` — one row per successful `write_file`/`delete_file`, capturing pre-op content (`previousContent: null` + `previousExisted: false` means the op created the file).
@@ -237,7 +239,7 @@ There's no IPC layer in this client — `ChatViewModel` calls services directly,
 | --- | --- | --- |
 | `ChatService.send(client, conversation, content, persona, model, maxHistory, listener)` | async, callback-based | Runs one chat turn (plain or workspace tool loop) on a background thread |
 | `ChatService.Listener` | interface | `onToken` / `onDone` / `onError` / `onWorkspaceOp` / `onStep` / `onMessagesUpdated` — the callback contract both `ChatService` and `OrchestratorService` report through |
-| `OrchestratorService.send(...)` | async, callback-based | Same `Listener` contract, drives the plan → specialists → synthesize sequence, plus the write-capable executor phase (`boolean apply`; on by default once a workspace is bound) |
+| `OrchestratorService.send(...)` | async, callback-based | Same `Listener` contract, drives the plan → specialists → synthesize sequence; specialists get the full write-capable tool loop when a workspace is bound |
 | `ChatService.cancel(conversationId)` / `OrchestratorService.cancel(conversationId)` | sync | Cancels that conversation's in-flight `CancellationToken` — per-conversation, not global |
 | `ChatService.setActionApprover(approver)` | sync | Installs the write/delete/rename confirmation gate |
 | `CheckpointService.diff(checkpointId)` / `.revert(checkpointId)` | sync | Backing calls for the chat thread's View diff / Revert buttons |
@@ -270,17 +272,20 @@ Right-click a folder with 2+ conversations → **Side by side** opens `SplitPick
 
 A chat created from a folder has `workspacePath` set for its whole lifetime (fixed at creation). When bound:
 
+- The pane topbar shows a **Folder** link (the folder name; full path on hover — *"files and commands act here"*); clicking it opens the folder in the OS file manager. Hidden for non-workspace chats.
 - The system prompt gets the workspace's directory tree plus tool-usage instructions.
-- Tools available: `list_dir`, `read_file`, `search_file` (grep -n over one file — streamed line-by-line, so it takes a 10 MB SARIF/log the 200 KB attach path can't; returns matching lines + numbers, capped at 40 KB output; use it to find the ranges worth `read_file`-ing), `write_file`, `delete_file`, `rename_file`, and — only when the active server has a vision model configured — `describe_image` (see [Vision](#vision-describe_image--image-attachments)). `generate_image` is defined in the tool schema for forward-compat but rejected by `WorkspaceService.executeTool` — image *generation* isn't ported.
+- Tools available: `list_dir`, `read_file`, `search_file` (grep -n over one file — streamed line-by-line, so it takes a 10 MB SARIF/log the 200 KB attach path can't; returns matching lines + numbers, capped at 40 KB output; use it to find the ranges worth `read_file`-ing), `write_file`, `delete_file`, `rename_file`, the `git_*` set (when it's a repo), `run_command` (see below), and — only when the active server has a vision model configured — `describe_image` (see [Vision](#vision-describe_image--image-attachments)). `generate_image` is defined in the tool schema for forward-compat but rejected by `WorkspaceService.executeTool` — image *generation* isn't ported.
 - **Mutating tools ask first** — see [Approval gate](#approval-gate-for-file-writesdeletesrenames) below. This is new relative to the Electron app.
+
+**`run_command` (`RunCommandService`)** — Phase 1 of "let the agent build/run things". One tool: `{command, args[], cwd?, timeout_seconds?}` → spawns a **single process** (`ProcessBuilder`, argv only — never a shell string) with cwd = the workspace root (or a `resolveSafe`-checked subdirectory via `cwd`, for a monorepo), returns combined stdout/stderr + a "Command exited with code N" line on failure (a failing build is signal, not an error). Stack-agnostic — the model reads the project and picks `cargo`/`npm`/`mvn`/`dotnet`/`./gradlew`/… itself. The workspace system prompt tells it the bound folder **is** the project root (scaffold into it directly; don't `cargo new`/`npm init <name>` a nested subfolder) — a `run_command` that then can't find `Cargo.toml`/`package.json` in the wrong place is the failure mode this avoids. Guardrails: a `BLOCKED_EXECUTABLES` set (destructive utils, raw shells, `ssh`/`rsync`/…, `docker`/`podman`/`kubectl` — the last deferred to their own design) refused before spawn; a shell-metacharacter reject on a single-string `command`; `resolveSafe` on a `./`-relative script and on `cwd`; `timeout_seconds` (default 120, max 600) and output cap (20 000 chars) with a process-tree kill on timeout/cancellation. **Approval-gated** like `write_file` (`MUTATING_TOOLS` in `ToolLoopRunner`), so it also reaches orchestrator specialists. Phase 2 (long-running dev servers with a process panel) is not built.
 - **Safety**, unchanged from the TS original: every path resolves under the workspace root via `WorkspaceService.resolveSafe()` — a plain `..`-rejection check, then a `Path.toRealPath()` symlink-resolved check so a symlink planted inside the workspace can't point files outside it. `node_modules`/`.git`/`dist`/etc. are skipped when building the tree.
 
-### Approval gate for file writes/deletes/renames
+### Approval gate for file writes/deletes/renames/commands
 
-Every `write_file`/`delete_file`/`rename_file` call — whether it arrived as a native tool call, an XML tag, or JSON tool-call text — is intercepted by `ToolLoopRunner` before execution and routed through `ActionApprover.approve(PendingAction)`. The installed implementation, `DialogActionApprover`, shows a JavaFX confirmation dialog on the FX Application Thread (parented to the main window) with:
+Every `write_file`/`delete_file`/`rename_file`, `git_add`/`git_commit` and `run_command` call — whether it arrived as a native tool call, an XML tag, or JSON tool-call text — is intercepted by `ToolLoopRunner` before execution and routed through `ActionApprover.approve(PendingAction)`. The installed implementation, `DialogActionApprover`, shows a JavaFX confirmation dialog on the FX Application Thread (parented to the main window) with:
 
-- A bold summary line (e.g. "Write `src/HelloWorld.java` (125 bytes)", "Delete `notes.txt`", "Rename `old.txt` → `new.txt`")
-- An expandable preview: the content being written, the existing file's content for a delete, nothing extra for a rename
+- A bold summary line (e.g. "Write `src/HelloWorld.java` (125 bytes)", "Delete `notes.txt`", "Rename `old.txt` → `new.txt`", "Run: `npm run build`")
+- An expandable preview: the content being written, the existing file's content for a delete, the working directory + full command line for `run_command`, nothing extra for a rename
 
 ...and blocks the calling (background, tool-loop) thread on the result via a `CompletableFuture`. Declining returns a clean tool-result error to the model instead of executing anything or capturing a checkpoint. The gate is deliberately generic (`PendingAction` just carries a category/summary/detail) so a future action type — a git command, for instance — could plug into the exact same interface without new UI plumbing.
 
@@ -293,13 +298,15 @@ Every successful `write_file`/`delete_file` captures a checkpoint (`ToolLoopRunn
 
 ### Orchestrator sessions
 
-**+ Orchestrator** creates a `kind: ORCHESTRATOR` conversation. Each user message runs: **Plan** (orchestrator persona picks 1-3 specialists via a small JSON-only completion, parsed by `PlanParser`) → **Specialists** (each runs in turn, with read-only `list_dir`/`read_file`/`search_file` tools plus read-only `git_*` when a workspace is bound — never write/delete/rename or `git_add`/`git_commit` — persisted as its own message as it completes) → **Synthesize** (final streamed answer from the specialist notes) → optionally **Execute** (see below). Progress surfaces via `onStep` events into `orchestratorStatusProperty()`.
+**+ Orchestrator** creates a `kind: ORCHESTRATOR` conversation. Each user message runs: **Plan** (coordinator persona picks 1-3 specialists via a small JSON-only completion, parsed by `PlanParser`) → **Specialists** (each runs in turn, persisted as its own message as it completes) → **Synthesize** (final streamed answer from the specialist notes). Progress surfaces via `onStep` events into `orchestratorStatusProperty()`.
 
-- **Coordinator** — the persona that runs the plan + synthesis. For an orchestrator chat the pane topbar relabels the **Persona** box to **Coordinator** (and hides **Vision** — specialists don't do vision); it pins `Conversation.personaId`, which `OrchestratorService` resolves as coordinator → falls back to the `orchestrator` persona, then `general`.
+- **Specialists can write.** When a workspace folder is bound, each specialist runs through the **same shared `ToolLoopRunner`** a normal workspace chat uses — the full read **and write** tool set (`list_dir`/`read_file`/`search_file` + `write_file`/`delete_file`/`rename_file` + `git_*`), every mutating call gated by the same `ActionApprover` dialog and captured as a checkpoint (**View diff** / **Revert**). `App.java` installs one `DialogActionApprover` on both `ChatService` and `OrchestratorService`. Binding a folder is the whole opt-in — there is no separate "apply changes" step or checkbox. With no workspace bound a specialist is a plain text completion. The synthesis prompt tells the coordinator to ground every file claim in the specialist notes ("do NOT invent writes they didn't report").
+- **Coordinator** — the persona that runs the plan + synthesis. For an orchestrator chat the pane topbar relabels the **Persona** box to **Coordinator** (and hides **Vision**); it pins `Conversation.personaId`, which `OrchestratorService` resolves as coordinator → falls back to the `orchestrator` persona, then `general`.
 - **Roster** — any loaded persona except `orchestrator` (`OrchestratorService.availableSpecialistIds()`), so dropping in `personas/security.json` just extends it; the planner is told each candidate's name and resolved model.
 - **Per-specialist model** — resolved `Conversation.specialistModels[id]` (the **Specialists…** dialog, per orchestrator chat) → `persona.defaultModel` → the conversation's model. The step line shows which model a specialist is on.
 - **Context fit** — `priorContext` is trimmed to the server's context-window budget (like `ChatService`), and every specialist / plan / synthesis call carries `max_tokens` = the reply reserve.
-- **Executor phase** — **on by default whenever a workspace is bound** (binding a folder means "the agent can work in it"). A final **Execute** step runs the synthesis + specialist notes as the brief through the shared `ToolLoopRunner` on the coordinator's model — the full `write_file`/`delete_file`/`rename_file` (+ `git_add`/`git_commit` in a repo) tool set, each write still gated by the same `ActionApprover` dialog and captured as a checkpoint (`App.java` installs one `DialogActionApprover` on both `ChatService` and `OrchestratorService`). The executor's summary is appended to the synthesis as an **Applied changes** section. Unticking *"Apply changes to the workspace after synthesizing"* in the **Specialists…** dialog sets `Conversation.orchestratorApply = "0"` (an explicit opt-out → planning-only; `"1"`/null both mean "run it"). With no workspace, or when opted out, the step is skipped **and the synthesis prompt is told so explicitly** ("no files can be created or modified in this turn… do NOT say that files were created"), since specialists and synthesis are both read-only and a coordinator model will otherwise happily claim it wrote the files it only described.
+
+> The `Conversation.orchestratorApply` column is legacy (a short-lived opt-in "executor phase" before specialists could write directly); nothing reads it and `Migrations` keeps it only so existing DBs need no drop.
 
 ### Message search & export
 
@@ -448,10 +455,10 @@ Or in IntelliJ: open `desktop-java/pom.xml` as a project, then run the `MultiAge
 
 ### Orchestrator
 
-1. Click **+ Orchestrator**.
-2. (Optional) **Coordinator** box — which persona runs the plan + synthesis (default: the Orchestrator persona). **Specialists…** — set a model per specialist for this chat (blank = the persona's / conversation's model); a bound workspace also gets the write-capable **Execute** step after synthesis, which you can untick here (*"Apply changes to the workspace after synthesizing"*) for a planning-only chat. Add a `personas/*.json` to extend the roster.
+1. Click **+ Orchestrator** (right-click a folder → **New orchestrator here** to bind a workspace).
+2. (Optional) **Coordinator** box — which persona runs the plan + synthesis (default: the Orchestrator persona). **Specialists…** — set a model per specialist for this chat (blank = the persona's / conversation's model). Add a `personas/*.json` to extend the roster.
 3. Ask a question. Watch the status banner while specialists run (each line shows the specialist's model); each reply appears in the thread as it completes, followed by the final synthesis.
-4. If a workspace is bound (and you didn't opt out), an **Applying changes…** step follows: each file write pops the same approval dialog as a workspace chat (decline and the executor moves on), and the answer ends with an **Applied changes** summary plus the usual **View diff** / **Revert** rows.
+4. **With a folder bound, the specialists write.** Asked to create or edit files, a specialist uses the tools directly — each write pops the same approval dialog as a normal workspace chat (decline and it moves on), and its message gets **View diff** / **Revert** rows. No separate step or checkbox.
 
 ### Custom personas
 
@@ -503,7 +510,7 @@ mvn clean package
 jpackage \
   --type exe \
   --name MultiAgent \
-  --app-version 1.3.1 \
+  --app-version 1.5.2 \
   --vendor MultiAgent \
   --input target/jpackage-input \
   --main-jar multiagent-desktop.jar \
@@ -518,7 +525,7 @@ jpackage \
 
 **Why `--main-class com.multiagent.desktop.Launcher` and not `App` directly:** `App` extends `javafx.application.Application`. The JVM refuses to start an `Application` subclass directly as the manifest/`--main-class` main class unless JavaFX is on the *module path* - which a plain classpath app built from `jpackage`'s input-directory mode never is (confirmed live: `Error: JavaFX runtime components are missing, and are required to run this application`). `Launcher` (`Launcher.java`) exists solely to sidestep this: a plain `main(String[])` that just calls `App.main(args)`. `mvn javafx:run`'s dev loop doesn't need this detour - that plugin sets up the module path itself, so its `<mainClass>` still points straight at `App`.
 
-Output: `target/dist/MultiAgent-<version>.exe`. Verified end-to-end for 1.0.0: builds, installs (Start Menu + desktop shortcut, registers in Add/Remove Programs), and the installed app launches correctly from `C:\Program Files\MultiAgent\MultiAgent.exe`. 1.1.0 built a working `.exe` (WiX 5 + JDK 26) and its app-image was launch-checked; 1.2.0 and 1.3.0 are feature releases on top (1.3.0: orchestrator executor phase, persona-coloured bubbles, Settings persona editor); 1.3.1 is a bugfix (orchestrator executor phase now runs by default when a workspace is bound, and never claims writes it didn't make). The `.exe` is rebuilt per release; 1.3.0's and 1.3.1's `.exe` were installed and launch-verified.
+Output: `target/dist/MultiAgent-<version>.exe`. Verified end-to-end for 1.0.0: builds, installs (Start Menu + desktop shortcut, registers in Add/Remove Programs), and the installed app launches correctly from `C:\Program Files\MultiAgent\MultiAgent.exe`. 1.1.0 built a working `.exe` (WiX 5 + JDK 26) and its app-image was launch-checked; 1.2.0/1.3.0/1.3.1 are feature releases on top (persona-coloured bubbles, Settings persona editor). 1.4.0 makes orchestrator specialists write directly to a bound workspace (dropping the short-lived opt-in "executor phase"). The `.exe` is rebuilt per release; 1.3.0's and 1.3.1's `.exe` were installed and launch-verified.
 
 The runtime version string lives in `com.multiagent.desktop.AppInfo` (`NAME` / `VERSION`) — shown in the window title and the Settings dialog footer, and kept in sync by hand with `pom.xml` and `--app-version` on each release (no Maven resource filtering is wired up).
 
@@ -568,6 +575,8 @@ Intentional, not oversights:
 | Mutating file tools | Execute immediately, no confirmation | Gated behind `ActionApprover`/`DialogActionApprover` — every write/delete/rename asks first | Added specifically for this client; a generic enough interface that other action types (e.g. git commands) can reuse it later |
 | Tool-call detection | Native tool calls, then XML action-tag fallback | Native tool calls, then XML action-tag fallback, **then a JSON-tool-call-text fallback** (`JsonToolCallParser`) | Found live against Qwen2.5-Coder + Lemonade: the model ignores both the native tool-calling field and this app's XML tags, printing the JSON shape it was fine-tuned to emit instead |
 | `rename_file` tool | Not present | Present (`WorkspaceService.renameFile`, XML tag, JSON fallback) | Added during this port; not back-ported to the TS side |
+| Orchestrator specialists | Read-only | Full read+write tool loop when a workspace is bound (approval-gated), same as a normal workspace chat | Binding a folder means the agent can work in it; a read-only orchestrator that only ever *describes* the fix confused users |
+| Run commands | Not present | `run_command` — one sandboxed build/test process per call (argv-only, cwd-locked, blocklist, timeout, approval-gated) via `RunCommandService` | Phase 1 of closing the write→build→fix loop; Phase 2 (dev-server process manager) deferred |
 | Persona editing | `personas/*.json` files only, no in-app UI | Settings → *Personas*: view bundled ones, add/edit/remove your own into `%APPDATA%/MultiAgentJava/personas/` (`PersonaEditDialog`) | Added during this port; the writable dir layers last over the bundled candidate dirs so a custom persona wins on id |
 | Image generation | Full (`ImageService`, image sessions, gallery) | Not ported (explicitly out of scope for this migration) | Deprioritized early in planning — plain/workspace chat and orchestrator were the priority |
 | Packaging | NSIS installer (Windows), AppImage (Linux) | WiX-built `.exe` installer (Windows only so far) via `jpackage` - manual two-step process, not yet a Maven plugin/CI step | See [§8](#8-develop--build) |
@@ -595,11 +604,13 @@ Rough scoring — **Effort** is what it takes to ship *well* (not a prototype), 
 | Command palette (Ctrl+K) | Med | Med | Very low | Mostly new code — `SearchDialog` is content search, not a navigator |
 | [Model-invoked HTTP(S) fetch tool](#model-invoked-https-fetch-tool) | Med | **High** | **High** | The call is trivial; the SSRF denylist / allowlist / approval design is the work. Highest-demand item |
 | Replay / send HTTP from the Debug panel | Low–Med | Low–Med | Low–Med | Panel + captured entries exist; human-driven, keep debug-only |
+| [Embedded workspace terminal](#embedded-workspace-terminal) | Med–High | Med–High | Low–Med | A real interactive shell pane next to the (future) file browser, cwd = the bound folder. Human-driven so no approval gate — but a raw shell + a native PTY dependency (complicates jpackage input) |
 | SAST/SBOM launcher in-app | Med | Low–Med | Low–Med | Blocked on the user designing its shape first; more third-party tooling to trust |
 | ~~Vision / image attachments~~ | — | — | — | **Shipped** — `describe_image` tool + attach-and-describe, see [§6](#vision-describe_image--image-attachments). Model-choice notes kept below. |
-| [Docker tool integration](#docker-tool-integration) | Med–High | Low–Med | **High** | `build` = arbitrary host code exec; `logs`/`inspect` leak secrets; blast radius = whole host |
+| ~~Run build/test commands~~ | — | — | — | **Shipped (Phase 1)** — `run_command` (`RunCommandService`), see [§6](#workspace-assisted-chats). Phase 2 = long-running dev servers with a process panel (stop / port / log tail), not built. |
+| [Docker tool integration](#docker-tool-integration) | Med–High | Low–Med | **High** | `build` = arbitrary host code exec; `logs`/`inspect` leak secrets; blast radius = whole host. `run_command` blocks `docker`/`podman`/`kubectl` on purpose |
 
-**Sequencing:** the top three are quick, wanted, near-riskless — do those first, then split-send and the palette. The HTTP fetch tool is the highest-value item but the security design must be done deliberately, not rushed. Defer Docker until a concrete need appears; SAST waits on the user's own thinking.
+**Sequencing:** the top three are quick, wanted, near-riskless — do those first, then split-send and the palette. The HTTP fetch tool is the highest-value item but the security design must be done deliberately, not rushed. The embedded terminal is a natural next step once `run_command` and a file-browser panel exist — it and `run_command` Phase 2 (dev-server process manager) overlap and should be designed together. Defer Docker until a concrete need appears; SAST waits on the user's own thinking.
 
 ### Docker tool integration
 
@@ -632,6 +643,15 @@ Sketch of a shape that could be defensible:
 
 Related but distinct from the debug-panel "replay a request" idea below: that one is a human clicking resend on traffic the app already made; this one is the model originating new requests, which is a much larger trust decision.
 
+### Embedded workspace terminal
+
+A real interactive shell pane inside a folder-bound chat — sitting alongside a (not-yet-built) file-browser panel for the workspace — with its cwd fixed to the conversation's `workspacePath`. The user types into it directly: run a dev server, poke at `cargo test` output, `git rebase -i`, whatever `run_command` deliberately can't do (`run_command` is model-invoked, one-shot, argv-only, approval-gated; this is the human's own shell).
+
+- **Human-driven ⇒ no `ActionApprover` gate** — the user is literally typing the commands. But it *is* raw shell access, which the tool layer has gone out of its way to avoid (`run_command` blocks `sh`/`bash`/`cmd`); a user terminal is a different trust category and fine, just worth stating the asymmetry.
+- **The dependency cost is the real friction.** JavaFX has no terminal widget and the JDK has no PTY. Realistic options: **JediTerm** (JetBrains' terminal component, Swing — embed via `SwingNode`) + **pty4j** for the PTY, or an xterm.js instance in a `WebView`. Either way it adds a **native library** (pty4j ships per-OS `.so`/`.dll`/`.dylib`), which complicates the deliberately-flat `jpackage` input directory and the per-OS CI matrix.
+- **Overlaps with `run_command` Phase 2** (the dev-server process manager). If both get built they should share one "processes running in this workspace" model — the terminal is the interactive front end, the process panel is the at-a-glance list with stop/port/log-tail. Design them together.
+- Scope creep to resist: multiplexed tabs, split panes, shell profile config, ssh targets. v1 is one shell, one workspace, cwd-locked.
+
 ### Vision — choosing a VLM
 
 The mechanism shipped — `describe_image` tool, inline multimodal when the chat model can see, and a pre-pass transcribe when it can't (see [§6](#vision-describe_image--image-attachments)). What's left is a *config* decision: which model to set as the chat's / server's vision model.
@@ -651,6 +671,7 @@ The mechanism shipped — `describe_image` tool, inline multimodal when the chat
 
 ### Other ideas raised, not yet built
 
+- **Embedded workspace terminal** — an interactive shell pane in a folder-bound chat, next to a file-browser panel, cwd = the bound folder; for everything `run_command` (model-invoked, one-shot, gated) isn't: dev servers, interactive git, ad-hoc pokes. Human-driven so no approval gate, but adds a native PTY dependency (pty4j) that complicates packaging. See the [detailed note](#embedded-workspace-terminal) above; design alongside `run_command` Phase 2.
 - **SAST/SBOM launcher inside the app** — running Syft/Grype/CodeQL-style scans as a first-class in-app action (the current `release-verify/security-scan/` workflow is a manual, outside-the-app process). Explicitly deferred - the user wants to think through the shape of this one before it's designed.
 - **Cross-folder project "notes"** — when project grouping ([§6](#6-features-in-detail)) was designed, a shared free-text notes field per project (injected into every chat's system prompt across that project's folders, like the workspace tree already is) was floated as a middle ground between "no shared context" (what shipped) and full cross-chat memory. Deliberately deferred - per-chat memory was judged enough for now.
 - **Split view "send to both panes"** — split view today is two fully independent panes; firing the same prompt at both at once (e.g. two different models/servers side by side) would turn it into real A/B comparison, which nothing else in the app currently offers.

@@ -26,7 +26,7 @@ import java.util.Set;
 public final class JsonToolCallParser {
     private static final Set<String> KNOWN_TOOLS = Set.of(
             "list_dir", "read_file", "search_file", "write_file", "delete_file", "rename_file",
-            "generate_image", "describe_image",
+            "generate_image", "describe_image", "run_command",
             "git_status", "git_diff", "git_log", "git_show", "git_branch", "git_add", "git_commit");
 
     private static final ObjectMapper MAPPER = new ObjectMapper();

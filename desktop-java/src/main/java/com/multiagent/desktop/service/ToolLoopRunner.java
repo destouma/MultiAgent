@@ -14,6 +14,7 @@ import com.multiagent.desktop.persistence.ConversationStore;
 import com.multiagent.desktop.workspace.ActionTagParser;
 import com.multiagent.desktop.workspace.GitService;
 import com.multiagent.desktop.workspace.JsonToolCallParser;
+import com.multiagent.desktop.workspace.RunCommandService;
 import com.multiagent.desktop.workspace.WorkspaceService;
 
 import java.nio.charset.StandardCharsets;
@@ -40,12 +41,13 @@ import java.util.Set;
  */
 public class ToolLoopRunner {
     private static final int MAX_TOOL_ROUNDS = 6;
-    // File mutators plus GitService.MUTATING_TOOLS - kept explicit here so the gate is readable at a glance.
+    // File mutators, GitService.MUTATING_TOOLS, and run_command - kept explicit here so the gate is readable at a glance.
     private static final Set<String> MUTATING_TOOLS = Set.of(
-            "write_file", "delete_file", "rename_file", "git_add", "git_commit");
+            "write_file", "delete_file", "rename_file", "git_add", "git_commit", RunCommandService.TOOL_NAME);
 
     private final WorkspaceService workspace = new WorkspaceService();
     private final GitService git = new GitService();
+    private final RunCommandService runCommand = new RunCommandService();
     private final ConversationStore store;
     private final ObjectMapper mapper = new ObjectMapper();
     private volatile ActionApprover approver;
@@ -70,6 +72,7 @@ public class ToolLoopRunner {
         List<ChatRequestMessage> messages = new ArrayList<>(initialMessages);
         List<ToolDefinition> tools = new ArrayList<>(WorkspaceService.workspaceTools());
         tools.addAll(GitService.gitTools());
+        tools.addAll(RunCommandService.commandTools());
         boolean visionEnabled = visionModel != null && !visionModel.isBlank();
         if (visionEnabled) {
             tools.add(WorkspaceService.visionTool());
@@ -157,7 +160,9 @@ public class ToolLoopRunner {
         }
 
         String relPath;
-        if (args.get("path") != null) {
+        if (RunCommandService.TOOL_NAME.equals(name)) {
+            relPath = RunCommandService.commandLine(args); // the op line / prompt shows the command, not a path
+        } else if (args.get("path") != null) {
             relPath = String.valueOf(args.get("path"));
         } else if ("generate_image".equals(name)) {
             relPath = "images/generated.png";
@@ -204,9 +209,14 @@ public class ToolLoopRunner {
         String previousContent = capturesCheckpoint ? workspace.tryReadFile(workspacePath, relPath) : null;
 
         try {
-            String result = name.startsWith("git_")
-                    ? git.executeTool(workspacePath, name, args)
-                    : workspace.executeTool(workspacePath, name, args);
+            String result;
+            if (RunCommandService.TOOL_NAME.equals(name)) {
+                result = runCommand.executeTool(workspacePath, args, token);
+            } else if (name.startsWith("git_")) {
+                result = git.executeTool(workspacePath, name, args);
+            } else {
+                result = workspace.executeTool(workspacePath, name, args);
+            }
             String checkpointId = capturesCheckpoint
                     ? store.addCheckpoint(conversationId, relPath, previousContent, previousContent != null).id()
                     : null;
@@ -264,6 +274,15 @@ public class ToolLoopRunner {
             case "rename_file" -> {
                 String newPath = String.valueOf(args.getOrDefault("newPath", ""));
                 yield new PendingAction("file", "Rename " + relPath + " -> " + newPath);
+            }
+            case "run_command" -> {
+                String cmd = RunCommandService.commandLine(args);
+                Object cwd = args.get("cwd");
+                String dir = cwd != null && !String.valueOf(cwd).isBlank() && !String.valueOf(cwd).trim().equals(".")
+                        ? workspacePath + java.io.File.separator + String.valueOf(cwd).trim()
+                        : workspacePath;
+                yield new PendingAction("command", "Run: " + cmd,
+                        "Working directory: " + dir + "\n\n$ " + cmd);
             }
             case "git_add" -> new PendingAction("git", "git add " + (relPath.isBlank() ? "." : relPath));
             case "git_commit" -> {

@@ -517,22 +517,6 @@ public class ChatViewModel {
         notifySiblings();
     }
 
-    /** Orchestrator only: opt in/out of the write-capable executor phase for this conversation. */
-    public void setOrchestratorApply(boolean on) {
-        Conversation conversation = activeConversation.get();
-        if (conversation == null) {
-            return;
-        }
-        // Default (null) already means "on"; only persist an explicit "0" opt-out, clearing back to null to re-enable.
-        Conversation updated = store.setConversationOrchestratorApply(conversation.getId(), on ? null : "0");
-        activeConversation.set(updated);
-        int index = conversations.indexOf(conversation);
-        if (index >= 0) {
-            conversations.set(index, updated);
-        }
-        notifySiblings();
-    }
-
     /** Every loaded persona except the orchestrator - the roster the planner can pick from. */
     public java.util.List<Persona> availableSpecialistPersonas() {
         return personaRegistry.list().stream()
@@ -796,7 +780,7 @@ public class ChatViewModel {
         if (conversation.getKind() == ConversationKind.ORCHESTRATOR) {
             orchestratorService.send(client, conversation, messageText, model, profile.getMaxHistory(),
                     com.multiagent.desktop.service.SpecialistModels.parse(conversation.getSpecialistModels()),
-                    activeContextTokens.get(), conversation.isOrchestratorApply(), listener);
+                    activeContextTokens.get(), listener);
         } else {
             chatService.send(client, conversation, messageText, persona, model,
                     resolveVisionModelFor(conversation), profile.getMaxHistory(),

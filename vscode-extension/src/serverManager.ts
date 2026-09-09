@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { randomUUID } from 'node:crypto';
-import type { ProviderType, ServerProfile } from '../../shared/types';
+import type { ProviderType, ServerProfile } from '../shared/types';
 
 const OPENAI_DEFAULT_URL = 'http://localhost:13305/api/v1';
 const OLLAMA_DEFAULT_URL = 'http://localhost:11434';

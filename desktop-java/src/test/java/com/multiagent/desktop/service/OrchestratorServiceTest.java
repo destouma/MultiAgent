@@ -78,7 +78,7 @@ class OrchestratorServiceTest {
         List<String> stepPhases = new ArrayList<>();
 
         orchestratorService.send(client, conversation, "why is the sky blue?", "fake-model", 40, java.util.Map.of(), 0,
-                false, new ChatService.Listener() {
+                new ChatService.Listener() {
                     @Override
                     public void onToken(String conversationId, String messageId, String delta) {
                     }
@@ -125,7 +125,7 @@ class OrchestratorServiceTest {
                 "Final answer.");
 
         CountDownLatch latch = new CountDownLatch(1);
-        orchestratorService.send(client, conversation, "hello", "fake-model", 40, java.util.Map.of(), 0, false, new ChatService.Listener() {
+        orchestratorService.send(client, conversation, "hello", "fake-model", 40, java.util.Map.of(), 0, new ChatService.Listener() {
             @Override
             public void onToken(String conversationId, String messageId, String delta) {
             }
@@ -171,7 +171,7 @@ class OrchestratorServiceTest {
         ConcurrentLinkedQueue<String> ops = new ConcurrentLinkedQueue<>();
         CountDownLatch latch = new CountDownLatch(1);
         orchestratorService.send(client, conversation, "find the secret", "fake-model", 40, java.util.Map.of(), 0,
-                false, new ChatService.Listener() {
+                new ChatService.Listener() {
                     @Override public void onToken(String c, String m, String d) { }
                     @Override public void onDone(String c, ChatMessage m) { latch.countDown(); }
                     @Override public void onError(String c, String m, ErrorCode e, String msg) { latch.countDown(); }
@@ -187,7 +187,7 @@ class OrchestratorServiceTest {
     }
 
     @Test
-    void aSpecialistCanRunReadOnlyGitToolsButNotGitAddOrGitCommit(@TempDir Path repo) throws Exception {
+    void aSpecialistCanRunGitToolsIncludingGitAddInABoundRepo(@TempDir Path repo) throws Exception {
         Assumptions.assumeTrue(hasGit(), "git is not on PATH - skipping");
         initRepo(repo);
         Conversation conversation = store.createConversation(
@@ -195,133 +195,69 @@ class OrchestratorServiceTest {
 
         FakeLlmClient client = new FakeLlmClient(
                 List.of(
-                        // 1: plan - one specialist.
                         messages -> new ChatCompletionResult(
-                                "{\"specialists\":[\"researcher\"],\"rationale\":\"inspect history\"}", List.of()),
-                        // 2: specialist round 1 - one allowed git tool, one forbidden one.
+                                "{\"specialists\":[\"researcher\"],\"rationale\":\"inspect + stage\"}", List.of()),
+                        // specialist round 1 - a read tool and a mutating one; both allowed now
+                        // (git_add is approval-gated, and the test's null approver auto-approves).
                         messages -> new ChatCompletionResult(null, List.of(
                                 new ToolCall("c1", "git_log", "{\"count\":5}"),
                                 new ToolCall("c2", "git_add", "{\"path\":\".\"}"))),
-                        // 3: specialist round 2 - no more tools, emit the note.
-                        messages -> new ChatCompletionResult("Inspected the log.", List.of())),
+                        messages -> new ChatCompletionResult("Inspected and staged.", List.of())),
                 "Final answer.");
 
         ConcurrentLinkedQueue<String> ops = new ConcurrentLinkedQueue<>();
         CountDownLatch latch = new CountDownLatch(1);
         orchestratorService.send(client, conversation, "what's in the history?", "fake-model", 40, java.util.Map.of(), 0,
-                false, new ChatService.Listener() {
-                    @Override
-                    public void onToken(String conversationId, String messageId, String delta) {
-                    }
-
-                    @Override
-                    public void onDone(String conversationId, ChatMessage message) {
-                        latch.countDown();
-                    }
-
-                    @Override
-                    public void onError(String conversationId, String messageId, ErrorCode code, String message) {
-                        latch.countDown();
-                    }
-
-                    @Override
-                    public void onWorkspaceOp(String conversationId, String messageId, String op, String path,
-                                              String status, String detail, String checkpointId) {
+                new ChatService.Listener() {
+                    @Override public void onToken(String c, String m, String d) { }
+                    @Override public void onDone(String c, ChatMessage m) { latch.countDown(); }
+                    @Override public void onError(String c, String m, ErrorCode e, String msg) { latch.countDown(); }
+                    @Override public void onWorkspaceOp(String c, String m, String op, String path, String status,
+                                                       String detail, String cp) {
                         ops.add(op + ":" + status + ":" + (detail == null ? "" : detail));
                     }
                 });
 
         assertTrue(latch.await(10, TimeUnit.SECONDS), "orchestratorService.send() did not complete in time");
-
         assertTrue(ops.stream().anyMatch(s -> s.startsWith("git_log:ok:") && s.contains("initial commit")),
                 "git_log should succeed for a specialist, ops were: " + ops);
-        assertTrue(ops.stream().anyMatch(s -> s.startsWith("git_add:error:") && s.contains("not available to specialists")),
-                "git_add must be refused for a specialist, ops were: " + ops);
-    }
-
-    @Test
-    void executorPhaseWritesToTheWorkspaceWhenApplyIsOn(@TempDir Path ws) throws Exception {
-        Conversation conversation = store.createConversation(
-                "orchestrator chat", ConversationKind.ORCHESTRATOR, ws.toString());
-
-        FakeLlmClient client = new FakeLlmClient(
-                List.of(
-                        // 1: plan - one specialist.
-                        messages -> new ChatCompletionResult(
-                                "{\"specialists\":[\"researcher\"],\"rationale\":\"draft it\"}", List.of()),
-                        // 2: researcher note (no tools).
-                        messages -> new ChatCompletionResult("Add a CONTRIBUTING.md with a setup section.", List.of()),
-                        // 3: executor round 1 - write the file.
-                        messages -> new ChatCompletionResult(null, List.of(new ToolCall(
-                                "w1", "write_file",
-                                "{\"path\":\"CONTRIBUTING.md\",\"content\":\"# Contributing\\n\\nRun `mvn verify`.\\n\"}"))),
-                        // 4: executor round 2 - summary, no more tools.
-                        messages -> new ChatCompletionResult("- Created CONTRIBUTING.md with a setup section.", List.of())),
-                "Plan: create CONTRIBUTING.md.");
-
-        ConcurrentLinkedQueue<String> ops = new ConcurrentLinkedQueue<>();
-        List<String> stepPhases = new ArrayList<>();
-        AtomicReference<ChatMessage> doneMessage = new AtomicReference<>();
-        CountDownLatch latch = new CountDownLatch(1);
-
-        orchestratorService.send(client, conversation, "add a CONTRIBUTING.md", "fake-model", 40, java.util.Map.of(), 0,
-                true, new ChatService.Listener() {
-                    @Override public void onToken(String c, String m, String d) { }
-                    @Override public void onDone(String c, ChatMessage m) { doneMessage.set(m); latch.countDown(); }
-                    @Override public void onError(String c, String m, ErrorCode e, String msg) { latch.countDown(); }
-                    @Override public void onStep(String c, String phase, String personaId, String label) {
-                        stepPhases.add(phase);
-                    }
-                    @Override public void onWorkspaceOp(String c, String m, String op, String p, String s,
-                                                       String detail, String cp) {
-                        ops.add(op + ":" + s);
-                    }
-                });
-
-        assertTrue(latch.await(10, TimeUnit.SECONDS), "orchestratorService.send() did not complete in time");
-        assertTrue(stepPhases.contains("executing"), "an 'executing' step should fire, phases were: " + stepPhases);
-        assertTrue(ops.stream().anyMatch(s -> s.equals("write_file:ok")),
-                "write_file should succeed, ops were: " + ops);
-        assertEquals("# Contributing\n\nRun `mvn verify`.\n",
-                Files.readString(ws.resolve("CONTRIBUTING.md")));
-        assertNotNull(doneMessage.get());
-        assertTrue(doneMessage.get().getContent().contains("**Applied changes**"),
-                "final message should carry the Applied changes section: " + doneMessage.get().getContent());
+        assertTrue(ops.stream().anyMatch(s -> s.startsWith("git_add:ok:")),
+                "git_add is now available to specialists (approval-gated), ops were: " + ops);
     }
 
     /**
-     * The tetris-report scenario: a brand-new orchestrator chat with a folder bound and no
-     * "apply" preference ever set. {@code isOrchestratorApply()} must default to true so
-     * re-sending "write the files" actually runs the executor and writes them - this is what
-     * regressed the reported bug where the model only described the files.
+     * The reported scenario: an orchestrator chat with a folder bound, asked to write files.
+     * The specialist itself writes them through the shared tool loop - no separate executor
+     * step, no opt-in. Every write is approval-gated (the test's null approver auto-approves).
      */
     @Test
-    void freshOrchestratorChatWithABoundFolderRunsTheExecutorByDefault(@TempDir Path ws) throws Exception {
+    void aSpecialistWritesFilesDirectlyToTheBoundWorkspace(@TempDir Path ws) throws Exception {
         Conversation conversation = store.createConversation(
                 "propose an architecture", ConversationKind.ORCHESTRATOR, ws.toString());
-        assertNull(conversation.getOrchestratorApply(), "a fresh chat has no apply preference");
-        assertTrue(conversation.isOrchestratorApply(), "default must be on when a folder is bound");
 
         FakeLlmClient client = new FakeLlmClient(
                 List.of(
                         messages -> new ChatCompletionResult(
                                 "{\"specialists\":[\"coder\"],\"rationale\":\"scaffold it\"}", List.of()),
-                        messages -> new ChatCompletionResult("main.rs holds the event loop.", List.of()),
-                        // executor round 1: write the file the plan called for.
+                        // specialist round 1 - write the file
                         messages -> new ChatCompletionResult(null, List.of(new ToolCall(
                                 "w1", "write_file",
                                 "{\"path\":\"src/main.rs\",\"content\":\"fn main() {}\\n\"}"))),
-                        messages -> new ChatCompletionResult("- Created src/main.rs", List.of())),
-                "Here is the layout.");
+                        // specialist round 2 - summary, no more tools
+                        messages -> new ChatCompletionResult("Created src/main.rs with the entry point.", List.of())),
+                "Scaffolded the project - see src/main.rs.");
 
         ConcurrentLinkedQueue<String> ops = new ConcurrentLinkedQueue<>();
+        List<String> stepPhases = new ArrayList<>();
         CountDownLatch latch = new CountDownLatch(1);
-        // Pass what ChatViewModel passes: apply = conversation.isOrchestratorApply().
         orchestratorService.send(client, conversation, "write the files in the folders", "fake-model", 40,
-                java.util.Map.of(), 0, conversation.isOrchestratorApply(), new ChatService.Listener() {
+                java.util.Map.of(), 0, new ChatService.Listener() {
                     @Override public void onToken(String c, String m, String d) { }
                     @Override public void onDone(String c, ChatMessage m) { latch.countDown(); }
                     @Override public void onError(String c, String m, ErrorCode e, String msg) { latch.countDown(); }
+                    @Override public void onStep(String c, String phase, String personaId, String label) {
+                        stepPhases.add(phase);
+                    }
                     @Override public void onWorkspaceOp(String c, String m, String op, String p, String s,
                                                        String detail, String cp) {
                         ops.add(op + ":" + s);
@@ -329,44 +265,19 @@ class OrchestratorServiceTest {
                 });
 
         assertTrue(latch.await(10, TimeUnit.SECONDS));
-        assertTrue(ops.stream().anyMatch(s -> s.equals("write_file:ok")), "ops were: " + ops);
+        assertTrue(ops.stream().anyMatch(s -> s.equals("write_file:ok")), "write_file should fire, ops were: " + ops);
         assertEquals("fn main() {}\n", Files.readString(ws.resolve("src/main.rs")));
-    }
-
-    @Test
-    void executorPhaseIsSkippedWithoutAWorkspaceEvenWhenApplyIsOn() throws InterruptedException {
-        Conversation conversation = store.createConversation("orchestrator chat", ConversationKind.ORCHESTRATOR, null);
-
-        FakeLlmClient client = new FakeLlmClient(
-                List.of(
-                        messages -> new ChatCompletionResult(
-                                "{\"specialists\":[\"researcher\"],\"rationale\":\"x\"}", List.of()),
-                        messages -> new ChatCompletionResult("A note.", List.of())),
-                "Final answer.");
-
-        List<String> stepPhases = new ArrayList<>();
-        AtomicReference<ChatMessage> doneMessage = new AtomicReference<>();
-        CountDownLatch latch = new CountDownLatch(1);
-
-        orchestratorService.send(client, conversation, "no workspace here", "fake-model", 40, java.util.Map.of(), 0,
-                true, new ChatService.Listener() {
-                    @Override public void onToken(String c, String m, String d) { }
-                    @Override public void onDone(String c, ChatMessage m) { doneMessage.set(m); latch.countDown(); }
-                    @Override public void onError(String c, String m, ErrorCode e, String msg) { latch.countDown(); }
-                    @Override public void onStep(String c, String phase, String personaId, String label) {
-                        stepPhases.add(phase);
-                    }
-                });
-
-        assertTrue(latch.await(5, TimeUnit.SECONDS));
         assertTrue(stepPhases.stream().noneMatch(p -> p.equals("executing")),
-                "no executor step without a workspace, phases were: " + stepPhases);
-        assertNotNull(doneMessage.get());
-        assertTrue(!doneMessage.get().getContent().contains("**Applied changes**"));
+                "there is no separate executor step any more, phases were: " + stepPhases);
+
+        List<ChatMessage> persisted = store.getMessages(conversation.getId());
+        assertEquals("coder", persisted.get(1).getPersonaId());
+        assertTrue(persisted.get(1).getContent().contains("src/main.rs"),
+                "the specialist note should be its own summary: " + persisted.get(1).getContent());
     }
 
     @Test
-    void synthesisIsToldNotToClaimFileWritesWhenTheExecutorIsOff(@TempDir Path ws) throws Exception {
+    void synthesisIsToldToGroundFileClaimsInTheSpecialistNotes(@TempDir Path ws) throws Exception {
         Files.writeString(ws.resolve("notes.txt"), "hi\n");
         Conversation conversation = store.createConversation(
                 "orchestrator chat", ConversationKind.ORCHESTRATOR, ws.toString());
@@ -380,44 +291,15 @@ class OrchestratorServiceTest {
 
         CountDownLatch latch = new CountDownLatch(1);
         orchestratorService.send(client, conversation, "write the files in the folder", "fake-model", 40,
-                java.util.Map.of(), 0, false, new ChatService.Listener() {
+                java.util.Map.of(), 0, new ChatService.Listener() {
                     @Override public void onToken(String c, String m, String d) { }
                     @Override public void onDone(String c, ChatMessage m) { latch.countDown(); }
                     @Override public void onError(String c, String m, ErrorCode e, String msg) { latch.countDown(); }
                 });
 
         assertTrue(latch.await(5, TimeUnit.SECONDS));
-        assertTrue(client.lastStreamSystemPrompt.contains("no files can be created or modified"),
-                "synthesis prompt should forbid claiming writes when apply is off: " + client.lastStreamSystemPrompt);
-        assertTrue(client.lastStreamSystemPrompt.contains("apply changes"),
-                "synthesis prompt should point at the apply-changes toggle: " + client.lastStreamSystemPrompt);
-    }
-
-    @Test
-    void synthesisIsToldTheExecutorWillApplyWhenItIsOn(@TempDir Path ws) throws Exception {
-        Conversation conversation = store.createConversation(
-                "orchestrator chat", ConversationKind.ORCHESTRATOR, ws.toString());
-
-        FakeLlmClient client = new FakeLlmClient(
-                List.of(
-                        messages -> new ChatCompletionResult(
-                                "{\"specialists\":[\"coder\"],\"rationale\":\"draft it\"}", List.of()),
-                        messages -> new ChatCompletionResult("Here is the code.", List.of()),
-                        // executor round 1: no writes needed, just summarize.
-                        messages -> new ChatCompletionResult("Nothing to change.", List.of())),
-                "Final answer.");
-
-        CountDownLatch latch = new CountDownLatch(1);
-        orchestratorService.send(client, conversation, "apply the plan", "fake-model", 40,
-                java.util.Map.of(), 0, true, new ChatService.Listener() {
-                    @Override public void onToken(String c, String m, String d) { }
-                    @Override public void onDone(String c, ChatMessage m) { latch.countDown(); }
-                    @Override public void onError(String c, String m, ErrorCode e, String msg) { latch.countDown(); }
-                });
-
-        assertTrue(latch.await(10, TimeUnit.SECONDS));
-        assertTrue(client.lastStreamSystemPrompt.contains("an executor step will apply file changes"),
-                "synthesis prompt should mention the executor step when apply is on: " + client.lastStreamSystemPrompt);
+        assertTrue(client.lastStreamSystemPrompt.contains("do NOT invent writes"),
+                "synthesis prompt should ground file claims in the notes: " + client.lastStreamSystemPrompt);
     }
 
     private static boolean hasGit() {

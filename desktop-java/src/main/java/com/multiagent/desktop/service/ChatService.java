@@ -223,6 +223,9 @@ public class ChatService {
                     "<write_file path=\"relative/path.ext\">FULL FILE CONTENT</write_file>",
                     "<delete_file path=\"relative/path.ext\" />",
                     "<rename_file path=\"relative/old.ext\" newPath=\"relative/new.ext\" />",
+                    "<run_command command=\"npm run build\" timeout_seconds=\"120\" />  "
+                            + "(one build/test/lint command; put the whole line in command=, no shell/pipes; "
+                            + "add cwd=\"subdir\" only for a monorepo)",
                     "<generate_image path=\"images/out.png\" prompt=\"a red circle\" size=\"512x512\" />"));
 
             if (visionEnabled) {

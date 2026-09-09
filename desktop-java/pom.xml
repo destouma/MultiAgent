@@ -6,11 +6,11 @@
 
   <groupId>com.multiagent</groupId>
   <artifactId>desktop-java</artifactId>
-  <version>1.5.2</version>
+  <version>1.5.3</version>
   <packaging>jar</packaging>
 
   <name>MultiAgent Desktop (Java)</name>
-  <description>Java/JavaFX desktop client for MultiAgent - the actively developed client, desktop/ (Electron) is deprecated</description>
+  <description>Java/JavaFX desktop client for MultiAgent</description>
 
   <properties>
     <maven.compiler.release>21</maven.compiler.release>

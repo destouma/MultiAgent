@@ -66,6 +66,22 @@ class ActionTagParserTest {
     }
 
     @Test
+    void parsesARunCommandTag() {
+        List<ActionTagParser.ParsedAction> a = ActionTagParser.parse(
+                "<run_command command=\"npm run build\" timeout_seconds=\"90\" cwd=\"api\" />");
+        assertEquals(1, a.size());
+        assertEquals("run_command", a.get(0).name());
+        assertEquals("npm run build", a.get(0).args().get("command"));
+        assertEquals("90", a.get(0).args().get("timeout_seconds"));
+        assertEquals("api", a.get(0).args().get("cwd"));
+    }
+
+    @Test
+    void ignoresARunCommandTagWithNoCommand() {
+        assertTrue(ActionTagParser.parse("<run_command timeout_seconds=\"90\" />").isEmpty());
+    }
+
+    @Test
     void parsesAReadFileTagWithOffsetAndLimit() {
         List<ActionTagParser.ParsedAction> actions = ActionTagParser.parse(
                 "<read_file path=\"src/Big.java\" offset=\"120\" limit=\"60\" />");

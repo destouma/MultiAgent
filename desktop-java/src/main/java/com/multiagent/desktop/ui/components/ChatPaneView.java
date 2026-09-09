@@ -205,6 +205,17 @@ public class ChatPaneView extends BorderPane {
         VBox visionColumn = labeledColumn("Vision", visionBox);
         VBox specialistsColumn = labeledColumn(" ", specialistsButton); // blank caption keeps it aligned with the dropdowns
 
+        // Which folder this chat is bound to - it's where write_file/run_command act. Click to open it.
+        javafx.scene.control.Hyperlink folderLink = new javafx.scene.control.Hyperlink();
+        folderLink.setMaxWidth(200);
+        folderLink.setOnAction(e -> {
+            com.multiagent.desktop.model.Conversation c = viewModel.activeConversationProperty().get();
+            if (c != null && c.getWorkspacePath() != null && !c.getWorkspacePath().isBlank()) {
+                openInFileManager(c.getWorkspacePath());
+            }
+        });
+        VBox folderColumn = labeledColumn("Folder", folderLink);
+
         Runnable syncForKind = () -> {
             boolean orchestrator = isOrchestrator(viewModel);
             specialistsColumn.setVisible(orchestrator);
@@ -213,6 +224,20 @@ public class ChatPaneView extends BorderPane {
             visionColumn.setManaged(!orchestrator);
             personaCaption.setText(orchestrator ? "Coordinator" : "Persona");
             syncPersonaItems(personaBox, orchestrator);
+
+            com.multiagent.desktop.model.Conversation c = viewModel.activeConversationProperty().get();
+            String ws = c == null ? null : c.getWorkspacePath();
+            boolean bound = ws != null && !ws.isBlank();
+            folderColumn.setVisible(bound);
+            folderColumn.setManaged(bound);
+            if (bound) {
+                java.nio.file.Path p = java.nio.file.Path.of(ws);
+                folderLink.setText(p.getFileName() != null ? p.getFileName().toString() : ws);
+                javafx.scene.control.Tooltip tip = new javafx.scene.control.Tooltip(
+                        ws + "\n(files and commands act here)");
+                tip.setShowDelay(javafx.util.Duration.millis(200));
+                folderLink.setTooltip(tip);
+            }
         };
         viewModel.activeConversationProperty().addListener((obs, old, val) -> syncForKind.run());
         syncForKind.run();
@@ -223,7 +248,7 @@ public class ChatPaneView extends BorderPane {
         updateHealthLabels(statusDot, statusText, viewModel.healthProperty().get());
 
         HBox bar = new HBox(10,
-                labeledColumn("Server", serverBox), labeledColumn("Model", modelBox),
+                folderColumn, labeledColumn("Server", serverBox), labeledColumn("Model", modelBox),
                 visionColumn, personaColumn, specialistsColumn, statusDot, statusText);
         bar.setAlignment(Pos.CENTER_LEFT);
         bar.setPadding(new Insets(8, 12, 8, 12));
@@ -234,6 +259,22 @@ public class ChatPaneView extends BorderPane {
     private boolean isOrchestrator(ChatViewModel vm) {
         com.multiagent.desktop.model.Conversation c = vm.activeConversationProperty().get();
         return c != null && c.getKind() == com.multiagent.desktop.model.ConversationKind.ORCHESTRATOR;
+    }
+
+    /** Opens the bound workspace folder in the OS file manager (off the FX thread - the handler can stall). */
+    private void openInFileManager(String path) {
+        Thread opener = new Thread(() -> {
+            try {
+                java.io.File dir = new java.io.File(path);
+                if (dir.isDirectory() && java.awt.Desktop.isDesktopSupported()) {
+                    java.awt.Desktop.getDesktop().open(dir);
+                }
+            } catch (java.io.IOException | RuntimeException ignored) {
+                // convenience only - the full path is in the Folder link's tooltip
+            }
+        }, "open-workspace-folder");
+        opener.setDaemon(true);
+        opener.start();
     }
 
     /**

@@ -272,6 +272,7 @@ Right-click a folder with 2+ conversations → **Side by side** opens `SplitPick
 
 A chat created from a folder has `workspacePath` set for its whole lifetime (fixed at creation). When bound:
 
+- The pane topbar shows a **Folder** link (the folder name; full path on hover — *"files and commands act here"*); clicking it opens the folder in the OS file manager. Hidden for non-workspace chats.
 - The system prompt gets the workspace's directory tree plus tool-usage instructions.
 - Tools available: `list_dir`, `read_file`, `search_file` (grep -n over one file — streamed line-by-line, so it takes a 10 MB SARIF/log the 200 KB attach path can't; returns matching lines + numbers, capped at 40 KB output; use it to find the ranges worth `read_file`-ing), `write_file`, `delete_file`, `rename_file`, the `git_*` set (when it's a repo), `run_command` (see below), and — only when the active server has a vision model configured — `describe_image` (see [Vision](#vision-describe_image--image-attachments)). `generate_image` is defined in the tool schema for forward-compat but rejected by `WorkspaceService.executeTool` — image *generation* isn't ported.
 - **Mutating tools ask first** — see [Approval gate](#approval-gate-for-file-writesdeletesrenames) below. This is new relative to the Electron app.
@@ -509,7 +510,7 @@ mvn clean package
 jpackage \
   --type exe \
   --name MultiAgent \
-  --app-version 1.5.1 \
+  --app-version 1.5.2 \
   --vendor MultiAgent \
   --input target/jpackage-input \
   --main-jar multiagent-desktop.jar \

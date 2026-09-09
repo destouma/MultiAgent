@@ -603,12 +603,13 @@ Rough scoring — **Effort** is what it takes to ship *well* (not a prototype), 
 | Command palette (Ctrl+K) | Med | Med | Very low | Mostly new code — `SearchDialog` is content search, not a navigator |
 | [Model-invoked HTTP(S) fetch tool](#model-invoked-https-fetch-tool) | Med | **High** | **High** | The call is trivial; the SSRF denylist / allowlist / approval design is the work. Highest-demand item |
 | Replay / send HTTP from the Debug panel | Low–Med | Low–Med | Low–Med | Panel + captured entries exist; human-driven, keep debug-only |
+| [Embedded workspace terminal](#embedded-workspace-terminal) | Med–High | Med–High | Low–Med | A real interactive shell pane next to the (future) file browser, cwd = the bound folder. Human-driven so no approval gate — but a raw shell + a native PTY dependency (complicates jpackage input) |
 | SAST/SBOM launcher in-app | Med | Low–Med | Low–Med | Blocked on the user designing its shape first; more third-party tooling to trust |
 | ~~Vision / image attachments~~ | — | — | — | **Shipped** — `describe_image` tool + attach-and-describe, see [§6](#vision-describe_image--image-attachments). Model-choice notes kept below. |
 | ~~Run build/test commands~~ | — | — | — | **Shipped (Phase 1)** — `run_command` (`RunCommandService`), see [§6](#workspace-assisted-chats). Phase 2 = long-running dev servers with a process panel (stop / port / log tail), not built. |
 | [Docker tool integration](#docker-tool-integration) | Med–High | Low–Med | **High** | `build` = arbitrary host code exec; `logs`/`inspect` leak secrets; blast radius = whole host. `run_command` blocks `docker`/`podman`/`kubectl` on purpose |
 
-**Sequencing:** the top three are quick, wanted, near-riskless — do those first, then split-send and the palette. The HTTP fetch tool is the highest-value item but the security design must be done deliberately, not rushed. `run_command` Phase 2 (dev-server process manager) when someone actually needs a live server. Defer Docker until a concrete need appears; SAST waits on the user's own thinking.
+**Sequencing:** the top three are quick, wanted, near-riskless — do those first, then split-send and the palette. The HTTP fetch tool is the highest-value item but the security design must be done deliberately, not rushed. The embedded terminal is a natural next step once `run_command` and a file-browser panel exist — it and `run_command` Phase 2 (dev-server process manager) overlap and should be designed together. Defer Docker until a concrete need appears; SAST waits on the user's own thinking.
 
 ### Docker tool integration
 
@@ -641,6 +642,15 @@ Sketch of a shape that could be defensible:
 
 Related but distinct from the debug-panel "replay a request" idea below: that one is a human clicking resend on traffic the app already made; this one is the model originating new requests, which is a much larger trust decision.
 
+### Embedded workspace terminal
+
+A real interactive shell pane inside a folder-bound chat — sitting alongside a (not-yet-built) file-browser panel for the workspace — with its cwd fixed to the conversation's `workspacePath`. The user types into it directly: run a dev server, poke at `cargo test` output, `git rebase -i`, whatever `run_command` deliberately can't do (`run_command` is model-invoked, one-shot, argv-only, approval-gated; this is the human's own shell).
+
+- **Human-driven ⇒ no `ActionApprover` gate** — the user is literally typing the commands. But it *is* raw shell access, which the tool layer has gone out of its way to avoid (`run_command` blocks `sh`/`bash`/`cmd`); a user terminal is a different trust category and fine, just worth stating the asymmetry.
+- **The dependency cost is the real friction.** JavaFX has no terminal widget and the JDK has no PTY. Realistic options: **JediTerm** (JetBrains' terminal component, Swing — embed via `SwingNode`) + **pty4j** for the PTY, or an xterm.js instance in a `WebView`. Either way it adds a **native library** (pty4j ships per-OS `.so`/`.dll`/`.dylib`), which complicates the deliberately-flat `jpackage` input directory and the per-OS CI matrix.
+- **Overlaps with `run_command` Phase 2** (the dev-server process manager). If both get built they should share one "processes running in this workspace" model — the terminal is the interactive front end, the process panel is the at-a-glance list with stop/port/log-tail. Design them together.
+- Scope creep to resist: multiplexed tabs, split panes, shell profile config, ssh targets. v1 is one shell, one workspace, cwd-locked.
+
 ### Vision — choosing a VLM
 
 The mechanism shipped — `describe_image` tool, inline multimodal when the chat model can see, and a pre-pass transcribe when it can't (see [§6](#vision-describe_image--image-attachments)). What's left is a *config* decision: which model to set as the chat's / server's vision model.
@@ -660,6 +670,7 @@ The mechanism shipped — `describe_image` tool, inline multimodal when the chat
 
 ### Other ideas raised, not yet built
 
+- **Embedded workspace terminal** — an interactive shell pane in a folder-bound chat, next to a file-browser panel, cwd = the bound folder; for everything `run_command` (model-invoked, one-shot, gated) isn't: dev servers, interactive git, ad-hoc pokes. Human-driven so no approval gate, but adds a native PTY dependency (pty4j) that complicates packaging. See the [detailed note](#embedded-workspace-terminal) above; design alongside `run_command` Phase 2.
 - **SAST/SBOM launcher inside the app** — running Syft/Grype/CodeQL-style scans as a first-class in-app action (the current `release-verify/security-scan/` workflow is a manual, outside-the-app process). Explicitly deferred - the user wants to think through the shape of this one before it's designed.
 - **Cross-folder project "notes"** — when project grouping ([§6](#6-features-in-detail)) was designed, a shared free-text notes field per project (injected into every chat's system prompt across that project's folders, like the workspace tree already is) was floated as a middle ground between "no shared context" (what shipped) and full cross-chat memory. Deliberately deferred - per-chat memory was judged enough for now.
 - **Split view "send to both panes"** — split view today is two fully independent panes; firing the same prompt at both at once (e.g. two different models/servers side by side) would turn it into real A/B comparison, which nothing else in the app currently offers.

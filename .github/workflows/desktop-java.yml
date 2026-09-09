@@ -38,7 +38,10 @@ jobs:
         include:
           - { name: windows,       runner: windows-latest, jptype: exe }
           - { name: linux-deb,     runner: ubuntu-latest,   jptype: deb }
-          - { name: macos-x86_64,  runner: macos-13,        jptype: dmg }
+          # Intel macOS dropped: GitHub's macos-13 runners are backlogged for hours and being
+          # phased out. Apple-Silicon .dmg only for now - an Intel Mac needs an x86_64-native
+          # JavaFX build, so bring this row back (or run it on a self-hosted Intel Mac) if
+          # someone actually needs it.
           - { name: macos-aarch64, runner: macos-14,        jptype: dmg }
     runs-on: ${{ matrix.runner }}
     steps:

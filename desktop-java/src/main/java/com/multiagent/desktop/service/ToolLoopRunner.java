@@ -277,8 +277,12 @@ public class ToolLoopRunner {
             }
             case "run_command" -> {
                 String cmd = RunCommandService.commandLine(args);
+                Object cwd = args.get("cwd");
+                String dir = cwd != null && !String.valueOf(cwd).isBlank() && !String.valueOf(cwd).trim().equals(".")
+                        ? workspacePath + java.io.File.separator + String.valueOf(cwd).trim()
+                        : workspacePath;
                 yield new PendingAction("command", "Run: " + cmd,
-                        "Working directory: " + workspacePath + "\n\n$ " + cmd);
+                        "Working directory: " + dir + "\n\n$ " + cmd);
             }
             case "git_add" -> new PendingAction("git", "git add " + (relPath.isBlank() ? "." : relPath));
             case "git_commit" -> {

@@ -87,16 +87,32 @@ public class RunCommandService {
 
     /**
      * Runs the command described by {@code args} ({@code command}, optional {@code args[]},
-     * optional {@code timeout_seconds}). Returns the combined stdout/stderr, prefixed with an
-     * exit-code line when the command failed. Throws {@link RunCommandException} for a
-     * blocked/invalid command or a spawn failure.
+     * optional {@code cwd} - a subdirectory of the workspace to run in - and optional
+     * {@code timeout_seconds}). Returns the combined stdout/stderr, prefixed with an exit-code
+     * line when the command failed. Throws {@link RunCommandException} for a blocked/invalid
+     * command, a bad {@code cwd}, or a spawn failure.
      */
     public String executeTool(String workspaceRoot, Map<String, Object> args, CancellationToken token) {
         Path root = requireDir(workspaceRoot);
         Map<String, Object> a = args == null ? Map.of() : args;
+        Path dir = resolveCwd(root, a.get("cwd"));
         List<String> argv = buildArgv(root, a);
         long timeoutSeconds = clampTimeout(a.get("timeout_seconds"));
-        return run(root, argv, timeoutSeconds, token);
+        return run(dir, argv, timeoutSeconds, token);
+    }
+
+    /** The {@code cwd} arg, resolved to an existing directory inside the workspace; the workspace root when blank. */
+    private Path resolveCwd(Path root, Object rawCwd) {
+        String cwd = rawCwd == null ? "" : String.valueOf(rawCwd).trim();
+        if (cwd.isEmpty() || cwd.equals(".") || cwd.equals("./")) {
+            return root;
+        }
+        Path dir = workspace.resolveSafe(root.toString(), cwd); // throws if it escapes the workspace
+        if (!Files.isDirectory(dir)) {
+            throw new RunCommandException("cwd \"" + cwd + "\" is not a directory in the workspace "
+                    + "(list_dir to find where the project actually lives).");
+        }
+        return dir;
     }
 
     /** The command line as a single display string, for the approval prompt and the op line. */
@@ -113,6 +129,10 @@ public class RunCommandService {
             parts.add(arg);
         }
         String joined = String.join(" ", parts).trim();
+        Object cwd = args.get("cwd");
+        if (cwd != null && !String.valueOf(cwd).isBlank() && !String.valueOf(cwd).trim().equals(".")) {
+            joined = joined + "  (in " + String.valueOf(cwd).trim() + ")";
+        }
         return joined.isEmpty() ? "(empty command)" : joined;
     }
 
@@ -325,6 +345,10 @@ public class RunCommandService {
                 "The executable only, e.g. \"npm\", \"cargo\", \"mvn\", \"dotnet\", \"pytest\", \"./gradlew\". "
                         + "No shell operators, pipes or redirects."));
         props.set("args", argsProp);
+        props.set("cwd", WorkspaceService.prop(mapper, "string",
+                "Optional subdirectory of the workspace to run in (e.g. \"frontend\" or \"packages/api\" for a "
+                        + "monorepo). Defaults to the workspace root - the bound folder IS the project root, so "
+                        + "usually leave this out."));
         props.set("timeout_seconds", WorkspaceService.prop(mapper, "integer",
                 "Max seconds to let it run before it's killed (default 120, max 600)."));
         schema.putArray("required").add("command");

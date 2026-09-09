@@ -93,6 +93,29 @@ class RunCommandServiceTest {
         assertEquals("npm run build",
                 RunCommandService.commandLine(Map.of("command", "npm", "args", List.of("run", "build"))));
         assertEquals("(empty command)", RunCommandService.commandLine(Map.of()));
+        assertEquals("cargo build  (in api)",
+                RunCommandService.commandLine(Map.of("command", "cargo", "args", List.of("build"), "cwd", "api")));
+    }
+
+    @Test
+    void runsInASubdirectoryWhenCwdIsGiven(@TempDir Path ws) throws Exception {
+        java.nio.file.Files.createDirectories(ws.resolve("sub"));
+        // `java -version` works from any cwd; the point is that a valid subdir cwd is accepted.
+        String out = service.executeTool(ws.toString(),
+                Map.of("command", JAVA, "args", List.of("-version"), "cwd", "sub"), new CancellationToken());
+        assertTrue(out.toLowerCase().contains("version"), out);
+    }
+
+    @Test
+    void rejectsACwdThatIsNotADirectoryOrEscapesTheWorkspace(@TempDir Path ws) {
+        RunCommandException missing = assertThrows(RunCommandException.class, () -> service.executeTool(
+                ws.toString(), Map.of("command", JAVA, "args", List.of("-version"), "cwd", "does-not-exist"),
+                new CancellationToken()));
+        assertTrue(missing.getMessage().contains("not a directory"), missing.getMessage());
+
+        assertThrows(RuntimeException.class, () -> service.executeTool(
+                ws.toString(), Map.of("command", JAVA, "args", List.of("-version"), "cwd", "../.."),
+                new CancellationToken()));
     }
 
     @Test

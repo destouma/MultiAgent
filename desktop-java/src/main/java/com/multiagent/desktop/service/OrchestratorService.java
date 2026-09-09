@@ -260,11 +260,15 @@ public class OrchestratorService {
         if (hasWorkspace && workspaceTree != null) {
             systemLines.addAll(List.of("",
                     "A workspace folder is bound to this conversation: " + workspacePath,
+                    "This folder IS the project root - scaffold files directly into it (write Cargo.toml / "
+                            + "package.json / src/... at the top level); do NOT create a subfolder named after "
+                            + "the project or run `cargo new` / `npm init <name>` that would nest one.",
                     "You can inspect AND change files in it. Read tools: list_dir, read_file, search_file. "
                             + "Write tools: write_file, delete_file, rename_file"
                             + (isGitRepo(workspacePath) ? ", git_add, git_commit" : "") + ". "
                             + "run_command runs ONE build/test/lint command with the project's own toolchain "
-                            + "(no shell/pipes/cd; non-zero exit comes back as text to read and fix).",
+                            + "(no shell/pipes; runs in the workspace root, pass cwd only for a monorepo "
+                            + "subdir; non-zero exit comes back as text to read and fix).",
                     "Every write and every command is shown to the user for approval first - if a result says "
                             + "the user declined, stop that action and don't retry it.",
                     "Inspect real files with read_file/search_file before changing them - don't guess from the "

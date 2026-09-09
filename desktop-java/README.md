@@ -35,7 +35,7 @@ Produces a real Windows installer via `jpackage` (bundled with the JDK) + WiX To
 mvn clean package
 jpackage --type exe --name MultiAgent --app-version 1.5.2 --vendor MultiAgent \
   --input target/jpackage-input --main-jar multiagent-desktop.jar \
-  --main-class com.multiagent.desktop.Launcher --icon ../desktop/build/icon.ico \
+  --main-class com.multiagent.desktop.Launcher --icon packaging/icon.ico \
   --dest target/dist --win-menu --win-shortcut --win-dir-chooser
 ```
 

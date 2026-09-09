@@ -82,7 +82,7 @@ jobs:
         run: |
           set -euo pipefail
           VERSION=$(mvn -q -DforceStdout help:evaluate -Dexpression=project.version)
-          ICONS="$GITHUB_WORKSPACE/desktop/build"
+          ICONS="$GITHUB_WORKSPACE/desktop-java/packaging"
           COMMON=(
             --name MultiAgent --app-version "$VERSION" --vendor MultiAgent
             --input target/jpackage-input --main-jar multiagent-desktop.jar

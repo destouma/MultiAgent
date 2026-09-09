@@ -9,9 +9,10 @@ import java.util.regex.Pattern;
 
 /**
  * Fallback parser for models without native tool-calling: extracts list_dir, read_file,
- * write_file, delete_file, rename_file, generate_image and the git_* action tags from a
- * completion's raw text content. Mirrors shared/workspace/actionTags.ts (with rename_file
- * and the git_* tags added - not present in the TS original).
+ * write_file, delete_file, rename_file, search_file, describe_image, run_command,
+ * generate_image and the git_* action tags from a completion's raw text content. Mirrors
+ * shared/workspace/actionTags.ts (with rename_file, search_file, describe_image,
+ * run_command and the git_* tags added - not present in the TS original).
  */
 public final class ActionTagParser {
     private ActionTagParser() {
@@ -40,6 +41,11 @@ public final class ActionTagParser {
     private static final Pattern GIT = Pattern.compile(
             "<(git_status|git_diff|git_log|git_show|git_branch|git_add|git_commit)"
                     + "((?:\\s+[a-zA-Z]+=\"[^\"]*\")*)\\s*/>", Pattern.CASE_INSENSITIVE);
+    // run_command: an attribute bag. "args" as an XML string can't carry a JSON array cleanly,
+    // so the model puts the whole command line in command="npm run build" and
+    // RunCommandService's whitespace-split (metachar-checked) handles it.
+    private static final Pattern RUN_COMMAND = Pattern.compile(
+            "<run_command((?:\\s+[a-zA-Z_]+=\"[^\"]*\")*)\\s*/>", Pattern.CASE_INSENSITIVE);
     private static final Pattern ATTR = Pattern.compile("([a-zA-Z_]+)=\"([^\"]*)\"");
     private static final Pattern PROMPT_ATTR = Pattern.compile("prompt=\"([^\"]+)\"", Pattern.CASE_INSENSITIVE);
     private static final Pattern PATH_ATTR = Pattern.compile("path=\"([^\"]+)\"", Pattern.CASE_INSENSITIVE);
@@ -132,6 +138,18 @@ public final class ActionTagParser {
             }
             if (args.containsKey("path") && args.containsKey("pattern")) {
                 actions.add(new ParsedAction("search_file", args));
+            }
+        }
+
+        Matcher run = RUN_COMMAND.matcher(content);
+        while (run.find()) {
+            Map<String, String> args = new LinkedHashMap<>();
+            Matcher attr = ATTR.matcher(run.group(1));
+            while (attr.find()) {
+                args.put(attr.group(1).toLowerCase(), attr.group(2));
+            }
+            if (args.containsKey("command") && !args.get("command").isBlank()) {
+                actions.add(new ParsedAction("run_command", args));
             }
         }
 

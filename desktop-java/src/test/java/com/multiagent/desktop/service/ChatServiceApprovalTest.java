@@ -42,6 +42,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * error, not an exception; an approved one proceeds exactly as before the gate existed.
  */
 class ChatServiceApprovalTest {
+    /** The running JVM's own java launcher - guaranteed present; forward slashes so it embeds cleanly in JSON. */
+    private static final String JAVA =
+            Path.of(System.getProperty("java.home"), "bin", "java").toString().replace('\\', '/');
+
     private ConversationStore store;
     private ChatService chatService;
     private Persona persona;
@@ -98,6 +102,47 @@ class ChatServiceApprovalTest {
 
         assertEquals(1, approver.callCount());
         assertEquals("hello", Files.readString(workspace.resolve("notes.txt")));
+    }
+
+    @Test
+    void aDeclinedRunCommandNeverSpawnsAndReportsTheDeclineToTheModel() throws Exception {
+        Conversation conversation = store.createConversation("chat", ConversationKind.CHAT, workspace.toString());
+        RecordingApprover approver = new RecordingApprover(false);
+        chatService.setActionApprover(approver);
+
+        FakeLlmClient client = new FakeLlmClient(List.of(
+                messages -> new ChatCompletionResult(null, List.of(new ToolCall(
+                        "call-1", "run_command", "{\"command\":\"" + JAVA + "\",\"args\":[\"-version\"]}"))),
+                messages -> new ChatCompletionResult("Understood: " + messages.get(messages.size() - 1).content(), List.of())));
+
+        ChatMessage result = sendAndAwait(client, conversation, "run java -version");
+
+        assertEquals(1, approver.callCount());
+        assertEquals("command", approver.lastAction().category());
+        assertTrue(approver.lastAction().summary().startsWith("Run: "),
+                "approval prompt should be a Run: line, got: " + approver.lastAction().summary());
+        assertTrue(result.getContent().contains("declined"));
+        assertFalse(result.getContent().toLowerCase().contains("openjdk") || result.getContent().contains("build "),
+                "a declined command must not have run: " + result.getContent());
+    }
+
+    @Test
+    void anApprovedRunCommandRuns() throws Exception {
+        Conversation conversation = store.createConversation("chat", ConversationKind.CHAT, workspace.toString());
+        RecordingApprover approver = new RecordingApprover(true);
+        chatService.setActionApprover(approver);
+
+        FakeLlmClient client = new FakeLlmClient(List.of(
+                messages -> new ChatCompletionResult(null, List.of(new ToolCall(
+                        "call-1", "run_command", "{\"command\":\"" + JAVA + "\",\"args\":[\"-version\"]}"))),
+                // echo the tool result back so the assertion can see what the model saw
+                messages -> new ChatCompletionResult(messages.get(messages.size() - 1).content(), List.of())));
+
+        ChatMessage result = sendAndAwait(client, conversation, "run java -version");
+
+        assertEquals(1, approver.callCount());
+        assertTrue(result.getContent().toLowerCase().contains("version"),
+                "approved command output should reach the model: " + result.getContent());
     }
 
     @Test
@@ -194,6 +239,7 @@ class ChatServiceApprovalTest {
     private static final class RecordingApprover implements ActionApprover {
         private final boolean decision;
         private int callCount = 0;
+        private PendingAction lastAction;
 
         RecordingApprover(boolean decision) {
             this.decision = decision;
@@ -202,11 +248,16 @@ class ChatServiceApprovalTest {
         @Override
         public synchronized boolean approve(PendingAction action) {
             callCount++;
+            lastAction = action;
             return decision;
         }
 
         synchronized int callCount() {
             return callCount;
+        }
+
+        synchronized PendingAction lastAction() {
+            return lastAction;
         }
     }
 

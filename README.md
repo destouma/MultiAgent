@@ -127,6 +127,29 @@ depend on `desktop-java/`, so a core bug fix is a manual re-apply in each.
 - **4 — Orchestrator:** wire `OrchestratorService` with progress in the tool window; coordinator + per-specialist model pickers.
 - **5 — Polish:** vision (paste a screenshot); context-window usage bar; persona editor in Settings; Marketplace prep.
 
+## Built-in personas
+
+Personas are just a `name`, a one-line `description`, a `systemPrompt`, and a
+`color` (a hex accent shown on message bubbles). They live as one JSON file each
+in [`personas/`](./personas) and are read by every client at build time; drop a
+new `personas/<id>.json` in to add one (`desktop-java/` also has an in-app editor
+that writes to `%APPDATA%/MultiAgentJava/personas/`). In `desktop-java/` a persona
+is pinned per conversation; `orchestrator` is offered only as an orchestrator
+chat's **Coordinator**, and every other persona is a candidate specialist.
+
+| Persona | Description | System prompt |
+| --- | --- | --- |
+| **General** | Helpful all-purpose assistant | *You are a helpful, concise assistant. Answer clearly, prefer short paragraphs, and ask a clarifying question when the request is ambiguous.* |
+| **Researcher** | Finds structure, cites caveats, digs into details | *You are a careful researcher. Break problems into facts vs assumptions, note uncertainty, and structure answers with clear headings and bullet points. Prefer evidence-oriented reasoning over speculation.* |
+| **Coder** | Writes and explains code | *You are a pragmatic software engineer. Prefer working code over theory. Explain only what matters, call out edge cases, and use fenced code blocks with language tags. Match the user's stack when known.* |
+| **Critic** | Stress-tests ideas and finds weak spots | *You are a constructive critic. Challenge weak assumptions, identify risks, and suggest concrete improvements. Be direct but fair; always end with the strongest remaining path forward.* |
+| **Orchestrator** | Routes work to specialists and synthesizes a final answer | *You are the Orchestrator. You coordinate specialist agents and produce a clear final answer for the user. Be decisive, concise, and faithful to specialist findings. When synthesizing, resolve conflicts, drop redundancy, and lead with the actionable answer.* |
+
+When workspace tools, `run_command`, or the orchestrator flow are active, each
+client appends its own instructions (the directory tree, the tool list, the
+approval rules, the plan/specialist/synthesize framing) *after* the persona's
+prompt — the JSON above is only the persona half.
+
 ## Requirements
 
 Every client needs a local server with a chat model loaded — Lemonade by default,

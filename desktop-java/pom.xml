@@ -6,7 +6,7 @@
 
   <groupId>com.multiagent</groupId>
   <artifactId>desktop-java</artifactId>
-  <version>1.5.3</version>
+  <version>1.5.4</version>
   <packaging>jar</packaging>
 
   <name>MultiAgent Desktop (Java)</name>

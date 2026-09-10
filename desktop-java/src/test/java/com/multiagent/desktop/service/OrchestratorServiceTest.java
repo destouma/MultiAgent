@@ -12,6 +12,7 @@ import com.multiagent.desktop.model.ChatMessage;
 import com.multiagent.desktop.model.Conversation;
 import com.multiagent.desktop.model.ConversationKind;
 import com.multiagent.desktop.model.HealthStatus;
+import com.multiagent.desktop.model.ImageAttachment;
 import com.multiagent.desktop.model.ModelInfo;
 import com.multiagent.desktop.persistence.ConversationStore;
 import org.junit.jupiter.api.AfterEach;
@@ -78,7 +79,7 @@ class OrchestratorServiceTest {
         List<String> stepPhases = new ArrayList<>();
 
         orchestratorService.send(client, conversation, "why is the sky blue?", "fake-model", 40, java.util.Map.of(), 0,
-                new ChatService.Listener() {
+                null, null, new ChatService.Listener() {
                     @Override
                     public void onToken(String conversationId, String messageId, String delta) {
                     }
@@ -125,7 +126,7 @@ class OrchestratorServiceTest {
                 "Final answer.");
 
         CountDownLatch latch = new CountDownLatch(1);
-        orchestratorService.send(client, conversation, "hello", "fake-model", 40, java.util.Map.of(), 0, new ChatService.Listener() {
+        orchestratorService.send(client, conversation, "hello", "fake-model", 40, java.util.Map.of(), 0, null, null, new ChatService.Listener() {
             @Override
             public void onToken(String conversationId, String messageId, String delta) {
             }
@@ -171,7 +172,7 @@ class OrchestratorServiceTest {
         ConcurrentLinkedQueue<String> ops = new ConcurrentLinkedQueue<>();
         CountDownLatch latch = new CountDownLatch(1);
         orchestratorService.send(client, conversation, "find the secret", "fake-model", 40, java.util.Map.of(), 0,
-                new ChatService.Listener() {
+                null, null, new ChatService.Listener() {
                     @Override public void onToken(String c, String m, String d) { }
                     @Override public void onDone(String c, ChatMessage m) { latch.countDown(); }
                     @Override public void onError(String c, String m, ErrorCode e, String msg) { latch.countDown(); }
@@ -208,7 +209,7 @@ class OrchestratorServiceTest {
         ConcurrentLinkedQueue<String> ops = new ConcurrentLinkedQueue<>();
         CountDownLatch latch = new CountDownLatch(1);
         orchestratorService.send(client, conversation, "what's in the history?", "fake-model", 40, java.util.Map.of(), 0,
-                new ChatService.Listener() {
+                null, null, new ChatService.Listener() {
                     @Override public void onToken(String c, String m, String d) { }
                     @Override public void onDone(String c, ChatMessage m) { latch.countDown(); }
                     @Override public void onError(String c, String m, ErrorCode e, String msg) { latch.countDown(); }
@@ -251,7 +252,7 @@ class OrchestratorServiceTest {
         List<String> stepPhases = new ArrayList<>();
         CountDownLatch latch = new CountDownLatch(1);
         orchestratorService.send(client, conversation, "write the files in the folders", "fake-model", 40,
-                java.util.Map.of(), 0, new ChatService.Listener() {
+                java.util.Map.of(), 0, null, null, new ChatService.Listener() {
                     @Override public void onToken(String c, String m, String d) { }
                     @Override public void onDone(String c, ChatMessage m) { latch.countDown(); }
                     @Override public void onError(String c, String m, ErrorCode e, String msg) { latch.countDown(); }
@@ -291,7 +292,7 @@ class OrchestratorServiceTest {
 
         CountDownLatch latch = new CountDownLatch(1);
         orchestratorService.send(client, conversation, "write the files in the folder", "fake-model", 40,
-                java.util.Map.of(), 0, new ChatService.Listener() {
+                java.util.Map.of(), 0, null, null, new ChatService.Listener() {
                     @Override public void onToken(String c, String m, String d) { }
                     @Override public void onDone(String c, ChatMessage m) { latch.countDown(); }
                     @Override public void onError(String c, String m, ErrorCode e, String msg) { latch.countDown(); }
@@ -300,6 +301,71 @@ class OrchestratorServiceTest {
         assertTrue(latch.await(5, TimeUnit.SECONDS));
         assertTrue(client.lastStreamSystemPrompt.contains("do NOT invent writes"),
                 "synthesis prompt should ground file claims in the notes: " + client.lastStreamSystemPrompt);
+    }
+
+    /**
+     * The vision step: with a vision model set and an image attached, one specialist examines
+     * the image <em>inline</em> on the vision model (the same multimodal chat call a regular
+     * chat's inline mode uses - not describe_image) before planning. Its note is persisted as
+     * its own specialist message and folded into the shared context, so the planner, the
+     * other specialists, and the synthesis all work from a real description.
+     */
+    @Test
+    void anAttachedImageIsExaminedInlineByAVisionSpecialist() throws InterruptedException {
+        Conversation conversation = store.createConversation(
+                "orchestrator chat", ConversationKind.ORCHESTRATOR, null);
+
+        AtomicReference<Boolean> visionCallHadImage = new AtomicReference<>(false);
+        AtomicReference<String> planUserBlock = new AtomicReference<>();
+        FakeLlmClient client = new FakeLlmClient(
+                List.of(
+                        // 1: examineImage() - the inline vision call; must carry the image.
+                        messages -> {
+                            visionCallHadImage.set(messages.stream().anyMatch(m -> m.image() != null));
+                            return new ChatCompletionResult(
+                                    "A login screen with a red banner reading \"Invalid password\".", List.of());
+                        },
+                        // 2: planSpecialists() - its user block now contains the vision note.
+                        messages -> {
+                            planUserBlock.set(messages.get(messages.size() - 1).content());
+                            return new ChatCompletionResult(
+                                    "{\"specialists\":[\"coder\"],\"rationale\":\"dig in\"}", List.of());
+                        },
+                        // 3: the "coder" specialist (no workspace -> single completeChat).
+                        messages -> new ChatCompletionResult("Coder note.", List.of())),
+                "Final answer referencing the invalid password banner.");
+
+        CountDownLatch latch = new CountDownLatch(1);
+        List<String> specialistStepPersonas = new ArrayList<>();
+        ImageAttachment image = new ImageAttachment("shot.png", "image/png", new byte[] {1, 2, 3});
+        orchestratorService.send(client, conversation, "what's wrong here?", "fake-model", 40, java.util.Map.of(), 0,
+                "vision-model", image, new ChatService.Listener() {
+                    @Override public void onToken(String c, String m, String d) { }
+                    @Override public void onDone(String c, ChatMessage m) { latch.countDown(); }
+                    @Override public void onError(String c, String m, ErrorCode e, String msg) { latch.countDown(); }
+                    @Override public void onStep(String c, String phase, String personaId, String label) {
+                        if ("specialist".equals(phase)) {
+                            specialistStepPersonas.add(personaId);
+                        }
+                    }
+                });
+
+        assertTrue(latch.await(5, TimeUnit.SECONDS), "orchestratorService.send() did not complete in time");
+        assertTrue(visionCallHadImage.get(), "the vision step must send the image inline");
+        assertEquals("researcher", specialistStepPersonas.get(0),
+                "the vision step runs first, as the 'researcher' viewer: " + specialistStepPersonas);
+        assertNotNull(planUserBlock.get());
+        assertTrue(planUserBlock.get().contains("Invalid password"),
+                "the vision note should reach the planner: " + planUserBlock.get());
+
+        List<ChatMessage> persisted = store.getMessages(conversation.getId());
+        assertTrue(persisted.get(0).getContent().contains("[🖼️ shot.png]"),
+                "user message keeps only the marker: " + persisted.get(0).getContent());
+        // user + vision note + coder note + synthesis
+        assertEquals(4, persisted.size(), "the vision note is persisted as its own specialist message");
+        assertEquals("researcher", persisted.get(1).getPersonaId());
+        assertTrue(persisted.get(1).getContent().contains("Invalid password"),
+                "the vision note is persisted verbatim: " + persisted.get(1).getContent());
     }
 
     private static boolean hasGit() {

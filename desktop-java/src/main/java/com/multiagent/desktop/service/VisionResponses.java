@@ -18,7 +18,12 @@ final class VisionResponses {
             "don't have the ability to", "cannot provide a detailed description of an image",
             "not able to provide an image", "provide a link to the image",
             "describe the image you have in mind", "provide me with more information or a detailed description",
-            "as an ai language model, i don't have access", "as an ai language model, i cannot");
+            "as an ai language model, i don't have access", "as an ai language model, i cannot",
+            // A VLM that got the prompt but no usable image often just asks for one back.
+            "please provide the image", "please share the image", "please upload the image",
+            "provide the image you would like", "provide the image you'd like",
+            "no image was provided", "i don't see an image", "i do not see an image",
+            "there is no image", "haven't provided an image", "have not provided an image");
 
     /** Longer than this is almost certainly a real description that merely opens with a hedge. */
     private static final int MAX_REFUSAL_LENGTH = 500;

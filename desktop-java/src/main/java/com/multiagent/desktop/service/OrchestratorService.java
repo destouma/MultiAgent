@@ -9,6 +9,7 @@ import com.multiagent.desktop.llm.LlmClient;
 import com.multiagent.desktop.llm.ProviderException;
 import com.multiagent.desktop.model.ChatMessage;
 import com.multiagent.desktop.model.Conversation;
+import com.multiagent.desktop.model.ImageAttachment;
 import com.multiagent.desktop.model.MessageRole;
 import com.multiagent.desktop.model.Persona;
 import com.multiagent.desktop.persistence.ConversationStore;
@@ -72,8 +73,14 @@ public class OrchestratorService {
 
     public void send(LlmClient client, Conversation conversation, String content, String fallbackModel,
                       int maxHistory, Map<String, String> specialistModels, int contextTokens,
-                      ChatService.Listener listener) {
-        store.addMessage(conversation.getId(), MessageRole.USER, content, null);
+                      String visionModel, ImageAttachment image, ChatService.Listener listener) {
+        // Mirror ChatService: the transcript keeps only a "[🖼️ name]" marker, the image itself
+        // is never persisted - a vision specialist examines it inline below (see the vision
+        // step in the executor task) and its written note carries the content onward.
+        String persistedContent = image != null
+                ? (content.isBlank() ? "" : content + "\n\n") + "[🖼️ " + image.name() + "]"
+                : content;
+        store.addMessage(conversation.getId(), MessageRole.USER, persistedContent, null);
 
         Map<String, String> overrides = specialistModels == null ? Map.of() : specialistModels;
         // The "Coordinator" topbar box picks the persona that runs the plan + synthesis;
@@ -93,8 +100,23 @@ public class OrchestratorService {
         activeTokens.put(conversation.getId(), token);
         String assistantMessageId = UUID.randomUUID().toString();
 
+        boolean hasVision = image != null && visionModel != null && !visionModel.isBlank();
+
         executor.submit(() -> {
             try {
+                // An attached image is handled the "regular chat" way - shown inline to a
+                // model that can actually see it - not transcribed through describe_image.
+                // One dedicated vision specialist runs first (below), examines the image on
+                // the vision model, and writes a note; that note is folded into userContent
+                // and added to the specialist notes, so the planner, every later specialist,
+                // and the synthesis all work from a real description without seeing bytes.
+                String userContent = content;
+                if (image != null && !hasVision) {
+                    String note = "[Image \"" + image.name() + "\" attached, but no vision model is "
+                            + "configured for this chat, so it could not be read.]";
+                    userContent = content.isBlank() ? note : content + "\n\n" + note;
+                }
+
                 client.ensureModelLoaded(model,
                         status -> listener.onModelStatus(conversation.getId(), status), token);
 
@@ -125,16 +147,39 @@ public class OrchestratorService {
                 if (contextTokens > 0) {
                     int budget = contextTokens - reserve;
                     while (entries.size() > 1
-                            && TokenEstimate.estimateTokens(entries) + TokenEstimate.estimateTokens(List.of(content)) > budget) {
+                            && TokenEstimate.estimateTokens(entries) + TokenEstimate.estimateTokens(List.of(userContent)) > budget) {
                         entries.remove(0);
                     }
                 }
                 String priorContext = String.join("\n\n", entries);
 
-                PlanParser.PlanResult plan = planSpecialists(client, orchestrator, model, maxTokens, content,
+                List<SpecialistNote> notes = new ArrayList<>();
+
+                // Vision step: before planning, one specialist looks at the attached image on
+                // the vision model (inline, exactly like a regular multimodal chat) and its
+                // note becomes the image's description for the rest of the workflow.
+                if (hasVision) {
+                    token.throwIfCancelled();
+                    Persona viewer = personas.get("researcher")
+                            .or(() -> personas.get("general"))
+                            .or(() -> personas.get("critic"))
+                            .orElseGet(() -> personas.list().stream()
+                                    .filter(p -> !"orchestrator".equals(p.getId()))
+                                    .findFirst().orElse(orchestrator));
+                    listener.onStep(conversation.getId(), "specialist", viewer.getId(),
+                            viewer.getName() + " is examining " + image.name() + "...");
+                    String imageNote = examineImage(client, viewer, visionModel, maxTokens, content, image,
+                            conversation.getId(), token, listener);
+                    store.addMessage(conversation.getId(), MessageRole.ASSISTANT, imageNote, viewer.getId());
+                    listener.onMessagesUpdated(conversation.getId());
+                    notes.add(new SpecialistNote(viewer, imageNote));
+                    String block = "[Image \"" + image.name() + "\" - examined by " + viewer.getName() + ":]\n" + imageNote;
+                    userContent = userContent.isBlank() ? block : userContent + "\n\n" + block;
+                }
+
+                PlanParser.PlanResult plan = planSpecialists(client, orchestrator, model, maxTokens, userContent,
                         priorContext, workspacePath, workspaceTree, token);
 
-                List<SpecialistNote> notes = new ArrayList<>();
                 for (String specialistId : plan.specialists()) {
                     token.throwIfCancelled();
                     Optional<Persona> maybePersona = personas.get(specialistId);
@@ -147,7 +192,7 @@ public class OrchestratorService {
                     listener.onStep(conversation.getId(), "specialist", persona.getId(),
                             persona.getName() + " (" + specialistModel + ") is working...");
 
-                    String specialistContent = runSpecialist(client, persona, specialistModel, maxTokens, content,
+                    String specialistContent = runSpecialist(client, persona, specialistModel, maxTokens, userContent,
                             priorContext, plan.rationale(), workspacePath, workspaceTree, conversation.getId(),
                             assistantMessageId, token, listener);
 
@@ -160,7 +205,7 @@ public class OrchestratorService {
                         "Synthesizing final answer...");
 
                 StringBuilder full = new StringBuilder();
-                synthesize(client, orchestrator, model, maxTokens, content, plan.rationale(), notes, workspacePath,
+                synthesize(client, orchestrator, model, maxTokens, userContent, plan.rationale(), notes, workspacePath,
                         workspaceTree, token, delta -> {
                             full.append(delta);
                             listener.onToken(conversation.getId(), assistantMessageId, delta);
@@ -184,6 +229,41 @@ public class OrchestratorService {
                 activeTokens.remove(conversation.getId());
             }
         });
+    }
+
+    /**
+     * The vision step: shows the attached image inline to the vision model (the same
+     * multimodal {@code completeChat} path a regular chat's inline mode uses - not the
+     * separate {@code describe_image} call) and returns its written description, which the
+     * caller persists as {@code viewer}'s specialist note and folds into the shared context.
+     * A canned "I can't see images" reply ({@link VisionResponses#looksLikeRefusal}) or any
+     * VLM error degrades to a short note rather than aborting the turn.
+     */
+    private String examineImage(LlmClient client, Persona viewer, String visionModel, int maxTokens,
+                                 String userRequest, ImageAttachment image, String conversationId,
+                                 CancellationToken token, ChatService.Listener listener) {
+        String ask = userRequest == null || userRequest.isBlank()
+                ? "Describe this image in full detail: any text, code, diagrams, tables, UI elements, and errors."
+                : "The user's request is:\n" + userRequest + "\n\nDescribe this image in full detail with that "
+                        + "request in mind - transcribe any text, code, diagrams, tables, UI elements, and errors.";
+        List<ChatRequestMessage> messages = List.of(
+                ChatRequestMessage.system(viewer.getSystemPrompt() + "\n\n"
+                        + "You are the only specialist who can see the attached image. Describe it thoroughly and "
+                        + "factually - other specialists and the coordinator will rely entirely on your note."),
+                ChatRequestMessage.userWithImage(ask, image));
+        try {
+            client.ensureModelLoaded(visionModel,
+                    status -> listener.onModelStatus(conversationId, status), token);
+            ChatCompletionResult result = client.completeChat(messages, visionModel, List.of(), maxTokens, token);
+            String description = result.content() == null ? "" : result.content().strip();
+            return VisionResponses.looksLikeRefusal(description)
+                    ? "The attached image \"" + image.name() + "\" could not be read by the vision model ("
+                        + visionModel + "); its contents are unavailable."
+                    : description;
+        } catch (RuntimeException e) {
+            return "Could not read the attached image \"" + image.name() + "\": "
+                    + (e.getMessage() != null ? e.getMessage() : e.toString());
+        }
     }
 
     /** Every loaded persona except the orchestrator itself is a candidate specialist. */

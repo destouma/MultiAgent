@@ -780,7 +780,7 @@ public class ChatViewModel {
         if (conversation.getKind() == ConversationKind.ORCHESTRATOR) {
             orchestratorService.send(client, conversation, messageText, model, profile.getMaxHistory(),
                     com.multiagent.desktop.service.SpecialistModels.parse(conversation.getSpecialistModels()),
-                    activeContextTokens.get(), listener);
+                    activeContextTokens.get(), resolveVisionModelFor(conversation), image, listener);
         } else {
             chatService.send(client, conversation, messageText, persona, model,
                     resolveVisionModelFor(conversation), profile.getMaxHistory(),

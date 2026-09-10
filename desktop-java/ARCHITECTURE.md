@@ -301,7 +301,8 @@ Every successful `write_file`/`delete_file` captures a checkpoint (`ToolLoopRunn
 **+ Orchestrator** creates a `kind: ORCHESTRATOR` conversation. Each user message runs: **Plan** (coordinator persona picks 1-3 specialists via a small JSON-only completion, parsed by `PlanParser`) → **Specialists** (each runs in turn, persisted as its own message as it completes) → **Synthesize** (final streamed answer from the specialist notes). Progress surfaces via `onStep` events into `orchestratorStatusProperty()`.
 
 - **Specialists can write.** When a workspace folder is bound, each specialist runs through the **same shared `ToolLoopRunner`** a normal workspace chat uses — the full read **and write** tool set (`list_dir`/`read_file`/`search_file` + `write_file`/`delete_file`/`rename_file` + `git_*`), every mutating call gated by the same `ActionApprover` dialog and captured as a checkpoint (**View diff** / **Revert**). `App.java` installs one `DialogActionApprover` on both `ChatService` and `OrchestratorService`. Binding a folder is the whole opt-in — there is no separate "apply changes" step or checkbox. With no workspace bound a specialist is a plain text completion. The synthesis prompt tells the coordinator to ground every file claim in the specialist notes ("do NOT invent writes they didn't report").
-- **Coordinator** — the persona that runs the plan + synthesis. For an orchestrator chat the pane topbar relabels the **Persona** box to **Coordinator** (and hides **Vision**); it pins `Conversation.personaId`, which `OrchestratorService` resolves as coordinator → falls back to the `orchestrator` persona, then `general`.
+- **Coordinator** — the persona that runs the plan + synthesis. For an orchestrator chat the pane topbar relabels the **Persona** box to **Coordinator**; it pins `Conversation.personaId`, which `OrchestratorService` resolves as coordinator → falls back to the `orchestrator` persona, then `general`.
+- **Vision** — the same **Vision** dropdown and image attach/drag-drop path a normal chat has. When an image is attached and a vision model is set, a **vision step** runs first: one specialist (the `researcher` persona, falling back to `general`/`critic`) examines the image *inline* on the vision model — the same multimodal chat call a normal chat's inline mode uses, not `describe_image` — and its note is persisted as its own specialist message and folded into the shared context, so the planner, the other specialists, and the synthesis all work from a real description. See [§6 Vision](#vision-describe_image--image-attachments).
 - **Roster** — any loaded persona except `orchestrator` (`OrchestratorService.availableSpecialistIds()`), so dropping in `personas/security.json` just extends it; the planner is told each candidate's name and resolved model.
 - **Per-specialist model** — resolved `Conversation.specialistModels[id]` (the **Specialists…** dialog, per orchestrator chat) → `persona.defaultModel` → the conversation's model. The step line shows which model a specialist is on.
 - **Context fit** — `priorContext` is trimmed to the server's context-window budget (like `ChatService`), and every specialist / plan / synthesis call carries `max_tokens` = the reply reserve.
@@ -385,10 +386,26 @@ for a follow-up.
   → `ChatService.send`, which routes to inline or pre-pass mode as above. Failure
   (no vision model, oversize, VLM error) degrades to a short note, never aborts
   the turn.
+- **Orchestrator chats.** The same **Vision** dropdown and `Composer` attach/
+  drag-drop path. `ChatViewModel.sendMessage` forwards the resolved vision model
+  and the `ImageAttachment` to `OrchestratorService.send`. When both are present
+  (`hasVision`), a **vision step** runs before planning: one specialist — the
+  `researcher` persona, falling back to `general`/`critic`, else the first
+  non-`orchestrator` persona — is handed the image *inline* via
+  `ChatRequestMessage.userWithImage` and a plain `completeChat` on the vision
+  model (`OrchestratorService.examineImage`), i.e. the same multimodal path as
+  `ChatService`'s inline mode, **not** `describeImage`. Its answer is persisted as
+  that persona's own specialist message, added to the specialist notes, and
+  appended to `userContent`, so the planner, the later specialists, and the
+  synthesis all see a real description. A `looksLikeRefusal` hit or a VLM error
+  degrades to a one-line "could not be read" note; no vision model set degrades to
+  a "[no vision model configured]" note on the request. Specialists still don't
+  call the `describe_image` tool themselves.
 
 Not wired: persisting images, multi-turn image memory, orchestrator specialists
-calling the tool, non-image binaries. See [§11](#11-ideas-not-yet-implemented)
-for choosing a VLM (Qwen2.5-VL etc.) and why Omni models aren't worth it yet.
+calling the `describe_image` tool, non-image binaries. See
+[§11](#11-ideas-not-yet-implemented) for choosing a VLM (Qwen2.5-VL etc.) and why
+Omni models aren't worth it yet.
 
 ### Context-window fitting
 

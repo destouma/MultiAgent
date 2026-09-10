@@ -196,9 +196,10 @@ public class ChatPaneView extends BorderPane {
             }
             dialog.showAndWait().ifPresent(viewModel::setSpecialistModels);
         });
-        // "Vision" and "Persona" don't apply to an orchestrator chat (specialists don't do
-        // vision; the persona box picks the *coordinator* instead) - hide Vision, relabel
-        // Persona -> Coordinator, and show the Specialists button, all keyed off the kind.
+        // "Persona" reads as the *coordinator* picker in an orchestrator chat, so relabel it
+        // Persona -> Coordinator and show the Specialists button there, keyed off the kind.
+        // "Vision" applies to both kinds: an orchestrator chat runs the same image pre-pass
+        // (transcribe once, fold into the request) before planning - see OrchestratorService.
         Label personaCaption = new Label("Persona");
         personaCaption.getStyleClass().add("topbar-field-label");
         VBox personaColumn = new VBox(2, personaCaption, personaBox);
@@ -220,8 +221,6 @@ public class ChatPaneView extends BorderPane {
             boolean orchestrator = isOrchestrator(viewModel);
             specialistsColumn.setVisible(orchestrator);
             specialistsColumn.setManaged(orchestrator);
-            visionColumn.setVisible(!orchestrator);
-            visionColumn.setManaged(!orchestrator);
             personaCaption.setText(orchestrator ? "Coordinator" : "Persona");
             syncPersonaItems(personaBox, orchestrator);
 

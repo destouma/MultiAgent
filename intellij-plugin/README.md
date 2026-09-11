@@ -30,24 +30,30 @@ src/test/java/.../core/                        forked tests (21 files)
 ## Build
 
 Needs **JDK 21** (the IntelliJ Platform build requires it; `build.gradle.kts` also pins the
-toolchain to 21). The Gradle wrapper jar isn't committed yet — materialise it once with a
-JDK-21 Gradle (or IntelliJ's bundled Gradle):
+toolchain to 21).
 
 ```bash
-gradle wrapper          # writes gradlew + gradle/wrapper/gradle-wrapper.jar
 ./gradlew buildPlugin    # first run downloads the target IDE (~1.5 GB)
 ./gradlew runIde         # sandbox IDE with the plugin loaded
 ./gradlew test           # runs the forked core tests
 ```
 
-## Status — Phase 0
+## Status
 
-- [x] Gradle + IntelliJ Platform Gradle Plugin 2.x skeleton
-- [x] Core + tests forked and de-JavaFX'd
-- [x] Empty `MultiAgent` tool window (`MultiAgentToolWindowFactory`)
-- [x] **Tools → MultiAgent: Storage Spike** — round-trips a `ConversationStore` row under
-      the plugin config dir, to prove sqlite-jdbc's native lib loads under the plugin
-      classloader (the one real Phase-0 risk)
-- [ ] `runIde` verified (pending JDK 21 + SDK download)
+**Phase 0** — done. Gradle + IntelliJ Platform Gradle Plugin 2.x skeleton; core + tests
+forked and de-JavaFX'd; `runIde` verified in a real sandbox; the one real Phase-0 risk
+(sqlite-jdbc under the plugin classloader) hit and fixed — `DriverManager`'s
+`ServiceLoader` auto-discovery keys off the calling thread's context classloader, which
+under the IntelliJ Platform isn't reliably the plugin's own `PluginClassLoader`, so
+`ConversationStore` now forces registration with an explicit
+`Class.forName("org.sqlite.JDBC")` static initializer.
 
-Next: Phase 1 (minimal streaming chat) — see [`../TODO.md`](../TODO.md#jetbrains-plugin).
+**Phase 1** — done. `MultiAgentService` (application `@Service` owning the forked core),
+`MultiAgentChatPanel` (streaming chat UI: bubbles, composer, model dropdown, health
+indicator), `MultiAgentConfigurable` (Settings → Tools → MultiAgent). Verified in a real
+sandbox: connects, streams a real response, and conversation history survives an IDE
+restart.
+
+Next: Phase 2 (workspace-assisted chat — `ToolLoopRunner`, `WorkspaceService`,
+`GitService`, `RunCommandService`, approval dialogs) — see
+[`../TODO.md`](../TODO.md#jetbrains-plugin).

@@ -15,11 +15,14 @@ import com.intellij.ui.components.JBScrollBar
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextArea
 import com.intellij.util.ui.JBUI
+import com.multiagent.intellij.core.llm.ErrorCode
 import com.multiagent.intellij.core.model.ChatMessage
 import com.multiagent.intellij.core.model.Conversation
+import com.multiagent.intellij.core.model.ConversationKind
 import com.multiagent.intellij.core.model.MessageRole
 import com.multiagent.intellij.core.model.Persona
 import com.multiagent.intellij.core.service.ChatService
+import com.multiagent.intellij.core.service.SpecialistModels
 import com.multiagent.intellij.service.MultiAgentService
 import java.awt.BorderLayout
 import java.awt.Color
@@ -32,7 +35,9 @@ import javax.swing.BoxLayout
 import javax.swing.JButton
 import javax.swing.JComboBox
 import javax.swing.JComponent
+import javax.swing.JMenuItem
 import javax.swing.JPanel
+import javax.swing.JPopupMenu
 import javax.swing.SwingUtilities
 
 /**
@@ -62,7 +67,11 @@ class MultiAgentChatPanel(private val project: Project) : JPanel(BorderLayout())
     }
     private val sendButton = JButton("Send")
     private val conversationCombo = JComboBox<Conversation>()
+    private val personaLabel = JBLabel("Persona:")
     private val personaCombo = JComboBox<Persona>()
+    private val specialistsButton = JButton("Specialists...").apply {
+        addActionListener { openSpecialistModelsDialog() }
+    }
     private val modelCombo = JComboBox<String>().apply { isEditable = true }
     private val healthLabel = JBLabel("checking...")
     private val statusLabel = JBLabel(" ")
@@ -99,11 +108,7 @@ class MultiAgentChatPanel(private val project: Project) : JPanel(BorderLayout())
         row0.add(conversationCombo)
         row0.add(JButton("+").apply {
             toolTipText = "New chat"
-            addActionListener {
-                val created = service.newConversationForProject(project)
-                refreshConversationCombo()
-                switchTo(created)
-            }
+            addActionListener { event -> showNewChatMenu(event.source as JComponent) }
         })
         row0.add(JButton("✕").apply {
             toolTipText = "Delete this chat"
@@ -125,7 +130,7 @@ class MultiAgentChatPanel(private val project: Project) : JPanel(BorderLayout())
         top.add(row1)
 
         val row2 = JPanel(FlowLayout(FlowLayout.LEFT, 6, 2))
-        row2.add(JBLabel("Persona:"))
+        row2.add(personaLabel)
         personaCombo.preferredSize = Dimension(150, personaCombo.preferredSize.height)
         personaCombo.addActionListener {
             if (updatingCombos) return@addActionListener
@@ -135,6 +140,7 @@ class MultiAgentChatPanel(private val project: Project) : JPanel(BorderLayout())
             }
         }
         row2.add(personaCombo)
+        row2.add(specialistsButton)
         row2.maximumSize = Dimension(Int.MAX_VALUE, row2.preferredSize.height)
         top.add(row2)
 
@@ -180,15 +186,53 @@ class MultiAgentChatPanel(private val project: Project) : JPanel(BorderLayout())
     }
 
     private fun refreshPersonaCombo() {
+        val isOrchestrator = conversation.kind == ConversationKind.ORCHESTRATOR
+        // "orchestrator" is a coordinator persona, not a normal chat persona (mirrors
+        // desktop-java: it's offered only as an orchestrator chat's Coordinator).
+        personaLabel.text = if (isOrchestrator) "Coordinator:" else "Persona:"
+        specialistsButton.isVisible = isOrchestrator
+
         updatingCombos = true
         try {
             personaCombo.removeAllItems()
-            val items = service.personas()
+            val all = service.personas()
+            val items = if (isOrchestrator) all else all.filter { it.id != "orchestrator" }
             items.forEach { personaCombo.addItem(it) }
             val pinnedId = conversation.personaId
-            personaCombo.selectedItem = items.firstOrNull { it.id == pinnedId } ?: items.firstOrNull()
+            val fallbackId = if (isOrchestrator) "orchestrator" else null
+            personaCombo.selectedItem = items.firstOrNull { it.id == pinnedId }
+                ?: items.firstOrNull { it.id == fallbackId }
+                ?: items.firstOrNull()
         } finally {
             updatingCombos = false
+        }
+    }
+
+    private fun showNewChatMenu(invoker: JComponent) {
+        val menu = JPopupMenu()
+        menu.add(JMenuItem("New Chat").apply {
+            addActionListener { createAndSwitch(ConversationKind.CHAT) }
+        })
+        menu.add(JMenuItem("New Orchestrator").apply {
+            addActionListener { createAndSwitch(ConversationKind.ORCHESTRATOR) }
+        })
+        menu.show(invoker, 0, invoker.height)
+    }
+
+    private fun createAndSwitch(kind: ConversationKind) {
+        val created = service.newConversationForProject(project, kind)
+        refreshConversationCombo()
+        switchTo(created)
+    }
+
+    /** Per-specialist model overrides for an orchestrator conversation - every non-"orchestrator" persona is always a candidate specialist, this only overrides which model it runs on. */
+    private fun openSpecialistModelsDialog() {
+        val specialists = service.personas().filter { it.id != "orchestrator" }
+        val current = SpecialistModels.parse(conversation.specialistModels)
+        val dialog = SpecialistModelsDialog(project, specialists, current)
+        if (dialog.showAndGet()) {
+            val json = SpecialistModels.write(dialog.result())
+            conversation = service.store.setConversationSpecialistModels(conversation.id, json)
         }
     }
 
@@ -245,13 +289,15 @@ class MultiAgentChatPanel(private val project: Project) : JPanel(BorderLayout())
 
     private fun loadHistory() {
         val messages: List<ChatMessage> = service.store.getMessages(conversation.id)
+        val isOrchestrator = conversation.kind == ConversationKind.ORCHESTRATOR
         for (m in messages) {
-            addBubble(m.role, m.content)
+            val label = if (isOrchestrator && m.role == MessageRole.ASSISTANT) service.personaById(m.personaId)?.name else null
+            addBubble(m.role, m.content, label)
         }
         scrollToBottom()
     }
 
-    private fun addBubble(role: MessageRole, text: String): JBTextArea {
+    private fun addBubble(role: MessageRole, text: String, label: String? = null): JBTextArea {
         val area = JBTextArea(text).apply {
             isEditable = false
             lineWrap = true
@@ -261,18 +307,34 @@ class MultiAgentChatPanel(private val project: Project) : JPanel(BorderLayout())
         }
         val row = JPanel(BorderLayout())
         row.border = JBUI.Borders.empty(2, 4)
-        val label = JBLabel(if (role == MessageRole.USER) "You" else "Assistant").apply {
+        val labelText = label ?: if (role == MessageRole.USER) "You" else "Assistant"
+        val labelComponent = JBLabel(labelText).apply {
             font = font.deriveFont(font.size2D - 1f)
             foreground = Color.GRAY
         }
         val wrapper = JPanel(BorderLayout())
-        wrapper.add(label, BorderLayout.NORTH)
+        wrapper.add(labelComponent, BorderLayout.NORTH)
         wrapper.add(area, BorderLayout.CENTER)
         row.add(wrapper, BorderLayout.CENTER)
         messagesPanel.add(row)
         messagesPanel.revalidate()
         messagesPanel.repaint()
         return area
+    }
+
+    /** A plain, non-interactive progress line for orchestrator step transitions (planning/specialist/synthesizing). */
+    private fun addStatusRow(text: String) {
+        val label = JBLabel(text).apply {
+            foreground = Color.GRAY
+            font = font.deriveFont(font.size2D - 1f)
+        }
+        val row = JPanel(BorderLayout()).apply {
+            border = JBUI.Borders.empty(1, 12)
+            add(label, BorderLayout.CENTER)
+        }
+        messagesPanel.add(row)
+        messagesPanel.revalidate()
+        messagesPanel.repaint()
     }
 
     private class ToolOpRow(val panel: JPanel, val label: JBLabel, val buttons: JPanel)
@@ -413,10 +475,14 @@ class MultiAgentChatPanel(private val project: Project) : JPanel(BorderLayout())
         input.text = ""
         sendButton.isEnabled = false
 
+        val isOrchestrator = conversation.kind == ConversationKind.ORCHESTRATOR
         addBubble(MessageRole.USER, text)
-        val assistantArea = addBubble(MessageRole.ASSISTANT, "")
+        // A plain chat gets its answer bubble immediately (instant "typing" feedback); an
+        // orchestrator turn creates it lazily on the first synthesis token (see the shared
+        // onToken handler below), so planning/specialist rows render in their natural order
+        // above it instead of above an empty bubble that was created too early.
+        streamingArea = if (isOrchestrator) null else addBubble(MessageRole.ASSISTANT, "")
         scrollToBottom()
-        streamingArea = assistantArea
 
         val model = (modelCombo.editor.item as? String)?.trim().orEmpty()
         if (model.isNotEmpty() && model != conversation.model) {
@@ -424,50 +490,89 @@ class MultiAgentChatPanel(private val project: Project) : JPanel(BorderLayout())
             refreshConversationCombo()
         }
         val client = service.client()
-        val persona = personaCombo.selectedItem as? Persona ?: service.persona()
 
         // Re-bound on every send (rather than once at panel creation) so the most recently
         // active project's tool window is the one whose dialogs the approval gate targets,
-        // since ChatService's approver is a single application-wide field.
-        service.chatService.setActionApprover(DialogActionApprover(project))
+        // since the approver is a single application-wide field on both send paths.
+        service.setActionApprover(DialogActionApprover(project))
 
-        service.chatService.send(
-            client, conversation, text, persona,
-            model, null, service.settings().maxHistory, 0, null,
-            object : ChatService.Listener {
-                override fun onToken(conversationId: String, messageId: String, delta: String) {
-                    onEdt { streamingArea?.append(delta); scrollToBottom() }
+        val listener = object : ChatService.Listener {
+            override fun onToken(conversationId: String, messageId: String, delta: String) {
+                onEdt {
+                    if (streamingArea == null) streamingArea = addBubble(MessageRole.ASSISTANT, "")
+                    streamingArea?.append(delta)
+                    scrollToBottom()
                 }
+            }
 
-                override fun onDone(conversationId: String, message: ChatMessage) {
-                    onEdt {
-                        streamingArea?.text = message.content
-                        streamingArea = null
-                        sendButton.isEnabled = true
+            override fun onDone(conversationId: String, message: ChatMessage) {
+                onEdt {
+                    if (streamingArea == null) streamingArea = addBubble(MessageRole.ASSISTANT, "")
+                    streamingArea?.text = message.content
+                    streamingArea = null
+                    sendButton.isEnabled = true
+                    scrollToBottom()
+                }
+            }
+
+            override fun onError(conversationId: String, messageId: String, code: ErrorCode, message: String) {
+                onEdt {
+                    if (streamingArea == null) streamingArea = addBubble(MessageRole.ASSISTANT, "")
+                    streamingArea?.text = "Error ($code): $message"
+                    streamingArea = null
+                    sendButton.isEnabled = true
+                }
+            }
+
+            override fun onModelStatus(conversationId: String, status: String) {
+                onEdt { statusLabel.text = status }
+            }
+
+            override fun onWorkspaceOp(
+                conversationId: String, messageId: String, op: String, path: String,
+                status: String, detail: String?, checkpointId: String?
+            ) {
+                onEdt { this@MultiAgentChatPanel.onWorkspaceOp(op, path, status, detail, checkpointId) }
+            }
+
+            override fun onStep(conversationId: String, phase: String, personaId: String, label: String) {
+                onEdt {
+                    val icon = when (phase) {
+                        "planning" -> "🧭"
+                        "specialist" -> "🔬"
+                        "synthesizing" -> "🔄"
+                        "done" -> "✅"
+                        else -> "•"
+                    }
+                    addStatusRow("$icon $label")
+                    scrollToBottom()
+                }
+            }
+
+            override fun onMessagesUpdated(conversationId: String) {
+                onEdt {
+                    val last = service.store.getMessages(conversation.id).lastOrNull() ?: return@onEdt
+                    if (last.role == MessageRole.ASSISTANT) {
+                        addBubble(MessageRole.ASSISTANT, last.content, service.personaById(last.personaId)?.name)
                         scrollToBottom()
                     }
                 }
-
-                override fun onError(conversationId: String, messageId: String, code: com.multiagent.intellij.core.llm.ErrorCode, message: String) {
-                    onEdt {
-                        streamingArea?.text = "Error ($code): $message"
-                        streamingArea = null
-                        sendButton.isEnabled = true
-                    }
-                }
-
-                override fun onModelStatus(conversationId: String, status: String) {
-                    onEdt { statusLabel.text = status }
-                }
-
-                override fun onWorkspaceOp(
-                    conversationId: String, messageId: String, op: String, path: String,
-                    status: String, detail: String?, checkpointId: String?
-                ) {
-                    onEdt { this@MultiAgentChatPanel.onWorkspaceOp(op, path, status, detail, checkpointId) }
-                }
             }
-        )
+        }
+
+        if (isOrchestrator) {
+            val specialistModels = SpecialistModels.parse(conversation.specialistModels)
+            service.orchestratorService.send(
+                client, conversation, text, model,
+                service.settings().maxHistory, specialistModels, 0, listener
+            )
+        } else {
+            val persona = personaCombo.selectedItem as? Persona ?: service.persona()
+            service.chatService.send(
+                client, conversation, text, persona,
+                model, null, service.settings().maxHistory, 0, null, listener
+            )
+        }
     }
 
     private fun refreshHealthAndModels() {

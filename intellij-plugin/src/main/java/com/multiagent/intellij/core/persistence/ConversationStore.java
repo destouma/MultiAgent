@@ -35,6 +35,24 @@ import java.util.UUID;
 public class ConversationStore implements AutoCloseable {
     private static final Set<String> DEFAULT_TITLES = Set.of("New chat", "New image", "New orchestrator");
 
+    static {
+        // JDBC 4 driver auto-discovery (java.sql.DriverManager.ensureDriversInitialized) runs
+        // ServiceLoader.load(Driver.class) against the calling THREAD's context classloader -
+        // which under the IntelliJ Platform is very often not this plugin's own PluginClassLoader
+        // (e.g. work submitted via ApplicationManager.executeOnPooledThread), so sqlite-jdbc's
+        // META-INF/services/java.sql.Driver entry never gets found and getConnection() fails
+        // with "No suitable driver found". Class.forName here always resolves against THIS
+        // class's own defining classloader (the plugin's), which does have sqlite-jdbc on it,
+        // and running org.sqlite.JDBC's static initializer explicitly self-registers the driver
+        // with DriverManager - sidestepping ServiceLoader/context-classloader entirely. No such
+        // issue on a plain flat classpath (desktop-java), so that fork doesn't need this.
+        try {
+            Class.forName("org.sqlite.JDBC");
+        } catch (ClassNotFoundException e) {
+            throw new ExceptionInInitializerError(e);
+        }
+    }
+
     private final Connection connection;
 
     public ConversationStore() {
@@ -49,10 +67,19 @@ public class ConversationStore implements AutoCloseable {
             connection = DriverManager.getConnection("jdbc:sqlite:" + dbPath);
             Migrations.run(connection);
         } catch (SQLException e) {
-            throw new IllegalStateException("Failed to open database at " + dbPath, e);
+            throw new IllegalStateException("Failed to open database at " + dbPath + ": "
+                    + rootCauseMessage(e), e);
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
+    }
+
+    private static String rootCauseMessage(Throwable t) {
+        Throwable cause = t;
+        while (cause.getCause() != null) {
+            cause = cause.getCause();
+        }
+        return cause.getClass().getSimpleName() + ": " + cause.getMessage();
     }
 
     private static Path defaultDbPath() {

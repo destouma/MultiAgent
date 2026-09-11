@@ -17,6 +17,10 @@
                     anchor="right"
                     icon="AllIcons.Toolwindows.ToolWindowMessages"
                     factoryClass="com.multiagent.intellij.ui.MultiAgentToolWindowFactory"/>
+        <applicationConfigurable parentId="tools"
+                                  instance="com.multiagent.intellij.ui.MultiAgentConfigurable"
+                                  id="com.multiagent.intellij.ui.MultiAgentConfigurable"
+                                  displayName="MultiAgent"/>
     </extensions>
 
     <actions>

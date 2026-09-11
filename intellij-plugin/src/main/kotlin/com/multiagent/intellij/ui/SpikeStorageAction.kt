@@ -41,7 +41,9 @@ class SpikeStorageAction : AnAction() {
                     Messages.showInfoMessage(project, it, "MultiAgent Storage Spike")
                 }.onFailure {
                     log.warn("storage spike failed", it)
-                    Messages.showErrorDialog(project, "${it::class.simpleName}: ${it.message}", "MultiAgent Storage Spike Failed")
+                    val chain = generateSequence(it) { t -> t.cause }
+                        .joinToString("\nCaused by: ") { t -> "${t::class.simpleName}: ${t.message}" }
+                    Messages.showErrorDialog(project, chain, "MultiAgent Storage Spike Failed")
                 }
             }
         }

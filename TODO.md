@@ -116,34 +116,24 @@ free.
 | Raw API debug-log window | niche; IntelliJ ships an HTTP Client — keep at most a log file |
 | In-app persona *editor* dialog | personas matter; "edit the JSON + a Settings list" is enough for a long time |
 
-### Reuse strategy — pick one
+### Reuse strategy — decided: B (fork)
 
-- **A. Shared `core` module (recommended).** Extract the UI-free packages into a
-  module both `desktop-java/` and `intellij-plugin/` depend on. Finally fixes the
-  `shared/`-is-TS-only lesson with a real JVM core. Cost: a build restructure
-  (Maven multi-module, or the plugin consumes `core` from `mavenLocal`; the plugin
-  itself must be Gradle).
-- **B. Fork the core into the plugin** — same move as `desktop/` → `desktop-java/`.
-  Faster start, but two copies of `ToolLoopRunner` et al. Only if the plugin is a
-  short experiment.
+Chosen deliberately over the shared-`core`-module option: the two clients must not be
+tied to each other, even at the cost of manually re-applying a bug fix to both forks.
+`intellij-plugin/src/main/java/com/multiagent/intellij/core/` is an independent copy,
+package-renamed, with zero build/module dependency on `desktop-java/`. See
+[`intellij-plugin/README.md`](intellij-plugin/README.md).
 
 ### Phases
 
 | Phase | Scope | Exit |
 | --- | --- | --- |
-| **0 — Foundations** | Extract `core` (strategy A); confirm zero `javafx.*` leaks and `desktop-java/` still builds. Gradle plugin skeleton, empty tool window, `runIde`. **Spike sqlite-jdbc under the plugin classloader.** Decide Swing vs JCEF. | Sandbox IDE opens the tool window; a throwaway button round-trips a `ConversationStore` row |
-| **1 — Minimal chat** | Single conversation (thread + composer). Server / model / persona config as an IDE `Configurable` reusing `AppSettings`. Health indicator. Streaming plain chat via `ChatService`. Persistence via reused `ConversationStore`. Callback→EDT helper. | Streaming conversation; history survives IDE restart |
+| **0 — Foundations** ✅ | Fork `core` (strategy B), package-renamed, zero `javafx.*` leaks. Gradle plugin skeleton, empty tool window, `runIde`. **Spike sqlite-jdbc under the plugin classloader.** Swing UI (no JCEF). | Sandbox IDE opens the tool window; a throwaway button round-trips a `ConversationStore` row — done, incl. the sqlite-jdbc classloader fix (`Class.forName` static init, since `DriverManager`'s `ServiceLoader` discovery keys off a context classloader the plugin doesn't reliably get) |
+| **1 — Minimal chat** ✅ | Single conversation (thread + composer). Server / model / persona config as an IDE `Configurable` reusing `AppSettings`. Health indicator. Streaming plain chat via `ChatService`. Persistence via forked `ConversationStore`. Callback→EDT helper. | Streaming conversation; history survives IDE restart — done, verified in a real sandbox |
 | **2 — Workspace-assisted chat** | Auto-bind to the open `Project`. Wire `ToolLoopRunner` + `WorkspaceService` + `GitService` + `RunCommandService`. Approval gate → `DialogWrapper`. Tool-activity rows. `VfsUtil.markDirtyAndRefresh` after writes. Checkpoint diff/revert via `DiffManager`. `run_command` output surfaced. | "add a null check and run the tests" → approval → edits visible in the editor → diff/revert → test output |
 | **3 — IDE-native integration** | Editor context-menu actions (**Add selection**, **Explain**); auto-include active file / selection as context. Conversation list + per-conversation model/server/persona pinning. Search + export MD/JSON. Status-bar widget (server + model + health). | Driven from the editor, not just the tool window; several conversations |
 | **4 — Orchestrator** | Wire `OrchestratorService` (plan → specialists → synthesize) with progress in the tool window. Coordinator picker + per-specialist models dialog. Specialists write through the same approval-gated loop (already true in `core`). | Orchestrator conversation plans, shows specialist progress, edits the project under the gate |
 | **5 — Polish / optional** | Vision (paste a screenshot, `describe_image`). Context-window usage bar. Persona list/editor in Settings. Optional raw-API log file. Marketplace prep (icon, `since/until-build`, publish). | Published to Marketplace |
-
-### Open decisions
-
-1. Reuse strategy **A** (shared `core` module) or **B** (fork into the plugin)?
-2. Build: convert the Java side to Gradle, or keep `core` on Maven + consume from `mavenLocal`?
-3. UI: native Swing, or JCEF webview shared with `vscode-extension/`?
-4. Language: all Java, or Java `core` + Kotlin plugin glue?
 
 ---
 

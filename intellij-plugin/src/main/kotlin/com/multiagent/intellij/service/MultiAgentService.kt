@@ -16,6 +16,7 @@ import com.multiagent.intellij.core.service.ChatService
 import com.multiagent.intellij.core.service.CheckpointService
 import com.multiagent.intellij.core.service.ConfigService
 import com.multiagent.intellij.core.service.PersonaRegistry
+import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.ConcurrentHashMap
 
@@ -47,6 +48,34 @@ class MultiAgentService : Disposable {
     val store: ConversationStore = ConversationStore(baseDir.resolve("chats.db"))
     val chatService: ChatService = ChatService(store)
     val checkpointService: CheckpointService = CheckpointService(store)
+
+    init {
+        seedBuiltInPersonas()
+    }
+
+    /**
+     * PersonaRegistry's own bundled-personas lookup can't work under the IntelliJ Platform:
+     * its class's CodeSource is null under PluginClassLoader (verified empirically - see
+     * build.gradle.kts), and the JVM's cwd under `runIde` is the unpacked IDE distribution's
+     * own directory. So instead: the personas JSON files are bundled as classpath resources
+     * (Gradle's processResources), and copied into PersonaRegistry's writable user directory once, the
+     * first time each one is missing there - after that they're normal user-owned files (same
+     * "the writable dir wins" override story as desktop-java, just seeded once instead of
+     * pre-existing). A later repo-root persona update won't reach an existing install; that's
+     * an acceptable, common tradeoff (e.g. how editors seed default settings/snippets once).
+     */
+    private fun seedBuiltInPersonas() {
+        val dir = personaRegistry.userPersonaDir()
+        for (id in BUILT_IN_PERSONA_IDS) {
+            val target = dir.resolve("$id.json")
+            if (Files.exists(target)) continue
+            val resource = javaClass.getResourceAsStream("/personas/$id.json") ?: continue
+            resource.use { input ->
+                Files.createDirectories(dir)
+                Files.copy(input, target)
+            }
+        }
+    }
 
     @Volatile
     private var cachedClient: LlmClient? = null
@@ -125,5 +154,9 @@ class MultiAgentService : Disposable {
     override fun dispose() {
         chatService.shutdown()
         store.close()
+    }
+
+    companion object {
+        private val BUILT_IN_PERSONA_IDS = listOf("general", "researcher", "coder", "critic", "orchestrator")
     }
 }

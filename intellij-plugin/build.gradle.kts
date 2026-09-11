@@ -58,3 +58,20 @@ intellijPlatform {
 tasks.test {
     useJUnitPlatform()
 }
+
+// PersonaRegistry (the forked core) normally finds bundled personas as a real filesystem
+// directory next to wherever its own class's code source resolves to - but IntelliJ's
+// PluginClassLoader doesn't populate a CodeSource at all (verified empirically: it's null at
+// runtime), and the JVM's cwd under `runIde` is the unpacked IDE distribution's own directory,
+// unrelated to this plugin or the project. Neither of PersonaRegistry's filesystem lookups
+// can ever succeed here, unlike desktop-java's Maven/jpackage layout or vscode-extension's
+// bundled-extension layout. So: bundle personas/*.json as plain classpath resources instead
+// (loaded via Class.getResourceAsStream, which - unlike CodeSource - IS reliably supported by
+// PluginClassLoader) and seed PersonaRegistry's writable user directory from them once at
+// startup - see MultiAgentService.seedBuiltInPersonas(). This also fixes buildPlugin's
+// distribution zip for free, since processResources output flows into the plugin jar either way.
+tasks.named<ProcessResources>("processResources") {
+    from(rootDir.parentFile.resolve("personas")) {
+        into("personas")
+    }
+}

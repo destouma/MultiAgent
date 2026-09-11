@@ -21,6 +21,8 @@
                                   instance="com.multiagent.intellij.ui.MultiAgentConfigurable"
                                   id="com.multiagent.intellij.ui.MultiAgentConfigurable"
                                   displayName="MultiAgent"/>
+        <statusBarWidgetFactory id="MultiAgent.StatusBar"
+                                 implementation="com.multiagent.intellij.ui.MultiAgentStatusBarWidgetFactory"/>
     </extensions>
 
     <actions>
@@ -29,6 +31,18 @@
                 text="MultiAgent: Storage Spike"
                 description="Phase-0 spike: open ConversationStore under the plugin config dir and round-trip a row.">
             <add-to-group group-id="ToolsMenu" anchor="last"/>
+        </action>
+        <action id="MultiAgent.AddSelection"
+                class="com.multiagent.intellij.ui.AddSelectionToChatAction"
+                text="MultiAgent: Add Selection to Chat"
+                description="Drop the current editor selection into the MultiAgent composer.">
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+        </action>
+        <action id="MultiAgent.ExplainSelection"
+                class="com.multiagent.intellij.ui.ExplainSelectionAction"
+                text="MultiAgent: Explain Selection"
+                description="Send the current editor selection to MultiAgent with an explain-this prompt.">
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
         </action>
     </actions>
 </idea-plugin>

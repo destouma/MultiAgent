@@ -115,6 +115,7 @@ free.
 | Directory chooser for workspace binding | the open project *is* the binding |
 | Raw API debug-log window | niche; IntelliJ ships an HTTP Client — keep at most a log file |
 | In-app persona *editor* dialog | personas matter; "edit the JSON + a Settings list" is enough for a long time |
+| Vision (paste a screenshot, `describe_image`) | pasting an image is a natural gesture in a standalone chat app, much less so in an IDE where the primary input is code/selections; not core to the plugin's value |
 
 ### Reuse strategy — decided: B (fork)
 
@@ -133,7 +134,7 @@ package-renamed, with zero build/module dependency on `desktop-java/`. See
 | **2 — Workspace-assisted chat** | Auto-bind to the open `Project`. Wire `ToolLoopRunner` + `WorkspaceService` + `GitService` + `RunCommandService`. Approval gate → `DialogWrapper`. Tool-activity rows. `VfsUtil.markDirtyAndRefresh` after writes. Checkpoint diff/revert via `DiffManager`. `run_command` output surfaced. | "add a null check and run the tests" → approval → edits visible in the editor → diff/revert → test output |
 | **3 — IDE-native integration** | Editor context-menu actions (**Add selection**, **Explain**); auto-include active file / selection as context. Conversation list + per-conversation model/server/persona pinning. Search + export MD/JSON. Status-bar widget (server + model + health). | Driven from the editor, not just the tool window; several conversations |
 | **4 — Orchestrator** | Wire `OrchestratorService` (plan → specialists → synthesize) with progress in the tool window. Coordinator picker + per-specialist models dialog. Specialists write through the same approval-gated loop (already true in `core`). | Orchestrator conversation plans, shows specialist progress, edits the project under the gate |
-| **5 — Polish / optional** | Vision (paste a screenshot, `describe_image`). Context-window usage bar. Persona list/editor in Settings. Optional raw-API log file. Marketplace prep (icon, `since/until-build`, publish). | Published to Marketplace |
+| **5 — Polish / optional** | Context-window usage bar. Persona list/editor in Settings. Optional raw-API log file. Marketplace prep (icon, `since/until-build`, publish). | Published to Marketplace |
 
 ---
 

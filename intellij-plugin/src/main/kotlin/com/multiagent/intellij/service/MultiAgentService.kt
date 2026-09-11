@@ -12,9 +12,11 @@ import com.multiagent.intellij.core.model.Conversation
 import com.multiagent.intellij.core.model.ConversationKind
 import com.multiagent.intellij.core.model.Persona
 import com.multiagent.intellij.core.persistence.ConversationStore
+import com.multiagent.intellij.core.action.ActionApprover
 import com.multiagent.intellij.core.service.ChatService
 import com.multiagent.intellij.core.service.CheckpointService
 import com.multiagent.intellij.core.service.ConfigService
+import com.multiagent.intellij.core.service.OrchestratorService
 import com.multiagent.intellij.core.service.PersonaRegistry
 import java.nio.file.Files
 import java.nio.file.Path
@@ -47,7 +49,14 @@ class MultiAgentService : Disposable {
     val personaRegistry: PersonaRegistry = PersonaRegistry(baseDir.resolve("personas"))
     val store: ConversationStore = ConversationStore(baseDir.resolve("chats.db"))
     val chatService: ChatService = ChatService(store)
+    val orchestratorService: OrchestratorService = OrchestratorService(store, personaRegistry)
     val checkpointService: CheckpointService = CheckpointService(store)
+
+    /** Installs the same approval gate on both send paths - whichever one a given send() call actually uses. */
+    fun setActionApprover(approver: ActionApprover) {
+        chatService.setActionApprover(approver)
+        orchestratorService.setActionApprover(approver)
+    }
 
     init {
         seedBuiltInPersonas()
@@ -112,8 +121,8 @@ class MultiAgentService : Disposable {
         activeConversationId[projectKey(project)] = conversation.id
     }
 
-    fun newConversationForProject(project: Project): Conversation {
-        val conversation = store.createConversation(null, ConversationKind.CHAT, project.basePath)
+    fun newConversationForProject(project: Project, kind: ConversationKind = ConversationKind.CHAT): Conversation {
+        val conversation = store.createConversation(null, kind, project.basePath)
         setActiveConversation(project, conversation)
         return conversation
     }
@@ -153,6 +162,7 @@ class MultiAgentService : Disposable {
 
     override fun dispose() {
         chatService.shutdown()
+        orchestratorService.shutdown()
         store.close()
     }
 

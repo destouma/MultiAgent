@@ -54,6 +54,14 @@ indicator), `MultiAgentConfigurable` (Settings → Tools → MultiAgent). Verifi
 sandbox: connects, streams a real response, and conversation history survives an IDE
 restart.
 
-Next: Phase 2 (workspace-assisted chat — `ToolLoopRunner`, `WorkspaceService`,
-`GitService`, `RunCommandService`, approval dialogs) — see
-[`../TODO.md`](../TODO.md#jetbrains-plugin).
+**Phase 2** — done. Each project's tool window auto-binds its conversation to
+`project.basePath` (no folder picker), routing it through `ToolLoopRunner`'s workspace/git/
+`run_command` tools. `DialogActionApprover` (a `DialogWrapper`) gates every mutating tool
+call. Tool calls render as live-updating rows in the chat; `write_file`/`delete_file` rows
+get **View diff** (`DiffManager`) and **Revert** (`CheckpointService`) buttons. Successful
+writes/deletes/renames and reverts refresh the VFS so the editor and Project view update
+without a manual refresh. Verified in a real sandbox: approval dialog, file edits visible
+live in the editor, diff, revert, and a real `run_command` subprocess run all confirmed.
+
+Next: Phase 3 (IDE-native integration — editor context-menu actions, conversation list,
+status-bar widget) — see [`../TODO.md`](../TODO.md#jetbrains-plugin).

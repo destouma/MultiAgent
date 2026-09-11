@@ -3,6 +3,7 @@ package com.multiagent.intellij.ui
 import com.intellij.diff.DiffContentFactory
 import com.intellij.diff.DiffManager
 import com.intellij.diff.requests.SimpleDiffRequest
+import com.intellij.icons.AllIcons
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.options.ShowSettingsUtil
 import com.intellij.openapi.project.Project
@@ -13,6 +14,7 @@ import com.intellij.openapi.wm.WindowManager
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollBar
 import com.intellij.ui.components.JBScrollPane
+import com.intellij.ui.components.JBTabbedPane
 import com.intellij.ui.components.JBTextArea
 import com.intellij.util.ui.JBUI
 import com.multiagent.intellij.core.llm.ErrorCode
@@ -30,6 +32,7 @@ import java.awt.Dimension
 import java.awt.FlowLayout
 import java.awt.Font
 import java.awt.event.KeyEvent
+import javax.swing.Box
 import javax.swing.BorderFactory
 import javax.swing.BoxLayout
 import javax.swing.JButton
@@ -38,6 +41,7 @@ import javax.swing.JComponent
 import javax.swing.JMenuItem
 import javax.swing.JPanel
 import javax.swing.JPopupMenu
+import javax.swing.JTabbedPane
 import javax.swing.SwingUtilities
 
 /**
@@ -66,7 +70,8 @@ class MultiAgentChatPanel(private val project: Project) : JPanel(BorderLayout())
         emptyText.text = "Message... (Enter to send, Shift+Enter for newline)"
     }
     private val sendButton = JButton("Send")
-    private val conversationCombo = JComboBox<Conversation>()
+    private val chatTabs = JBTabbedPane().apply { tabLayoutPolicy = JTabbedPane.SCROLL_TAB_LAYOUT }
+    private var tabConversations: List<Conversation> = emptyList()
     private val personaLabel = JBLabel("Persona:")
     private val personaCombo = JComboBox<Persona>()
     private val specialistsButton = JButton("Specialists...").apply {
@@ -86,46 +91,58 @@ class MultiAgentChatPanel(private val project: Project) : JPanel(BorderLayout())
         add(scrollPane, BorderLayout.CENTER)
         add(buildComposer(), BorderLayout.SOUTH)
 
-        refreshConversationCombo()
+        refreshChatTabs()
         refreshPersonaCombo()
         loadHistory()
         refreshHealthAndModels()
     }
 
     private fun buildTopBar(): JComponent {
-        // One fixed-height FlowLayout row per concern rather than letting any row wrap:
-        // FlowLayout's preferred-height calculation assumes a single line, so in a narrow
-        // docked tool window a wrapped second line gets clipped instead of growing the bar.
+        // One fixed-height row per concern rather than letting any row wrap: a wrapped second
+        // line gets clipped in a narrow docked tool window instead of growing the bar (see
+        // chatTabs' SCROLL_TAB_LAYOUT and the BoxLayout.X_AXIS row below for the same reason -
+        // no FlowLayout wrap risk on the two rows most likely to overflow).
         val top = JPanel().apply { layout = BoxLayout(this, BoxLayout.Y_AXIS) }
 
-        val row0 = JPanel(FlowLayout(FlowLayout.LEFT, 6, 2))
-        row0.add(JBLabel("Chat:"))
-        conversationCombo.preferredSize = Dimension(150, conversationCombo.preferredSize.height)
-        conversationCombo.addActionListener {
-            if (updatingCombos) return@addActionListener
-            (conversationCombo.selectedItem as? Conversation)?.let { if (it.id != conversation.id) switchTo(it) }
+        val row0 = JPanel(BorderLayout(6, 0))
+        chatTabs.addChangeListener {
+            if (updatingCombos) return@addChangeListener
+            val conv = tabConversations.getOrNull(chatTabs.selectedIndex) ?: return@addChangeListener
+            if (conv.id != conversation.id) switchTo(conv)
         }
-        row0.add(conversationCombo)
-        row0.add(JButton("+").apply {
+        row0.add(chatTabs, BorderLayout.CENTER)
+        val chatButtons = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0))
+        chatButtons.add(JButton("+").apply {
             toolTipText = "New chat"
             addActionListener { event -> showNewChatMenu(event.source as JComponent) }
         })
-        row0.add(JButton("✕").apply {
+        chatButtons.add(JButton("✕").apply {
             toolTipText = "Delete this chat"
             addActionListener { deleteCurrentConversation() }
         })
+        row0.add(chatButtons, BorderLayout.EAST)
         row0.maximumSize = Dimension(Int.MAX_VALUE, row0.preferredSize.height)
         top.add(row0)
 
-        val row1 = JPanel(FlowLayout(FlowLayout.LEFT, 6, 2))
+        val row1 = JPanel().apply { layout = BoxLayout(this, BoxLayout.X_AXIS) }
         row1.add(JBLabel("Model:"))
-        modelCombo.preferredSize = Dimension(150, modelCombo.preferredSize.height)
+        row1.add(Box.createHorizontalStrut(6))
+        modelCombo.preferredSize = Dimension(240, modelCombo.preferredSize.height)
+        modelCombo.maximumSize = modelCombo.preferredSize
         row1.add(modelCombo)
-        val refresh = JButton("↻").apply {
+        row1.add(Box.createHorizontalStrut(4))
+        row1.add(JButton("↻").apply {
             toolTipText = "Refresh models / health"
             addActionListener { refreshHealthAndModels() }
-        }
-        row1.add(refresh)
+        })
+        row1.add(Box.createHorizontalStrut(12))
+        row1.add(healthLabel)
+        row1.add(Box.createHorizontalGlue())
+        row1.add(JButton().apply {
+            icon = AllIcons.General.Settings
+            toolTipText = "MultiAgent settings"
+            addActionListener { ShowSettingsUtil.getInstance().showSettingsDialog(project, "MultiAgent") }
+        })
         row1.maximumSize = Dimension(Int.MAX_VALUE, row1.preferredSize.height)
         top.add(row1)
 
@@ -144,42 +161,31 @@ class MultiAgentChatPanel(private val project: Project) : JPanel(BorderLayout())
         row2.maximumSize = Dimension(Int.MAX_VALUE, row2.preferredSize.height)
         top.add(row2)
 
-        val row3 = JPanel(FlowLayout(FlowLayout.LEFT, 6, 2))
-        row3.add(healthLabel)
-        val settings = JButton("Settings...").apply {
-            addActionListener {
-                ShowSettingsUtil.getInstance().showSettingsDialog(project, "MultiAgent")
-            }
-        }
-        row3.add(settings)
-        row3.maximumSize = Dimension(Int.MAX_VALUE, row3.preferredSize.height)
-        top.add(row3)
-
         val workspacePath = conversation.workspacePath
         if (!workspacePath.isNullOrBlank()) {
-            val row4 = JPanel(FlowLayout(FlowLayout.LEFT, 6, 0))
-            row4.add(JBLabel("Workspace: $workspacePath").apply {
+            val row3 = JPanel(FlowLayout(FlowLayout.LEFT, 6, 0))
+            row3.add(JBLabel("Workspace: $workspacePath").apply {
                 foreground = Color.GRAY
                 font = font.deriveFont(font.size2D - 1f)
                 toolTipText = workspacePath
             })
-            row4.maximumSize = Dimension(Int.MAX_VALUE, row4.preferredSize.height)
-            top.add(row4)
+            row3.maximumSize = Dimension(Int.MAX_VALUE, row3.preferredSize.height)
+            top.add(row3)
         }
 
         return top
     }
 
-    private fun refreshConversationCombo() {
+    /** Tabs are display-only selectors (no per-tab content) ordered by creation, not `updatedAt` - otherwise every sent message would reorder the strip since `addMessage` bumps `updatedAt`. */
+    private fun refreshChatTabs() {
         updatingCombos = true
         try {
-            conversationCombo.removeAllItems()
-            val items = service.conversationsForProject(project)
-            items.forEach { conversationCombo.addItem(it) }
-            // Select the actual list item (by id), not a separately-fetched Conversation instance:
-            // Conversation has no equals()/hashCode(), so JComboBox's popup-highlight/indexOf lookup
-            // needs object identity with one of the items just added, not just a matching title.
-            conversationCombo.selectedItem = items.firstOrNull { it.id == conversation.id } ?: items.firstOrNull()
+            chatTabs.removeAll()
+            val items = service.conversationsForProject(project).sortedBy { it.createdAt }
+            tabConversations = items
+            items.forEach { chatTabs.addTab(it.title ?: "Untitled", JPanel()) }
+            val idx = items.indexOfFirst { it.id == conversation.id }
+            if (idx >= 0) chatTabs.selectedIndex = idx
         } finally {
             updatingCombos = false
         }
@@ -221,7 +227,7 @@ class MultiAgentChatPanel(private val project: Project) : JPanel(BorderLayout())
 
     private fun createAndSwitch(kind: ConversationKind) {
         val created = service.newConversationForProject(project, kind)
-        refreshConversationCombo()
+        refreshChatTabs()
         switchTo(created)
     }
 
@@ -245,7 +251,7 @@ class MultiAgentChatPanel(private val project: Project) : JPanel(BorderLayout())
         messagesPanel.removeAll()
         messagesPanel.revalidate()
         messagesPanel.repaint()
-        refreshConversationCombo()
+        refreshChatTabs()
         refreshPersonaCombo()
         if (!newConversation.model.isNullOrBlank()) {
             modelCombo.editor.item = newConversation.model
@@ -487,7 +493,7 @@ class MultiAgentChatPanel(private val project: Project) : JPanel(BorderLayout())
         val model = (modelCombo.editor.item as? String)?.trim().orEmpty()
         if (model.isNotEmpty() && model != conversation.model) {
             conversation = service.store.setConversationModel(conversation.id, model)
-            refreshConversationCombo()
+            refreshChatTabs()
         }
         val client = service.client()
 

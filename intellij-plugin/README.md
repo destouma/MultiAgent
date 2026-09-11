@@ -105,5 +105,19 @@ writes/deletes/renames and reverts refresh the VFS so the editor and Project vie
 without a manual refresh. Verified in a real sandbox: approval dialog, file edits visible
 live in the editor, diff, revert, and a real `run_command` subprocess run all confirmed.
 
-Next: Phase 3 (IDE-native integration — editor context-menu actions, conversation list,
-status-bar widget) — see [`../TODO.md`](../TODO.md#jetbrains-plugin).
+**Phase 3** — in progress. Done: a "Chat:" picker (+ New/Delete) lets a project hold several
+conversations, switching in place; a "Persona:" combo persists its choice onto the
+conversation (`ConversationStore.setConversationPersona`), and the model combo's value is
+now persisted the same way; **MultiAgent: Add Selection to Chat** / **MultiAgent: Explain
+Selection** editor context-menu actions (enabled only with a selection) drive the tool
+window from the editor; a status-bar widget shows the last health/model check and jumps to
+the tool window on click. Also fixed along the way: the Persona combo only ever showed
+"General" - `PersonaRegistry`'s bundled-personas lookup needs a real filesystem directory
+next to its own class's code source, which doesn't exist under `PluginClassLoader` (its
+`CodeSource` is null, verified empirically) - fixed by bundling the personas as classpath
+resources and seeding `PersonaRegistry`'s writable directory from them on first run. All of
+the above verified in a real sandbox. **Not done yet:** conversation search + Markdown/JSON
+export, auto-including the active file/selection as context without an explicit action.
+
+Next: finish Phase 3 (search + export), then Phase 4 (orchestrator) — see
+[`../TODO.md`](../TODO.md#jetbrains-plugin).

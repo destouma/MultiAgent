@@ -64,23 +64,35 @@ class MultiAgentChatPanel(private val project: Project?) : JPanel(BorderLayout()
     }
 
     private fun buildTopBar(): JComponent {
-        val bar = JPanel(FlowLayout(FlowLayout.LEFT, 6, 2))
-        bar.add(JBLabel("Model:"))
-        modelCombo.preferredSize = Dimension(220, modelCombo.preferredSize.height)
-        bar.add(modelCombo)
+        // Two fixed-height rows rather than one wrapping FlowLayout row: FlowLayout's
+        // preferred-height calculation assumes a single line, so in a narrow docked tool
+        // window a wrapped second line gets clipped instead of growing the bar.
+        val top = JPanel().apply { layout = BoxLayout(this, BoxLayout.Y_AXIS) }
+
+        val row1 = JPanel(FlowLayout(FlowLayout.LEFT, 6, 2))
+        row1.add(JBLabel("Model:"))
+        modelCombo.preferredSize = Dimension(180, modelCombo.preferredSize.height)
+        row1.add(modelCombo)
         val refresh = JButton("↻").apply {
             toolTipText = "Refresh models / health"
             addActionListener { refreshHealthAndModels() }
         }
-        bar.add(refresh)
-        bar.add(healthLabel)
+        row1.add(refresh)
+        row1.maximumSize = Dimension(Int.MAX_VALUE, row1.preferredSize.height)
+        top.add(row1)
+
+        val row2 = JPanel(FlowLayout(FlowLayout.LEFT, 6, 2))
+        row2.add(healthLabel)
         val settings = JButton("Settings...").apply {
             addActionListener {
                 ShowSettingsUtil.getInstance().showSettingsDialog(project, "MultiAgent")
             }
         }
-        bar.add(settings)
-        return bar
+        row2.add(settings)
+        row2.maximumSize = Dimension(Int.MAX_VALUE, row2.preferredSize.height)
+        top.add(row2)
+
+        return top
     }
 
     private fun buildComposer(): JComponent {

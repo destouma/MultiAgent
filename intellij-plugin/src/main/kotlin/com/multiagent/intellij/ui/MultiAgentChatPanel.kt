@@ -1,14 +1,21 @@
 package com.multiagent.intellij.ui
 
+import com.intellij.diff.DiffContentFactory
+import com.intellij.diff.DiffManager
+import com.intellij.diff.requests.SimpleDiffRequest
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.options.ShowSettingsUtil
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.ui.Messages
+import com.intellij.openapi.vfs.LocalFileSystem
+import com.intellij.openapi.vfs.VfsUtil
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollBar
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextArea
 import com.intellij.util.ui.JBUI
 import com.multiagent.intellij.core.model.ChatMessage
+import com.multiagent.intellij.core.model.Conversation
 import com.multiagent.intellij.core.model.MessageRole
 import com.multiagent.intellij.core.service.ChatService
 import com.multiagent.intellij.service.MultiAgentService
@@ -16,6 +23,7 @@ import java.awt.BorderLayout
 import java.awt.Color
 import java.awt.Dimension
 import java.awt.FlowLayout
+import java.awt.Font
 import java.awt.event.KeyEvent
 import javax.swing.BorderFactory
 import javax.swing.BoxLayout
@@ -23,18 +31,20 @@ import javax.swing.JButton
 import javax.swing.JComboBox
 import javax.swing.JComponent
 import javax.swing.JPanel
-import javax.swing.KeyStroke
 import javax.swing.SwingUtilities
 
 /**
- * Phase 1: a single streaming conversation - message list + composer, no workspace tools yet
- * (Phase 2). Talks to [MultiAgentService] (the forked `core`) and marshals every
+ * A single streaming conversation - message list + composer - auto-bound to the open
+ * [Project]'s folder (Phase 2: [Conversation.getWorkspacePath] = `project.basePath`, which
+ * makes `ChatService.send` route through `ToolLoopRunner` and its workspace/git/run_command
+ * tools). Talks to [MultiAgentService] (the forked `core`) and marshals every
  * [ChatService.Listener] callback onto the EDT itself, since `ChatService.send` calls back
  * from its own background executor.
  */
-class MultiAgentChatPanel(private val project: Project?) : JPanel(BorderLayout()) {
+class MultiAgentChatPanel(private val project: Project) : JPanel(BorderLayout()) {
 
     private val service = ApplicationManager.getApplication().getService(MultiAgentService::class.java)
+    private val conversation: Conversation = service.conversationForProject(project)
 
     private val messagesPanel = JPanel().apply { layout = BoxLayout(this, BoxLayout.Y_AXIS) }
     private val scrollPane = JBScrollPane(messagesPanel).apply {
@@ -52,6 +62,7 @@ class MultiAgentChatPanel(private val project: Project?) : JPanel(BorderLayout()
     private val statusLabel = JBLabel(" ")
 
     private var streamingArea: JBTextArea? = null
+    private var currentOpRow: ToolOpRow? = null
 
     init {
         border = JBUI.Borders.empty(4)
@@ -92,6 +103,18 @@ class MultiAgentChatPanel(private val project: Project?) : JPanel(BorderLayout()
         row2.maximumSize = Dimension(Int.MAX_VALUE, row2.preferredSize.height)
         top.add(row2)
 
+        val workspacePath = conversation.workspacePath
+        if (!workspacePath.isNullOrBlank()) {
+            val row3 = JPanel(FlowLayout(FlowLayout.LEFT, 6, 0))
+            row3.add(JBLabel("Workspace: $workspacePath").apply {
+                foreground = Color.GRAY
+                font = font.deriveFont(font.size2D - 1f)
+                toolTipText = workspacePath
+            })
+            row3.maximumSize = Dimension(Int.MAX_VALUE, row3.preferredSize.height)
+            top.add(row3)
+        }
+
         return top
     }
 
@@ -120,7 +143,7 @@ class MultiAgentChatPanel(private val project: Project?) : JPanel(BorderLayout()
     }
 
     private fun loadHistory() {
-        val messages: List<ChatMessage> = service.store.getMessages(service.conversation.id)
+        val messages: List<ChatMessage> = service.store.getMessages(conversation.id)
         for (m in messages) {
             addBubble(m.role, m.content)
         }
@@ -151,6 +174,118 @@ class MultiAgentChatPanel(private val project: Project?) : JPanel(BorderLayout()
         return area
     }
 
+    private class ToolOpRow(val panel: JPanel, val label: JBLabel, val buttons: JPanel)
+
+    /** One collapsible-free row per tool call: "running" adds it, "ok"/"error" updates it in place. */
+    private fun addToolOpRow(): ToolOpRow {
+        val label = JBLabel().apply {
+            foreground = Color.GRAY
+            font = font.deriveFont(font.size2D - 1f)
+        }
+        val buttons = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0))
+        val row = JPanel(BorderLayout()).apply {
+            border = JBUI.Borders.empty(1, 12)
+            add(label, BorderLayout.CENTER)
+            add(buttons, BorderLayout.EAST)
+        }
+        messagesPanel.add(row)
+        messagesPanel.revalidate()
+        messagesPanel.repaint()
+        return ToolOpRow(row, label, buttons)
+    }
+
+    private fun onWorkspaceOp(op: String, path: String, status: String, detail: String?, checkpointId: String?) {
+        val row = if (status == "running") addToolOpRow().also { currentOpRow = it }
+                   else currentOpRow ?: addToolOpRow()
+
+        val icon = when (status) {
+            "running" -> "⏳"
+            "ok" -> "✅"
+            "error" -> "❌"
+            else -> "•"
+        }
+        val text = buildString {
+            append(icon).append(' ').append(op)
+            if (path.isNotBlank()) append(' ').append(path)
+            if (status == "error" && !detail.isNullOrBlank()) append(": ").append(detail)
+        }
+        row.label.text = text
+        row.label.toolTipText = detail
+
+        row.buttons.removeAll()
+        if (checkpointId != null) {
+            row.buttons.add(smallButton("View diff") { showCheckpointDiff(checkpointId, path) })
+            row.buttons.add(smallButton("Revert") { revertCheckpoint(checkpointId, row) })
+        }
+        row.buttons.revalidate()
+        row.panel.revalidate()
+        row.panel.repaint()
+
+        if (status != "running") {
+            currentOpRow = null
+            if (status == "ok" && op in FILE_MUTATING_OPS) {
+                refreshWorkspace()
+            }
+        }
+        scrollToBottom()
+    }
+
+    private fun smallButton(text: String, action: () -> Unit): JButton = JButton(text).apply {
+        font = font.deriveFont(font.size2D - 1f)
+        margin = JBUI.insets(0, 6)
+        addActionListener { action() }
+    }
+
+    private fun showCheckpointDiff(checkpointId: String, path: String) {
+        ApplicationManager.getApplication().executeOnPooledThread {
+            val result = runCatching { service.checkpointService.diff(checkpointId) }
+            onEdt {
+                result.onSuccess { d ->
+                    val factory = DiffContentFactory.getInstance()
+                    val before = d.before()?.let { factory.create(project, it) } ?: factory.createEmpty()
+                    val after = d.after()?.let { factory.create(project, it) } ?: factory.createEmpty()
+                    val request = SimpleDiffRequest("MultiAgent: ${d.path()}", before, after, "Before", "After")
+                    DiffManager.getInstance().showDiff(project, request)
+                }.onFailure { e ->
+                    Messages.showErrorDialog(project, e.message ?: e.toString(), "Diff Failed")
+                }
+            }
+        }
+    }
+
+    private fun revertCheckpoint(checkpointId: String, row: ToolOpRow) {
+        val confirmed = Messages.showYesNoDialog(
+            project, "Revert this change on disk?", "MultiAgent", "Revert", "Cancel", Messages.getWarningIcon()
+        ) == Messages.YES
+        if (!confirmed) return
+
+        ApplicationManager.getApplication().executeOnPooledThread {
+            val result = runCatching { service.checkpointService.revert(checkpointId) }
+            onEdt {
+                result.onSuccess {
+                    refreshWorkspace()
+                    row.buttons.removeAll()
+                    row.buttons.add(JBLabel("reverted").apply {
+                        foreground = Color.GRAY
+                        font = font.deriveFont(font.size2D - 1f)
+                    })
+                    row.buttons.revalidate()
+                    row.panel.revalidate()
+                    row.panel.repaint()
+                }.onFailure { e ->
+                    Messages.showErrorDialog(project, e.message ?: e.toString(), "Revert Failed")
+                }
+            }
+        }
+    }
+
+    /** So the editor/Project view pick up file changes a tool call (or a revert) made on disk. */
+    private fun refreshWorkspace() {
+        val path = conversation.workspacePath ?: return
+        val file = LocalFileSystem.getInstance().refreshAndFindFileByPath(path) ?: return
+        VfsUtil.markDirtyAndRefresh(false, true, true, file)
+    }
+
     private fun scrollToBottom() {
         SwingUtilities.invokeLater {
             val bar: JBScrollBar = scrollPane.verticalScrollBar as JBScrollBar
@@ -173,8 +308,13 @@ class MultiAgentChatPanel(private val project: Project?) : JPanel(BorderLayout()
         val client = service.client()
         val persona = service.persona()
 
+        // Re-bound on every send (rather than once at panel creation) so the most recently
+        // active project's tool window is the one whose dialogs the approval gate targets,
+        // since ChatService's approver is a single application-wide field.
+        service.chatService.setActionApprover(DialogActionApprover(project))
+
         service.chatService.send(
-            client, service.conversation, text, persona,
+            client, conversation, text, persona,
             model, null, service.settings().maxHistory, 0, null,
             object : ChatService.Listener {
                 override fun onToken(conversationId: String, messageId: String, delta: String) {
@@ -200,6 +340,13 @@ class MultiAgentChatPanel(private val project: Project?) : JPanel(BorderLayout()
 
                 override fun onModelStatus(conversationId: String, status: String) {
                     onEdt { statusLabel.text = status }
+                }
+
+                override fun onWorkspaceOp(
+                    conversationId: String, messageId: String, op: String, path: String,
+                    status: String, detail: String?, checkpointId: String?
+                ) {
+                    onEdt { this@MultiAgentChatPanel.onWorkspaceOp(op, path, status, detail, checkpointId) }
                 }
             }
         )
@@ -229,5 +376,9 @@ class MultiAgentChatPanel(private val project: Project?) : JPanel(BorderLayout()
 
     private fun onEdt(action: () -> Unit) {
         ApplicationManager.getApplication().invokeLater(action)
+    }
+
+    companion object {
+        private val FILE_MUTATING_OPS = setOf("write_file", "delete_file", "rename_file")
     }
 }

@@ -36,24 +36,24 @@ Coder, Critic, Orchestrator), read by every client at build time.
 
 | Feature | desktop-java | VS Code | JetBrains |
 | --- | :---: | :---: | :---: |
-| Streaming chat | ✅ | ✅ | 📋 |
-| Multiple named servers (Lemonade / OpenAI-compatible / Ollama) | ✅ | ✅ | 📋 |
-| Per-conversation server + model pin | ✅ | — | 📋 |
-| Context-window fitting + token-usage estimate | ✅ | 🚧 `maxHistory` only | 📋 |
-| Personas (switchable system prompts) | ✅ pinned per conversation | ✅ app-wide | 📋 |
-| In-app persona editor | ✅ | — | 📋 |
-| Multi-conversation history | ✅ create / switch / delete, folders, projects | — one per workspace | 📋 |
+| Streaming chat | ✅ | ✅ | ✅ |
+| Multiple named servers (Lemonade / OpenAI-compatible / Ollama) | ✅ | ✅ | 🚧 one active connection, no saved profiles |
+| Per-conversation server + model pin | ✅ | — | — |
+| Context-window fitting + token-usage estimate | ✅ | 🚧 `maxHistory` only | — |
+| Personas (switchable system prompts) | ✅ pinned per conversation | ✅ app-wide | 🚧 first persona only, not switchable yet |
+| In-app persona editor | ✅ | — | — |
+| Multi-conversation history | ✅ create / switch / delete, folders, projects | — one per workspace | 🚧 one per project |
 | Conversation search + export (Markdown / JSON) | ✅ | — | 📋 |
 | Message edit / regenerate | ✅ | — | 📋 |
-| Workspace read tools (`list_dir` / `read_file` / `search_file`) | ✅ | 🚧 list / read | 📋 |
-| Workspace write tools (`write_file` / `delete_file` / `rename_file`) | ✅ approval-gated | 🚧 write / delete | 📋 |
-| Git tools (status / diff / log / show / branch / add / commit) | ✅ approval-gated | — | 📋 |
-| `run_command` — sandboxed build / test | ✅ approval-gated (Phase 1) | — | 📋 |
-| AI-write checkpoints: diff + revert | ✅ | — | 📋 |
+| Workspace read tools (`list_dir` / `read_file` / `search_file`) | ✅ | 🚧 list / read | ✅ |
+| Workspace write tools (`write_file` / `delete_file` / `rename_file`) | ✅ approval-gated | 🚧 write / delete | ✅ approval-gated |
+| Git tools (status / diff / log / show / branch / add / commit) | ✅ approval-gated | — | ✅ approval-gated |
+| `run_command` — sandboxed build / test | ✅ approval-gated (Phase 1) | — | ✅ approval-gated |
+| AI-write checkpoints: diff + revert | ✅ | — | ✅ native `DiffManager` diff |
 | Orchestrator (plan → specialists → synthesize) | ✅ specialists write directly; model per specialist | — | 📋 |
-| Vision — image attach / drag-drop / paste | ✅ inline + transcribe modes; orchestrator vision step | — | 📋 |
-| `describe_image` workspace tool | ✅ | — | 📋 |
-| Image generation (`generate_image`) | — schema stub, not wired | — | 📋 |
+| Vision — image attach / drag-drop / paste | ✅ inline + transcribe modes; orchestrator vision step | — | — not planned (see intellij-plugin section) |
+| `describe_image` workspace tool | ✅ | — | — not planned |
+| Image generation (`generate_image`) | — schema stub, not wired | — filtered out | — schema stub, not wired |
 | Text-file attachments | ✅ | — | 📋 |
 | Side-by-side split view | ✅ | — | — IDE splits editors |
 | Themes (Light / Dark / Terminal) | ✅ | n/a host theme | n/a host theme |
@@ -109,23 +109,24 @@ Package with `npm run package` → `.vsix` (no marketplace account needed).
 
 ## intellij-plugin
 
-**Phase 0 — scaffold.** Gradle + IntelliJ Platform Gradle Plugin 2.x skeleton;
-the UI-free `core/` (LLM clients, workspace + git tools, `run_command`,
-orchestrator, persistence, personas) forked from `desktop-java/` and stripped of
-JavaFX — 58 core files + 21 tests; an empty **MultiAgent** tool window; a
-storage-spike action that proves `sqlite-jdbc`'s native library loads under the
-plugin classloader. Reuse strategy is **fork** (Strategy B): the plugin does not
-depend on `desktop-java/`, so a core bug fix is a manual re-apply in each.
+**Phases 0–2 done.** The UI-free `core/` (LLM clients, workspace + git tools,
+`run_command`, orchestrator, persistence, personas) forked from `desktop-java/`
+and stripped of JavaFX — 58 core files + 21 tests, all passing under Gradle.
+Each project's **MultiAgent** tool window auto-binds its conversation to that
+project's folder and streams chat through the same workspace/git/`run_command`
+tools as `desktop-java/`, gated by a `DialogWrapper` approval dialog, with
+checkpoint diff/revert via the IDE's native `DiffManager` and VFS refresh so
+edits show up in the editor immediately. Reuse strategy is **fork** (Strategy
+B): the plugin does not depend on `desktop-java/`, so a core bug fix is a
+manual re-apply in each.
 
 [intellij-plugin/README.md](./intellij-plugin/README.md).
 
-**Roadmap** ([`TODO.md`](./TODO.md#jetbrains-plugin) — phases 1–5):
+**Roadmap** ([`TODO.md`](./TODO.md#jetbrains-plugin) — phases 3–5):
 
-- **1 — Minimal chat:** streaming chat via the reused `ChatService`; server / model / persona config as an IDE `Configurable`; history via the reused `ConversationStore`; health indicator.
-- **2 — Workspace chat:** wire `ToolLoopRunner` + `WorkspaceService` + `GitService` + `RunCommandService`; approval gate → `DialogWrapper`; checkpoint diff / revert via `DiffManager`; auto-bind to the open project.
 - **3 — IDE-native:** editor context-menu actions (Add selection / Explain); auto-include the active file / selection; conversation list with per-conversation model / server / persona pinning; search + export; status-bar widget.
 - **4 — Orchestrator:** wire `OrchestratorService` with progress in the tool window; coordinator + per-specialist model pickers.
-- **5 — Polish:** vision (paste a screenshot); context-window usage bar; persona editor in Settings; Marketplace prep.
+- **5 — Polish:** context-window usage bar; persona editor in Settings; Marketplace prep. (Vision was dropped from the plan — see `TODO.md`'s "not worth carrying over".)
 
 ## Built-in personas
 
@@ -149,6 +150,39 @@ When workspace tools, `run_command`, or the orchestrator flow are active, each
 client appends its own instructions (the directory tree, the tool list, the
 approval rules, the plan/specialist/synthesize framing) *after* the persona's
 prompt — the JSON above is only the persona half.
+
+## Agent tools
+
+One command surface — same names, parameters, and approval rules — shared by all
+three clients, so a persona's instructions and a user's request behave the same
+regardless of which one answers. Each client currently implements a different
+subset (see the Feature status table above); `vscode-extension` and
+`intellij-plugin` are catching up to `desktop-java`'s full set, not diverging
+from it.
+
+| Tool | Approval? | Description |
+| --- | --- | --- |
+| `list_dir(path)` | no | List files and directories under a relative path (`"."` = root) |
+| `read_file(path, offset?, limit?)` | no | Read a UTF-8 text file; `offset`/`limit` read only a line range |
+| `search_file(path, pattern, regex?, ignore_case?, context?, max_matches?)` | no | Grep one file for matching lines with line numbers — use before `read_file` on anything large |
+| `write_file(path, content)` | **yes** | Create or overwrite a UTF-8 text file; creates parent folders as needed |
+| `delete_file(path)` | **yes** | Delete a single file (not directories) |
+| `rename_file(path, newPath)` | **yes** | Rename/move a file; fails if the destination already exists |
+| `git_status()` | no | Working-tree status: staged / unstaged / untracked |
+| `git_diff(patch?, staged?, commit?, path?)` | no | Diffstat by default; `patch=true` for full hunks |
+| `git_log(count?, path?)` | no | Recent commits, newest first |
+| `git_show(ref?, patch?)` | no | One commit's metadata (+ patch if requested) |
+| `git_branch()` | no | Local + remote branches, marks the current one |
+| `git_add(path)` | **yes** | Stage a path; `"."` stages everything |
+| `git_commit(message, all?)` | **yes** | Record a commit; `all=true` stages every tracked modified file first |
+| `run_command(command, args?, cwd?, timeout_seconds?)` | **yes** | Run one build/test/lint/run command — argv-only, no shell/pipes/redirects/`cd`; refuses a denylist of shells and destructive/privileged/network executables; timeout- and output-capped |
+| `describe_image(path, question)` | no | Ask the vision model about a workspace image |
+| `generate_image(prompt, path, size?)` | — | In `desktop-java`'s and `intellij-plugin`'s tool schema (`vscode-extension` filters it out); not wired to an actual implementation in any client yet — needs an `ImageService` |
+
+`write_file`/`delete_file` calls capture a checkpoint (diff + one-shot revert) wherever
+that's implemented. Every other mutating tool — `write_file`, `delete_file`,
+`rename_file`, `git_add`, `git_commit`, `run_command` — is gated behind the user's
+approval before it runs.
 
 ## Requirements
 

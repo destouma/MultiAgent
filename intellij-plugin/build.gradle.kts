@@ -58,3 +58,27 @@ intellijPlatform {
 tasks.test {
     useJUnitPlatform()
 }
+
+// PersonaRegistry (the forked core, unchanged from desktop-java) looks for a real
+// `personas/` directory as a filesystem sibling of wherever its own class's code source
+// resolves to - for this plugin that's `<sandbox>/plugins/multiagent-intellij/lib/`, next to
+// its own jar, once loaded through the IntelliJ Platform's PluginClassLoader. desktop-java's
+// Maven build and vscode-extension's esbuild both solve the exact same problem the same way
+// (copy the repo-root personas/ into their own build output) - this is Gradle's version of
+// that, for `runIde`'s sandbox specifically. buildPlugin's distribution zip needs the
+// equivalent before a real release (tracked as a Phase 5 "Marketplace prep" item).
+val personasSourceDir = rootDir.parentFile.resolve("personas")
+tasks.named<org.jetbrains.intellij.platform.gradle.tasks.PrepareSandboxTask>("prepareSandbox") {
+    // pluginDirectory is only known once this task itself is configuring its copy spec, so a
+    // separate Copy task wired via a lazy flatMap Provider hits "before task has completed"
+    // during configuration-cache serialization. A doLast{} closure is the simple fix, at the
+    // cost of opting this one task out of the configuration cache.
+    notCompatibleWithConfigurationCache("copies repo-root personas/ into the sandbox next to this plugin's jar")
+    doLast {
+        if (personasSourceDir.isDirectory) {
+            val dest = pluginDirectory.get().asFile.resolve("lib/personas")
+            dest.mkdirs()
+            personasSourceDir.listFiles { f -> f.extension == "json" }?.forEach { it.copyTo(dest.resolve(it.name), overwrite = true) }
+        }
+    }
+}

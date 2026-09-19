@@ -60,6 +60,18 @@ import javax.swing.SwingUtilities
  */
 class MultiAgentChatPanel(private val project: Project) : JPanel(BorderLayout()) {
 
+    /**
+     * A plain [JPanel]'s `getMaximumSize()` is unbounded regardless of content (Swing's
+     * default, since [BorderLayout] reports [Int.MAX_VALUE] as its `maximumLayoutSize`) -
+     * inside [messagesPanel]'s `BoxLayout.Y_AXIS`, that meant the *first* message row
+     * absorbed all the tool window's leftover vertical space instead of the rows stacking
+     * tightly, leaving a large blank gap under a short message. Every row added to
+     * `messagesPanel` (bubbles, status lines, tool-op rows) uses this instead.
+     */
+    private class TightRowPanel(layout: java.awt.LayoutManager) : JPanel(layout) {
+        override fun getMaximumSize(): Dimension = Dimension(Int.MAX_VALUE, preferredSize.height)
+    }
+
     private val service = ApplicationManager.getApplication().getService(MultiAgentService::class.java)
     private var conversation: Conversation = service.activeConversationForProject(project)
 
@@ -118,24 +130,15 @@ class MultiAgentChatPanel(private val project: Project) : JPanel(BorderLayout())
             if (conv.id != conversation.id) switchTo(conv)
         }
         row0.add(chatTabs, BorderLayout.CENTER)
-        val chatButtons = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0))
-        chatButtons.add(JButton("+").apply {
-            toolTipText = "New chat"
-            addActionListener { event -> showNewChatMenu(event.source as JComponent) }
-        })
-        chatButtons.add(JButton("✕").apply {
-            toolTipText = "Delete this chat"
-            addActionListener { deleteCurrentConversation() }
-        })
-        chatButtons.add(JButton("🔍").apply {
-            toolTipText = "Search this project's conversations"
-            addActionListener { openSearch() }
-        })
-        chatButtons.add(JButton("⇩").apply {
-            toolTipText = "Export this chat"
-            addActionListener { event -> showExportMenu(event.source as JComponent) }
-        })
-        row0.add(chatButtons, BorderLayout.EAST)
+        // A single overflow button rather than one icon per action (New/Delete/Search/Export):
+        // four squeezed into this row's east side left almost no width for the tab strip
+        // itself in a narrow docked tool window - the tab label became invisible behind
+        // JBTabbedPane's own "more tabs" scroll dropdown even with just one conversation.
+        row0.add(JButton().apply {
+            icon = AllIcons.Actions.More
+            toolTipText = "Chat actions"
+            addActionListener { event -> showChatMenu(event.source as JComponent) }
+        }, BorderLayout.EAST)
         row0.maximumSize = Dimension(Int.MAX_VALUE, row0.preferredSize.height)
         top.add(row0)
 
@@ -229,14 +232,17 @@ class MultiAgentChatPanel(private val project: Project) : JPanel(BorderLayout())
         }
     }
 
-    private fun showNewChatMenu(invoker: JComponent) {
+    /** The tool window's single "⋮" overflow button - see the comment at its call site in [buildTopBar]. */
+    private fun showChatMenu(invoker: JComponent) {
         val menu = JPopupMenu()
-        menu.add(JMenuItem("New Chat").apply {
-            addActionListener { createAndSwitch(ConversationKind.CHAT) }
-        })
-        menu.add(JMenuItem("New Orchestrator").apply {
-            addActionListener { createAndSwitch(ConversationKind.ORCHESTRATOR) }
-        })
+        menu.add(JMenuItem("New Chat").apply { addActionListener { createAndSwitch(ConversationKind.CHAT) } })
+        menu.add(JMenuItem("New Orchestrator").apply { addActionListener { createAndSwitch(ConversationKind.ORCHESTRATOR) } })
+        menu.addSeparator()
+        menu.add(JMenuItem("Delete This Chat").apply { addActionListener { deleteCurrentConversation() } })
+        menu.addSeparator()
+        menu.add(JMenuItem("Search Conversations…").apply { addActionListener { openSearch() } })
+        menu.add(JMenuItem("Export as Markdown").apply { addActionListener { exportConversation(markdown = true) } })
+        menu.add(JMenuItem("Export as JSON").apply { addActionListener { exportConversation(markdown = false) } })
         menu.show(invoker, 0, invoker.height)
     }
 
@@ -269,7 +275,7 @@ class MultiAgentChatPanel(private val project: Project) : JPanel(BorderLayout())
         refreshChatTabs()
         refreshPersonaCombo()
         if (!newConversation.model.isNullOrBlank()) {
-            modelCombo.editor.item = newConversation.model
+            setModelComboText(newConversation.model!!)
         }
         loadHistory()
     }
@@ -292,13 +298,6 @@ class MultiAgentChatPanel(private val project: Project) : JPanel(BorderLayout())
         if (result.conversationId() == conversation.id) return
         val target = service.conversationsForProject(project).firstOrNull { it.id == result.conversationId() }
         target?.let { switchTo(it) }
-    }
-
-    private fun showExportMenu(invoker: JComponent) {
-        val menu = JPopupMenu()
-        menu.add(JMenuItem("Export as Markdown").apply { addActionListener { exportConversation(markdown = true) } })
-        menu.add(JMenuItem("Export as JSON").apply { addActionListener { exportConversation(markdown = false) } })
-        menu.show(invoker, 0, invoker.height)
     }
 
     /** Mirrors desktop-java's per-conversation Export menu, backed by the same [ExportFormat]. */
@@ -363,7 +362,7 @@ class MultiAgentChatPanel(private val project: Project) : JPanel(BorderLayout())
             border = JBUI.Borders.empty(6, 8)
             background = if (role == MessageRole.USER) Color(0x1D, 0x4E, 0x89, 0x22) else background
         }
-        val row = JPanel(BorderLayout())
+        val row = TightRowPanel(BorderLayout())
         row.border = JBUI.Borders.empty(2, 4)
         val labelText = label ?: if (role == MessageRole.USER) "You" else "Assistant"
         val labelComponent = JBLabel(labelText).apply {
@@ -386,7 +385,7 @@ class MultiAgentChatPanel(private val project: Project) : JPanel(BorderLayout())
             foreground = Color.GRAY
             font = font.deriveFont(font.size2D - 1f)
         }
-        val row = JPanel(BorderLayout()).apply {
+        val row = TightRowPanel(BorderLayout()).apply {
             border = JBUI.Borders.empty(1, 12)
             add(label, BorderLayout.CENTER)
         }
@@ -404,7 +403,7 @@ class MultiAgentChatPanel(private val project: Project) : JPanel(BorderLayout())
             font = font.deriveFont(font.size2D - 1f)
         }
         val buttons = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0))
-        val row = JPanel(BorderLayout()).apply {
+        val row = TightRowPanel(BorderLayout()).apply {
             border = JBUI.Borders.empty(1, 12)
             add(label, BorderLayout.CENTER)
             add(buttons, BorderLayout.EAST)
@@ -652,13 +651,24 @@ class MultiAgentChatPanel(private val project: Project) : JPanel(BorderLayout())
                 modelCombo.removeAllItems()
                 models.forEach { modelCombo.addItem(it.id()) }
                 if (current.isNotEmpty()) {
-                    modelCombo.editor.item = current
+                    setModelComboText(current)
                 }
                 service.lastHealthText = healthLabel.text
                 service.lastModelText = current
                 WindowManager.getInstance().getStatusBar(project)?.updateWidget(MultiAgentStatusBarWidgetFactory.ID)
             }
         }
+    }
+
+    /**
+     * Sets the editable model combo's text and resets its caret to the start. Plain
+     * `editor.item = text` leaves the caret wherever it last was (the end, for a fresh
+     * editor), so a long model id shows its *tail* in the visible field instead of the
+     * more legible prefix - e.g. "...GGUF-Q4_K_M" instead of "DeepSeek-Coder-V2-Lite...".
+     */
+    private fun setModelComboText(text: String) {
+        modelCombo.editor.item = text
+        (modelCombo.editor.editorComponent as? javax.swing.text.JTextComponent)?.caretPosition = 0
     }
 
     private fun onEdt(action: () -> Unit) {

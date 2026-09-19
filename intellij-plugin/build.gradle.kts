@@ -44,6 +44,13 @@ dependencies {
 }
 
 intellijPlatform {
+    // No custom Settings-page search terms to index (MultiAgentConfigurable is one plain
+    // form, not per-field search entries), so this build-only task is pure overhead - and
+    // it launches a throwaway IDE instance under the hood, which fails outright with "Only
+    // one instance of IDEA can be run at a time" if a real JetBrains IDE happens to already
+    // be open on the machine doing the build.
+    buildSearchableOptions = false
+
     pluginConfiguration {
         id = "com.multiagent.intellij"
         name = "MultiAgent"

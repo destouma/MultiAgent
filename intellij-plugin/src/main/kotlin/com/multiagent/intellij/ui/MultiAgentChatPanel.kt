@@ -668,7 +668,14 @@ class MultiAgentChatPanel(private val project: Project) : JPanel(BorderLayout())
      */
     private fun setModelComboText(text: String) {
         modelCombo.editor.item = text
-        (modelCombo.editor.editorComponent as? javax.swing.text.JTextComponent)?.caretPosition = 0
+        val field = modelCombo.editor.editorComponent as? javax.swing.text.JTextComponent
+        field?.caretPosition = 0
+        // The first reset above sometimes loses a race: editor.item = text doesn't always
+        // land in the field's Document synchronously, and a full-text replace's default
+        // caret-follows-the-insert behavior then puts the caret right back at the end once
+        // it does land - observed live (screenshot) still showing the tail after the
+        // synchronous reset alone. Re-assert once more after the current event queue drains.
+        SwingUtilities.invokeLater { runCatching { field?.caretPosition = 0 } }
     }
 
     private fun onEdt(action: () -> Unit) {

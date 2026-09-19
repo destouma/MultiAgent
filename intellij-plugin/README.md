@@ -141,3 +141,19 @@ message, without a separate action per turn. This closes out Phase 3.
 
 Next: manually verify Phase 4 and everything in the paragraph above in a real sandbox, then
 Phase 5 (polish) — see [`../TODO.md`](../TODO.md#jetbrains-plugin).
+
+### Known issues (found installing a real build via *Install Plugin from Disk*)
+
+The first actual non-sandbox use surfaced three real layout bugs (see the [Phase 3
+commits](../TODO.md#jetbrains-plugin) for detail) - two are fixed (message rows no longer
+stretch to fill the tool window; the model combo tries harder to show a long id's readable
+prefix instead of its tail). One is still open:
+
+- **Chat tab strip still renders as just a "▼" dropdown, no visible tab label** - even after
+  consolidating the row's four icon buttons down to one, freeing back most of the row's
+  width. So button crowding wasn't the (whole) cause; something about `JBTabbedPane` +
+  `SCROLL_TAB_LAYOUT` itself is likely collapsing to its overflow chrome in this tool
+  window's actual width. Not yet root-caused. Candidate fix if it resists further
+  diagnosis: drop tabs for the chat picker and go back to the plain combo box Phase 3
+  originally shipped with - less visually interesting, but a combo degrades to an ellipsis
+  rather than disappearing entirely when it's too narrow.

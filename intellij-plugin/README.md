@@ -105,10 +105,10 @@ writes/deletes/renames and reverts refresh the VFS so the editor and Project vie
 without a manual refresh. Verified in a real sandbox: approval dialog, file edits visible
 live in the editor, diff, revert, and a real `run_command` subprocess run all confirmed.
 
-**Phase 3** — in progress. Done: a "Chat:" picker (+ New/Delete) lets a project hold several
+**Phase 3** — code-complete. A "Chat:" picker (tabs, + New/Delete) lets a project hold several
 conversations, switching in place; a "Persona:" combo persists its choice onto the
 conversation (`ConversationStore.setConversationPersona`), and the model combo's value is
-now persisted the same way; **MultiAgent: Add Selection to Chat** / **MultiAgent: Explain
+persisted the same way; **MultiAgent: Add Selection to Chat** / **MultiAgent: Explain
 Selection** editor context-menu actions (enabled only with a selection) drive the tool
 window from the editor; a status-bar widget shows the last health/model check and jumps to
 the tool window on click. Also fixed along the way: the Persona combo only ever showed
@@ -116,8 +116,28 @@ the tool window on click. Also fixed along the way: the Persona combo only ever 
 next to its own class's code source, which doesn't exist under `PluginClassLoader` (its
 `CodeSource` is null, verified empirically) - fixed by bundling the personas as classpath
 resources and seeding `PersonaRegistry`'s writable directory from them on first run. All of
-the above verified in a real sandbox. **Not done yet:** conversation search + Markdown/JSON
-export, auto-including the active file/selection as context without an explicit action.
+the above verified in a real sandbox.
 
-Next: finish Phase 3 (search + export), then Phase 4 (orchestrator) — see
-[`../TODO.md`](../TODO.md#jetbrains-plugin).
+**Phase 4** — implemented: **New Orchestrator** chat kind, plan → specialists → synthesize
+progress rows (`onStep`), per-specialist note bubbles, the Persona combo relabels to
+**Coordinator** for an orchestrator chat, and a **Specialists…** dialog sets a per-specialist
+model override (`SpecialistModelsDialog`, `SpecialistModels`). Specialists write through the
+same approval-gated `ToolLoopRunner` a normal chat uses when a workspace is bound - no
+separate opt-in. Compiles, unit tests green; **manual sandbox verification of an actual
+orchestrator run is still pending.**
+
+Most recently added, also **unverified in a real sandbox yet** (compiles, `./gradlew test`
+green): a chat-tabs UI review pass (tab strip instead of a combo box, wider model dropdown,
+health/Settings moved onto the model row - all to stop a narrow docked tool window from
+wrapping and clipping a row); **Search** (🔍 button next to the chat tabs) - `SearchDialog`,
+scoped to this project's own conversations (unlike desktop-java's global topbar search - a
+tool window only ever cares about one project's chats), backed directly by the forked
+`ConversationStore.search`; **Export** (⇩ button) - Markdown/JSON via the forked
+`ExportFormat`, saved through a native `FileSaverDialog`; **auto-context** - an "Include
+active file" checkbox by the composer that, when checked, prepends the editor's current
+selection (same format as "Add Selection") or just the open file's relative path (no
+full-file dump - the model already has `read_file` once a workspace is bound) to the next
+message, without a separate action per turn. This closes out Phase 3.
+
+Next: manually verify Phase 4 and everything in the paragraph above in a real sandbox, then
+Phase 5 (polish) — see [`../TODO.md`](../TODO.md#jetbrains-plugin).

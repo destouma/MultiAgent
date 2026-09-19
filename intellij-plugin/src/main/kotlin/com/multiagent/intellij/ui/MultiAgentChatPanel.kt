@@ -5,12 +5,15 @@ import com.intellij.diff.DiffManager
 import com.intellij.diff.requests.SimpleDiffRequest
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.fileChooser.FileChooserFactory
+import com.intellij.openapi.fileChooser.FileSaverDescriptor
 import com.intellij.openapi.options.ShowSettingsUtil
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VfsUtil
 import com.intellij.openapi.wm.WindowManager
+import com.intellij.ui.components.JBCheckBox
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollBar
 import com.intellij.ui.components.JBScrollPane
@@ -24,6 +27,7 @@ import com.multiagent.intellij.core.model.ConversationKind
 import com.multiagent.intellij.core.model.MessageRole
 import com.multiagent.intellij.core.model.Persona
 import com.multiagent.intellij.core.service.ChatService
+import com.multiagent.intellij.core.service.ExportFormat
 import com.multiagent.intellij.core.service.SpecialistModels
 import com.multiagent.intellij.service.MultiAgentService
 import java.awt.BorderLayout
@@ -80,6 +84,9 @@ class MultiAgentChatPanel(private val project: Project) : JPanel(BorderLayout())
     private val modelCombo = JComboBox<String>().apply { isEditable = true }
     private val healthLabel = JBLabel("checking...")
     private val statusLabel = JBLabel(" ")
+    private val includeActiveFileCheckBox = JBCheckBox("Include active file").apply {
+        toolTipText = "Prepend the editor's current selection (or just the open file's path) to the next message you send"
+    }
 
     private var streamingArea: JBTextArea? = null
     private var currentOpRow: ToolOpRow? = null
@@ -119,6 +126,14 @@ class MultiAgentChatPanel(private val project: Project) : JPanel(BorderLayout())
         chatButtons.add(JButton("✕").apply {
             toolTipText = "Delete this chat"
             addActionListener { deleteCurrentConversation() }
+        })
+        chatButtons.add(JButton("🔍").apply {
+            toolTipText = "Search this project's conversations"
+            addActionListener { openSearch() }
+        })
+        chatButtons.add(JButton("⇩").apply {
+            toolTipText = "Export this chat"
+            addActionListener { event -> showExportMenu(event.source as JComponent) }
         })
         row0.add(chatButtons, BorderLayout.EAST)
         row0.maximumSize = Dimension(Int.MAX_VALUE, row0.preferredSize.height)
@@ -269,6 +284,40 @@ class MultiAgentChatPanel(private val project: Project) : JPanel(BorderLayout())
         switchTo(next)
     }
 
+    /** Scoped to this project's own conversations - see [SearchDialog]. */
+    private fun openSearch() {
+        val dialog = SearchDialog(project, service.store, project.basePath)
+        if (!dialog.showAndGet()) return
+        val result = dialog.selected ?: return
+        if (result.conversationId() == conversation.id) return
+        val target = service.conversationsForProject(project).firstOrNull { it.id == result.conversationId() }
+        target?.let { switchTo(it) }
+    }
+
+    private fun showExportMenu(invoker: JComponent) {
+        val menu = JPopupMenu()
+        menu.add(JMenuItem("Export as Markdown").apply { addActionListener { exportConversation(markdown = true) } })
+        menu.add(JMenuItem("Export as JSON").apply { addActionListener { exportConversation(markdown = false) } })
+        menu.show(invoker, 0, invoker.height)
+    }
+
+    /** Mirrors desktop-java's per-conversation Export menu, backed by the same [ExportFormat]. */
+    private fun exportConversation(markdown: Boolean) {
+        val messages = service.store.getMessages(conversation.id)
+        val content = if (markdown) ExportFormat.toMarkdown(conversation, messages, service.personas())
+        else ExportFormat.toJson(conversation, messages)
+        val extension = if (markdown) "md" else "json"
+        val descriptor = FileSaverDescriptor(
+            "Export Conversation", "Save this conversation as ${if (markdown) "Markdown" else "JSON"}", extension
+        )
+        val baseDir = conversation.workspacePath?.let { LocalFileSystem.getInstance().findFileByPath(it) }
+        val wrapper = FileChooserFactory.getInstance().createSaveFileDialog(descriptor, project)
+            .save(baseDir, "${ExportFormat.slugifyTitle(conversation.title ?: "conversation")}.$extension")
+        val file = wrapper?.file ?: return
+        runCatching { file.writeText(content) }
+            .onFailure { e -> Messages.showErrorDialog(project, e.message ?: e.toString(), "Export Failed") }
+    }
+
     private fun buildComposer(): JComponent {
         input.addKeyListener(object : java.awt.event.KeyAdapter() {
             override fun keyPressed(e: KeyEvent) {
@@ -287,8 +336,11 @@ class MultiAgentChatPanel(private val project: Project) : JPanel(BorderLayout())
         right.layout = BoxLayout(right, BoxLayout.Y_AXIS)
         right.add(sendButton)
         bottom.add(right, BorderLayout.EAST)
+        val statusRow = JPanel(BorderLayout())
+        statusRow.add(statusLabel, BorderLayout.CENTER)
+        statusRow.add(includeActiveFileCheckBox, BorderLayout.EAST)
         val south = JPanel(BorderLayout())
-        south.add(statusLabel, BorderLayout.NORTH)
+        south.add(statusRow, BorderLayout.NORTH)
         south.add(bottom, BorderLayout.CENTER)
         return south
     }
@@ -476,8 +528,11 @@ class MultiAgentChatPanel(private val project: Project) : JPanel(BorderLayout())
     }
 
     private fun onSend() {
-        val text = input.text.trim()
+        var text = input.text.trim()
         if (text.isEmpty()) return
+        if (includeActiveFileCheckBox.isSelected) {
+            activeFileContext(project)?.let { context -> text = "$context\n\n$text" }
+        }
         input.text = ""
         sendButton.isEnabled = false
 

@@ -131,8 +131,8 @@ workspace is bound (no separate opt-in), but every real run so far has been read
 
 Search ("⋮" chat menu) - `SearchDialog`, scoped to this project's own
 conversations (unlike desktop-java's global topbar search - a tool window only ever cares
-about one project's chats), backed directly by the forked `ConversationStore.search`. **Still
-unclicked.** Export ("⋮" chat menu) - Markdown/JSON via the forked `ExportFormat`, saved
+about one project's chats), backed directly by the forked `ConversationStore.search`. **Confirmed
+live.** Export ("⋮" chat menu) - Markdown/JSON via the forked `ExportFormat`, saved
 through a native `FileSaverDialog` - **confirmed live**, JSON export produced well-formed
 output (conversation metadata + messages) used to verify the orchestrator run above.
 Auto-context - an "Include active file" checkbox by the composer that, when checked, prepends

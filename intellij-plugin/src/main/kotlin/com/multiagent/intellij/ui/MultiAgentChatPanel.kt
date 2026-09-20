@@ -660,22 +660,45 @@ class MultiAgentChatPanel(private val project: Project) : JPanel(BorderLayout())
         }
     }
 
+    /** Depth-first search for the actual editable text field inside a combo box editor - see [setModelComboText]. */
+    private fun findTextComponent(component: java.awt.Component): javax.swing.text.JTextComponent? {
+        if (component is javax.swing.text.JTextComponent) return component
+        if (component is java.awt.Container) {
+            for (child in component.components) {
+                findTextComponent(child)?.let { return it }
+            }
+        }
+        return null
+    }
+
     /**
      * Sets the editable model combo's text and resets its caret to the start. Plain
      * `editor.item = text` leaves the caret wherever it last was (the end, for a fresh
      * editor), so a long model id shows its *tail* in the visible field instead of the
      * more legible prefix - e.g. "...GGUF-Q4_K_M" instead of "DeepSeek-Coder-V2-Lite...".
+     *
+     * Two earlier attempts here (a plain synchronous reset, then a `SwingUtilities.invokeLater`
+     * re-assertion) both had **zero** observed effect in real-IDE testing, not partial effect -
+     * which points at a wrong assumption rather than a timing race: `editor.editorComponent`
+     * under IntelliJ's LaF is very likely a composite wrapper around the real text field, not
+     * the field itself, so the earlier `as? JTextComponent` cast was silently failing and every
+     * caret reset was a no-op. Search the component tree instead of assuming its shape, and set
+     * a tooltip on the combo itself as a fallback that works regardless of whether the caret
+     * trick ever lands - hovering always reveals the full id.
      */
     private fun setModelComboText(text: String) {
         modelCombo.editor.item = text
-        val field = modelCombo.editor.editorComponent as? javax.swing.text.JTextComponent
-        field?.caretPosition = 0
-        // The first reset above sometimes loses a race: editor.item = text doesn't always
-        // land in the field's Document synchronously, and a full-text replace's default
-        // caret-follows-the-insert behavior then puts the caret right back at the end once
-        // it does land - observed live (screenshot) still showing the tail after the
-        // synchronous reset alone. Re-assert once more after the current event queue drains.
-        SwingUtilities.invokeLater { runCatching { field?.caretPosition = 0 } }
+        modelCombo.toolTipText = text
+        fun resetCaret() {
+            findTextComponent(modelCombo.editor.editorComponent)?.let { field ->
+                runCatching { field.caretPosition = 0 }
+            }
+        }
+        resetCaret()
+        SwingUtilities.invokeLater {
+            resetCaret()
+            SwingUtilities.invokeLater { resetCaret() }
+        }
     }
 
     private fun onEdt(action: () -> Unit) {

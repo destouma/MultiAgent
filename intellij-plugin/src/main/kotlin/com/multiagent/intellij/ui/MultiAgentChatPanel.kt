@@ -670,11 +670,18 @@ class MultiAgentChatPanel(private val project: Project) : JPanel(BorderLayout())
                     .ifEmpty { service.settings().model }
                 modelCombo.removeAllItems()
                 models.forEach { modelCombo.addItem(it.id()) }
-                if (current.isNotEmpty()) {
-                    setModelComboText(current)
+                // Always resolve to *something* and go through setModelComboText - even when
+                // nothing was known ahead of time (current blank, e.g. no default Model set in
+                // Settings), addItem() above auto-selects its first entry through JComboBox's
+                // own machinery, which bypasses setModelComboText - and its caret reset -
+                // entirely. Read back whatever ended up selected and re-apply it explicitly so
+                // the caret fix always runs, not just when a value was already known.
+                val resolved = current.ifEmpty { (modelCombo.editor.item as? String)?.trim().orEmpty() }
+                if (resolved.isNotEmpty()) {
+                    setModelComboText(resolved)
                 }
                 service.lastHealthText = healthLabel.text
-                service.lastModelText = current
+                service.lastModelText = resolved
                 WindowManager.getInstance().getStatusBar(project)?.updateWidget(MultiAgentStatusBarWidgetFactory.ID)
             }
         }

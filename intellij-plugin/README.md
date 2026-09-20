@@ -118,23 +118,28 @@ next to its own class's code source, which doesn't exist under `PluginClassLoade
 resources and seeding `PersonaRegistry`'s writable directory from them on first run. All of
 the above verified in a real sandbox.
 
-**Phase 4** — implemented: **New Orchestrator** chat kind, plan → specialists → synthesize
-progress rows (`onStep`), per-specialist note bubbles, the Persona combo relabels to
-**Coordinator** for an orchestrator chat, and a **Specialists…** dialog sets a per-specialist
-model override (`SpecialistModelsDialog`, `SpecialistModels`). Specialists write through the
-same approval-gated `ToolLoopRunner` a normal chat uses when a workspace is bound - no
-separate opt-in. Compiles, unit tests green; **manual sandbox verification of an actual
-orchestrator run is still pending.**
+**Phase 4** — implemented and now confirmed live: **New Orchestrator** chat kind, plan →
+specialists → synthesize progress rows (`onStep`), per-specialist note bubbles, the Persona
+combo relabels to **Coordinator** for an orchestrator chat, and a **Specialists…** dialog sets
+a per-specialist model override (`SpecialistModelsDialog`, `SpecialistModels`). A real run
+against this project ("what does the architecture look like?") produced a plan → one
+`researcher` specialist (an accurate, grounded summary of `build.gradle.kts` /
+`settings.gradle.kts` / the module layout - not hallucinated) → a coherent synthesis, captured
+via **Export as JSON** (see below). **Still unverified: a specialist actually writing a file**
+- specialists write through the same approval-gated `ToolLoopRunner` a normal chat uses when a
+workspace is bound (no separate opt-in), but every real run so far has been read-only.
 
 Search ("⋮" chat menu) - `SearchDialog`, scoped to this project's own
 conversations (unlike desktop-java's global topbar search - a tool window only ever cares
-about one project's chats), backed directly by the forked `ConversationStore.search`.
-Export (⇩ button, folded into the "⋮" chat menu - see below) - Markdown/JSON via the forked
-`ExportFormat`, saved through a native `FileSaverDialog`. Auto-context - an "Include active
-file" checkbox by the composer that, when checked, prepends the editor's current selection
-(same format as "Add Selection") or just the open file's relative path (no full-file dump -
-the model already has `read_file` once a workspace is bound) to the next message, without a
-separate action per turn. This closes out Phase 3's scope; see "Real-IDE testing" below for
+about one project's chats), backed directly by the forked `ConversationStore.search`. **Still
+unclicked.** Export ("⋮" chat menu) - Markdown/JSON via the forked `ExportFormat`, saved
+through a native `FileSaverDialog` - **confirmed live**, JSON export produced well-formed
+output (conversation metadata + messages) used to verify the orchestrator run above.
+Auto-context - an "Include active file" checkbox by the composer that, when checked, prepends
+the editor's current selection (same format as "Add Selection") or just the open file's
+relative path (no full-file dump - the model already has `read_file` once a workspace is
+bound) to the next message, without a separate action per turn. This closes out Phase 3's
+scope; see "Real-IDE testing" below for
 what's actually been clicked through versus still sandbox/unit-test-only.
 
 Next: manually verify Phase 4 (orchestrator) and the Phase 3 items not yet exercised (search,

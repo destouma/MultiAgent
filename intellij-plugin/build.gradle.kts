@@ -5,7 +5,10 @@ plugins {
 }
 
 group = "com.multiagent"
-version = "0.1.0"
+// Bump on every change that goes out for real-IDE testing (not just sandbox/unit-test runs) -
+// Settings -> Tools -> MultiAgent shows this at the bottom, specifically so a rebuild+reinstall
+// is easy to confirm rather than guessing whether the IDE picked up the new zip.
+version = "0.2.0"
 
 repositories {
     mavenCentral()

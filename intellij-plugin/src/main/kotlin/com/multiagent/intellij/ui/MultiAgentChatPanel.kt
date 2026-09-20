@@ -285,8 +285,17 @@ class MultiAgentChatPanel(private val project: Project) : JPanel(BorderLayout())
         messagesPanel.repaint()
         refreshChatPicker()
         refreshPersonaCombo()
-        if (!newConversation.model.isNullOrBlank()) {
-            setModelComboText(newConversation.model!!)
+        // A brand-new conversation's model is always NULL (ConversationStore.createConversation)
+        // - fall back to the app-wide default model (AppSettings.model, "fallback ... for
+        // conversations without their own") the same way refreshHealthAndModels() already does
+        // on plain startup. Without this, switching to (or creating) a chat with no model of
+        // its own left the combo showing whatever the *previous* conversation's model happened
+        // to be, or blank on the very first switch - either way onSend() would then send that
+        // wrong or empty model string to the server. Observed live: an empty model produced
+        // incoherent output (unrelated Rust/Node scaffolding as raw unparsed tool-call text).
+        val resolvedModel = newConversation.model?.takeIf { it.isNotBlank() } ?: service.settings().model
+        if (resolvedModel.isNotBlank()) {
+            setModelComboText(resolvedModel)
         }
         loadHistory()
     }

@@ -156,23 +156,34 @@ catch. **Fixed and confirmed** (screenshot evidence, both against the actual
   of its tail - took three attempts (`setModelComboText`'s doc comment has the history); the
   first two silently did nothing because `editor.editorComponent` isn't the real text field
   under IntelliJ's LaF, it just looks like it should be.
+- The chat picker actually works: the chat tab strip (`JBTabbedPane` + `SCROLL_TAB_LAYOUT`)
+  rendered as just its "more tabs" overflow dropdown with no visible label at all, even down
+  to one sibling button - button crowding wasn't the (whole) cause, and it was never
+  root-caused past that, so it was blocking actually picking a chat rather than staying a
+  deferred cosmetic item. Replaced outright with a plain `JComboBox<Conversation>`
+  (`ConversationRenderer` shows the title) - what Phase 3 originally shipped with before the
+  UI review pass swapped it for tabs. A combo degrades to an ellipsis instead of disappearing
+  entirely when it's too narrow.
 
-**Fixed, not yet reconfirmed** (was blocking actually picking a chat, so this one didn't stay
-deferred): the chat tab strip (`JBTabbedPane` + `SCROLL_TAB_LAYOUT`) rendered as just its "more
-tabs" overflow dropdown with no visible label at all, even down to one sibling button - button
-crowding wasn't the (whole) cause, and it was never root-caused past that. Replaced the tab
-strip outright with a plain `JComboBox<Conversation>` (`ConversationRenderer` shows the
-title) - a combo degrades to an ellipsis instead of disappearing entirely when it's too
-narrow, and it's what Phase 3 originally shipped with before the UI review pass swapped it
-for tabs. Compiles, tests green; needs a real-IDE click-through to confirm the chat picker
-is now actually usable.
+**Fixed, not yet reconfirmed:** a brand-new conversation's model is always `NULL`
+(`ConversationStore.createConversation`), but `switchTo()` only updated the model combo when
+the *target* conversation already had one - for a fresh chat it left the combo showing
+whatever the *previous* conversation's model happened to be, or blank on the very first
+switch of a session, with nothing falling back to `AppSettings.model` ("fallback ... for
+conversations without their own") the way `refreshHealthAndModels()` already does on plain
+startup. Observed live: a **New Chat** sent with no model resolved produced garbled,
+unrelated output (Rust *and* Node.js scaffolding as raw unexecuted tool-call text) - not a
+model-quality problem, the request just went out with the wrong/empty model. `switchTo()` now
+falls back to the app default the same way startup does. Compiles, tests green.
 
-**Not a plugin bug - a model-quality finding, worth keeping in mind:** asked to `list_dir` on
-a real (Kotlin/Gradle) project, **DeepSeek-Coder-V2-Lite-Instruct-GGUF-Q4_K_M** twice
-proposed scaffolding an unrelated Rust project (`Cargo.toml`, `src/main.rs`, `cargo build`)
-that was never asked for - each `write_file`/`run_command` was correctly declined by the
-approval gate, so nothing touched disk. Swapping to **Qwen2.5-Coder-7B-Instruct-GGUF-Q4_K_M**
-for the identical prompt/workspace produced a correct, on-topic answer with no unsolicited
-actions. Since `ToolLoopRunner` is shared with `desktop-java`, this would reproduce there
-too - it's model-specific unreliability (small, heavily quantized models can fixate on a
-canned response irrespective of actual context), not something to chase in this plugin's code.
+**Not a plugin bug - a model-quality finding, worth keeping in mind:** with a model properly
+selected, asked to `list_dir` on a real (Kotlin/Gradle) project,
+**DeepSeek-Coder-V2-Lite-Instruct-GGUF-Q4_K_M** twice proposed scaffolding an unrelated Rust
+project (`Cargo.toml`, `src/main.rs`, `cargo build`) that was never asked for - each
+`write_file`/`run_command` was correctly declined by the approval gate, so nothing touched
+disk. Swapping to **Qwen2.5-Coder-7B-Instruct-GGUF-Q4_K_M** for the identical prompt/workspace
+produced a correct, on-topic answer (a clean recursive `list_dir` and nothing else) with no
+unsolicited actions. Since `ToolLoopRunner` is shared with `desktop-java`, this would
+reproduce there too - it's model-specific unreliability (small, heavily quantized models can
+fixate on a canned response irrespective of actual context), not something to chase in this
+plugin's code.

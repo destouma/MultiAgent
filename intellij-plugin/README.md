@@ -105,8 +105,8 @@ writes/deletes/renames and reverts refresh the VFS so the editor and Project vie
 without a manual refresh. Verified in a real sandbox: approval dialog, file edits visible
 live in the editor, diff, revert, and a real `run_command` subprocess run all confirmed.
 
-**Phase 3** — code-complete. A "Chat:" picker (tabs, + New/Delete) lets a project hold several
-conversations, switching in place; a "Persona:" combo persists its choice onto the
+**Phase 3** — code-complete. A "Chat:" picker (combo box, "⋮" menu for New/Delete) lets a
+project hold several conversations, switching in place; a "Persona:" combo persists its choice onto the
 conversation (`ConversationStore.setConversationPersona`), and the model combo's value is
 persisted the same way; **MultiAgent: Add Selection to Chat** / **MultiAgent: Explain
 Selection** editor context-menu actions (enabled only with a selection) drive the tool
@@ -126,34 +126,53 @@ same approval-gated `ToolLoopRunner` a normal chat uses when a workspace is boun
 separate opt-in. Compiles, unit tests green; **manual sandbox verification of an actual
 orchestrator run is still pending.**
 
-Most recently added, also **unverified in a real sandbox yet** (compiles, `./gradlew test`
-green): a chat-tabs UI review pass (tab strip instead of a combo box, wider model dropdown,
-health/Settings moved onto the model row - all to stop a narrow docked tool window from
-wrapping and clipping a row); **Search** (🔍 button next to the chat tabs) - `SearchDialog`,
-scoped to this project's own conversations (unlike desktop-java's global topbar search - a
-tool window only ever cares about one project's chats), backed directly by the forked
-`ConversationStore.search`; **Export** (⇩ button) - Markdown/JSON via the forked
-`ExportFormat`, saved through a native `FileSaverDialog`; **auto-context** - an "Include
-active file" checkbox by the composer that, when checked, prepends the editor's current
-selection (same format as "Add Selection") or just the open file's relative path (no
-full-file dump - the model already has `read_file` once a workspace is bound) to the next
-message, without a separate action per turn. This closes out Phase 3.
+Search ("⋮" chat menu) - `SearchDialog`, scoped to this project's own
+conversations (unlike desktop-java's global topbar search - a tool window only ever cares
+about one project's chats), backed directly by the forked `ConversationStore.search`.
+Export (⇩ button, folded into the "⋮" chat menu - see below) - Markdown/JSON via the forked
+`ExportFormat`, saved through a native `FileSaverDialog`. Auto-context - an "Include active
+file" checkbox by the composer that, when checked, prepends the editor's current selection
+(same format as "Add Selection") or just the open file's relative path (no full-file dump -
+the model already has `read_file` once a workspace is bound) to the next message, without a
+separate action per turn. This closes out Phase 3's scope; see "Real-IDE testing" below for
+what's actually been clicked through versus still sandbox/unit-test-only.
 
-Next: manually verify Phase 4 and everything in the paragraph above in a real sandbox, then
-Phase 5 (polish) — see [`../TODO.md`](../TODO.md#jetbrains-plugin).
+Next: manually verify Phase 4 (orchestrator) and the Phase 3 items not yet exercised (search,
+export, auto-context) in a real IDE, then Phase 5 (polish) — see
+[`../TODO.md`](../TODO.md#jetbrains-plugin).
 
-### Known issues (found installing a real build via *Install Plugin from Disk*)
+### Real-IDE testing
 
-The first actual non-sandbox use surfaced three real layout bugs (see the [Phase 3
-commits](../TODO.md#jetbrains-plugin) for detail) - two are fixed (message rows no longer
-stretch to fill the tool window; the model combo tries harder to show a long id's readable
-prefix instead of its tail). One is still open:
+Started via `./gradlew buildPlugin` + **Install Plugin from Disk** into a real IDE (see
+"Build" above) rather than the much slower `runIde` sandbox - this is the first non-sandbox,
+non-unit-test verification the plugin has had, and found real bugs `./gradlew test` couldn't
+catch. **Fixed and confirmed** (screenshot evidence, both against the actual
+`intellij-plugin` project as its own bound workspace):
 
-- **Chat tab strip still renders as just a "▼" dropdown, no visible tab label** - even after
-  consolidating the row's four icon buttons down to one, freeing back most of the row's
-  width. So button crowding wasn't the (whole) cause; something about `JBTabbedPane` +
-  `SCROLL_TAB_LAYOUT` itself is likely collapsing to its overflow chrome in this tool
-  window's actual width. Not yet root-caused. Candidate fix if it resists further
-  diagnosis: drop tabs for the chat picker and go back to the plain combo box Phase 3
-  originally shipped with - less visually interesting, but a combo degrades to an ellipsis
-  rather than disappearing entirely when it's too narrow.
+- Message rows no longer stretch to fill the tool window's leftover vertical space (a
+  `JPanel`'s default `getMaximumSize()` is unbounded regardless of content - see
+  `TightRowPanel` in `MultiAgentChatPanel`).
+- The model combo shows a long id's readable prefix ("Qwen2.5-Coder-7B-Instruct-G...") instead
+  of its tail - took three attempts (`setModelComboText`'s doc comment has the history); the
+  first two silently did nothing because `editor.editorComponent` isn't the real text field
+  under IntelliJ's LaF, it just looks like it should be.
+
+**Fixed, not yet reconfirmed** (was blocking actually picking a chat, so this one didn't stay
+deferred): the chat tab strip (`JBTabbedPane` + `SCROLL_TAB_LAYOUT`) rendered as just its "more
+tabs" overflow dropdown with no visible label at all, even down to one sibling button - button
+crowding wasn't the (whole) cause, and it was never root-caused past that. Replaced the tab
+strip outright with a plain `JComboBox<Conversation>` (`ConversationRenderer` shows the
+title) - a combo degrades to an ellipsis instead of disappearing entirely when it's too
+narrow, and it's what Phase 3 originally shipped with before the UI review pass swapped it
+for tabs. Compiles, tests green; needs a real-IDE click-through to confirm the chat picker
+is now actually usable.
+
+**Not a plugin bug - a model-quality finding, worth keeping in mind:** asked to `list_dir` on
+a real (Kotlin/Gradle) project, **DeepSeek-Coder-V2-Lite-Instruct-GGUF-Q4_K_M** twice
+proposed scaffolding an unrelated Rust project (`Cargo.toml`, `src/main.rs`, `cargo build`)
+that was never asked for - each `write_file`/`run_command` was correctly declined by the
+approval gate, so nothing touched disk. Swapping to **Qwen2.5-Coder-7B-Instruct-GGUF-Q4_K_M**
+for the identical prompt/workspace produced a correct, on-topic answer with no unsolicited
+actions. Since `ToolLoopRunner` is shared with `desktop-java`, this would reproduce there
+too - it's model-specific unreliability (small, heavily quantized models can fixate on a
+canned response irrespective of actual context), not something to chase in this plugin's code.

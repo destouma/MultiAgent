@@ -17,7 +17,6 @@ import com.intellij.ui.components.JBCheckBox
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollBar
 import com.intellij.ui.components.JBScrollPane
-import com.intellij.ui.components.JBTabbedPane
 import com.intellij.ui.components.JBTextArea
 import com.intellij.util.ui.JBUI
 import com.multiagent.intellij.core.llm.ErrorCode
@@ -32,6 +31,7 @@ import com.multiagent.intellij.core.service.SpecialistModels
 import com.multiagent.intellij.service.MultiAgentService
 import java.awt.BorderLayout
 import java.awt.Color
+import java.awt.Component
 import java.awt.Dimension
 import java.awt.FlowLayout
 import java.awt.Font
@@ -39,13 +39,14 @@ import java.awt.event.KeyEvent
 import javax.swing.Box
 import javax.swing.BorderFactory
 import javax.swing.BoxLayout
+import javax.swing.DefaultListCellRenderer
 import javax.swing.JButton
 import javax.swing.JComboBox
 import javax.swing.JComponent
+import javax.swing.JList
 import javax.swing.JMenuItem
 import javax.swing.JPanel
 import javax.swing.JPopupMenu
-import javax.swing.JTabbedPane
 import javax.swing.SwingUtilities
 
 /**
@@ -72,6 +73,22 @@ class MultiAgentChatPanel(private val project: Project) : JPanel(BorderLayout())
         override fun getMaximumSize(): Dimension = Dimension(Int.MAX_VALUE, preferredSize.height)
     }
 
+    /**
+     * Renders a combo entry as its conversation title. A plain combo, not a tab strip - see
+     * README.md's "Real-IDE testing" section: a `JBTabbedPane` here rendered as just its "more
+     * tabs" overflow dropdown with no visible label at all, in this tool window's actual width,
+     * even down to a single sibling button - never root-caused, and blocking actually picking a
+     * chat. A combo degrades to an ellipsis instead of disappearing entirely when it's too narrow.
+     */
+    private class ConversationRenderer : DefaultListCellRenderer() {
+        override fun getListCellRendererComponent(
+            list: JList<*>?, value: Any?, index: Int, isSelected: Boolean, cellHasFocus: Boolean
+        ): Component {
+            val text = (value as? Conversation)?.title ?: "Untitled"
+            return super.getListCellRendererComponent(list, text, index, isSelected, cellHasFocus)
+        }
+    }
+
     private val service = ApplicationManager.getApplication().getService(MultiAgentService::class.java)
     private var conversation: Conversation = service.activeConversationForProject(project)
 
@@ -86,8 +103,7 @@ class MultiAgentChatPanel(private val project: Project) : JPanel(BorderLayout())
         emptyText.text = "Message... (Enter to send, Shift+Enter for newline)"
     }
     private val sendButton = JButton("Send")
-    private val chatTabs = JBTabbedPane().apply { tabLayoutPolicy = JTabbedPane.SCROLL_TAB_LAYOUT }
-    private var tabConversations: List<Conversation> = emptyList()
+    private val chatCombo = JComboBox<Conversation>().apply { renderer = ConversationRenderer() }
     private val personaLabel = JBLabel("Persona:")
     private val personaCombo = JComboBox<Persona>()
     private val specialistsButton = JButton("Specialists...").apply {
@@ -110,7 +126,7 @@ class MultiAgentChatPanel(private val project: Project) : JPanel(BorderLayout())
         add(scrollPane, BorderLayout.CENTER)
         add(buildComposer(), BorderLayout.SOUTH)
 
-        refreshChatTabs()
+        refreshChatPicker()
         refreshPersonaCombo()
         loadHistory()
         refreshHealthAndModels()
@@ -119,21 +135,18 @@ class MultiAgentChatPanel(private val project: Project) : JPanel(BorderLayout())
     private fun buildTopBar(): JComponent {
         // One fixed-height row per concern rather than letting any row wrap: a wrapped second
         // line gets clipped in a narrow docked tool window instead of growing the bar (see
-        // chatTabs' SCROLL_TAB_LAYOUT and the BoxLayout.X_AXIS row below for the same reason -
-        // no FlowLayout wrap risk on the two rows most likely to overflow).
+        // the BoxLayout.X_AXIS row below for the same reason - no FlowLayout wrap risk on the
+        // two rows most likely to overflow).
         val top = JPanel().apply { layout = BoxLayout(this, BoxLayout.Y_AXIS) }
 
         val row0 = JPanel(BorderLayout(6, 0))
-        chatTabs.addChangeListener {
-            if (updatingCombos) return@addChangeListener
-            val conv = tabConversations.getOrNull(chatTabs.selectedIndex) ?: return@addChangeListener
+        chatCombo.addActionListener {
+            if (updatingCombos) return@addActionListener
+            val conv = chatCombo.selectedItem as? Conversation ?: return@addActionListener
             if (conv.id != conversation.id) switchTo(conv)
         }
-        row0.add(chatTabs, BorderLayout.CENTER)
-        // A single overflow button rather than one icon per action (New/Delete/Search/Export):
-        // four squeezed into this row's east side left almost no width for the tab strip
-        // itself in a narrow docked tool window - the tab label became invisible behind
-        // JBTabbedPane's own "more tabs" scroll dropdown even with just one conversation.
+        row0.add(chatCombo, BorderLayout.CENTER)
+        // A single overflow button rather than one icon per action (New/Delete/Search/Export).
         row0.add(JButton().apply {
             icon = AllIcons.Actions.More
             toolTipText = "Chat actions"
@@ -194,16 +207,14 @@ class MultiAgentChatPanel(private val project: Project) : JPanel(BorderLayout())
         return top
     }
 
-    /** Tabs are display-only selectors (no per-tab content) ordered by creation, not `updatedAt` - otherwise every sent message would reorder the strip since `addMessage` bumps `updatedAt`. */
-    private fun refreshChatTabs() {
+    /** Ordered by creation, not `updatedAt` - otherwise every sent message would reorder the list since `addMessage` bumps `updatedAt`. */
+    private fun refreshChatPicker() {
         updatingCombos = true
         try {
-            chatTabs.removeAll()
+            chatCombo.removeAllItems()
             val items = service.conversationsForProject(project).sortedBy { it.createdAt }
-            tabConversations = items
-            items.forEach { chatTabs.addTab(it.title ?: "Untitled", JPanel()) }
-            val idx = items.indexOfFirst { it.id == conversation.id }
-            if (idx >= 0) chatTabs.selectedIndex = idx
+            items.forEach { chatCombo.addItem(it) }
+            chatCombo.selectedItem = items.firstOrNull { it.id == conversation.id }
         } finally {
             updatingCombos = false
         }
@@ -248,7 +259,7 @@ class MultiAgentChatPanel(private val project: Project) : JPanel(BorderLayout())
 
     private fun createAndSwitch(kind: ConversationKind) {
         val created = service.newConversationForProject(project, kind)
-        refreshChatTabs()
+        refreshChatPicker()
         switchTo(created)
     }
 
@@ -272,7 +283,7 @@ class MultiAgentChatPanel(private val project: Project) : JPanel(BorderLayout())
         messagesPanel.removeAll()
         messagesPanel.revalidate()
         messagesPanel.repaint()
-        refreshChatTabs()
+        refreshChatPicker()
         refreshPersonaCombo()
         if (!newConversation.model.isNullOrBlank()) {
             setModelComboText(newConversation.model!!)
@@ -547,7 +558,7 @@ class MultiAgentChatPanel(private val project: Project) : JPanel(BorderLayout())
         val model = (modelCombo.editor.item as? String)?.trim().orEmpty()
         if (model.isNotEmpty() && model != conversation.model) {
             conversation = service.store.setConversationModel(conversation.id, model)
-            refreshChatTabs()
+            refreshChatPicker()
         }
         val client = service.client()
 

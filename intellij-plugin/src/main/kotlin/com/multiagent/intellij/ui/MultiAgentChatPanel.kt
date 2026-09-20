@@ -110,7 +110,7 @@ class MultiAgentChatPanel(private val project: Project) : JPanel(BorderLayout())
         addActionListener { openSpecialistModelsDialog() }
     }
     private val modelCombo = JComboBox<String>().apply { isEditable = true }
-    private val healthLabel = JBLabel("checking...")
+    private val healthLabel = JBLabel("checking...").apply { foreground = Color.GRAY }
     private val statusLabel = JBLabel(" ")
     private val includeActiveFileCheckBox = JBCheckBox("Include active file").apply {
         toolTipText = "Prepend the editor's current selection (or just the open file's path) to the next message you send"
@@ -657,14 +657,21 @@ class MultiAgentChatPanel(private val project: Project) : JPanel(BorderLayout())
 
     private fun refreshHealthAndModels() {
         healthLabel.text = "checking..."
+        healthLabel.foreground = Color.GRAY
         ApplicationManager.getApplication().executeOnPooledThread {
             val client = service.client()
             val health = runCatching { client.checkHealth() }
             val models = runCatching { client.listModels() }.getOrDefault(emptyList())
             onEdt {
                 health.fold(
-                    onSuccess = { h -> healthLabel.text = if (h.ok()) "● connected" else "● ${h.message()}" },
-                    onFailure = { e -> healthLabel.text = "● ${e.message ?: "offline"}" }
+                    onSuccess = { h ->
+                        healthLabel.text = if (h.ok()) "● connected" else "● ${h.message()}"
+                        healthLabel.foreground = if (h.ok()) HEALTH_OK_COLOR else HEALTH_ERROR_COLOR
+                    },
+                    onFailure = { e ->
+                        healthLabel.text = "● ${e.message ?: "offline"}"
+                        healthLabel.foreground = HEALTH_ERROR_COLOR
+                    }
                 )
                 val current = (modelCombo.editor.item as? String)?.trim().orEmpty()
                     .ifEmpty { service.settings().model }
@@ -734,5 +741,13 @@ class MultiAgentChatPanel(private val project: Project) : JPanel(BorderLayout())
 
     companion object {
         private val FILE_MUTATING_OPS = setOf("write_file", "delete_file", "rename_file")
+
+        // The health dot only ever changed its text ("● connected" vs "● <error>"), never its
+        // color, so a success and a failure looked identical except for the words - no at-a-
+        // glance signal from what's supposed to be a status dot. Legible on both light and dark
+        // themes (this file doesn't use JBColor elsewhere, so staying consistent with plain
+        // Color rather than introducing theme-aware colors just for this one label).
+        private val HEALTH_OK_COLOR = Color(0x43, 0xA0, 0x47)
+        private val HEALTH_ERROR_COLOR = Color(0xE5, 0x39, 0x35)
     }
 }

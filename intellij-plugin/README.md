@@ -164,17 +164,20 @@ catch. **Fixed and confirmed** (screenshot evidence, both against the actual
   (`ConversationRenderer` shows the title) - what Phase 3 originally shipped with before the
   UI review pass swapped it for tabs. A combo degrades to an ellipsis instead of disappearing
   entirely when it's too narrow.
-
-**Fixed, not yet reconfirmed:** a brand-new conversation's model is always `NULL`
-(`ConversationStore.createConversation`), but `switchTo()` only updated the model combo when
-the *target* conversation already had one - for a fresh chat it left the combo showing
-whatever the *previous* conversation's model happened to be, or blank on the very first
-switch of a session, with nothing falling back to `AppSettings.model` ("fallback ... for
-conversations without their own") the way `refreshHealthAndModels()` already does on plain
-startup. Observed live: a **New Chat** sent with no model resolved produced garbled,
-unrelated output (Rust *and* Node.js scaffolding as raw unexecuted tool-call text) - not a
-model-quality problem, the request just went out with the wrong/empty model. `switchTo()` now
-falls back to the app default the same way startup does. Compiles, tests green.
+- A brand-new conversation now resolves a real model instead of going out blank. Its model is
+  always `NULL` (`ConversationStore.createConversation`); `switchTo()` used to only update the
+  model combo when the *target* conversation already had one, leaving a fresh chat showing
+  whatever the *previous* conversation's model happened to be (or blank, on the very first
+  switch of a session) with nothing falling back to `AppSettings.model` ("fallback ... for
+  conversations without their own"). Observed live before the fix: a **New Chat** sent with no
+  model resolved produced garbled, unrelated output (Rust *and* Node.js scaffolding as raw
+  unexecuted tool-call text) - not a model-quality problem, the request just went out with the
+  wrong/empty model. A second, related gap surfaced once `AppSettings.model` turned out to
+  *also* be blank (nothing had ever been typed into Settings' Model field): `addItem()`
+  auto-selects a combo's first entry through its own internal machinery when nothing is
+  known ahead of time, bypassing `setModelComboText` - and its caret fix - entirely.
+  `refreshHealthAndModels()` now reads back whatever ended up selected and re-applies it
+  through `setModelComboText` unconditionally, so the caret reset always runs.
 
 **Not a plugin bug - a model-quality finding, worth keeping in mind:** with a model properly
 selected, asked to `list_dir` on a real (Kotlin/Gradle) project,

@@ -20,8 +20,10 @@ import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextArea
 import com.intellij.util.ui.JBUI
 import com.multiagent.intellij.core.llm.ErrorCode
+import com.multiagent.intellij.core.llm.ErrorCode
 import com.multiagent.intellij.core.model.ChatMessage
 import com.multiagent.intellij.core.model.Conversation
+import com.multiagent.intellij.core.model.ConversationKind
 import com.multiagent.intellij.core.model.ConversationKind
 import com.multiagent.intellij.core.model.MessageRole
 import com.multiagent.intellij.core.model.Persona
@@ -46,6 +48,7 @@ import javax.swing.JComponent
 import javax.swing.JList
 import javax.swing.JMenuItem
 import javax.swing.JPanel
+import javax.swing.JPopupMenu
 import javax.swing.JPopupMenu
 import javax.swing.SwingUtilities
 
@@ -106,6 +109,9 @@ class MultiAgentChatPanel(private val project: Project) : JPanel(BorderLayout())
     private val chatCombo = JComboBox<Conversation>().apply { renderer = ConversationRenderer() }
     private val personaLabel = JBLabel("Persona:")
     private val personaCombo = JComboBox<Persona>()
+    private val specialistsButton = JButton("Specialists...").apply {
+        addActionListener { openSpecialistModelsDialog() }
+    }
     private val specialistsButton = JButton("Specialists...").apply {
         addActionListener { openSpecialistModelsDialog() }
     }
@@ -221,6 +227,12 @@ class MultiAgentChatPanel(private val project: Project) : JPanel(BorderLayout())
     }
 
     private fun refreshPersonaCombo() {
+        val isOrchestrator = conversation.kind == ConversationKind.ORCHESTRATOR
+        // "orchestrator" is a coordinator persona, not a normal chat persona (mirrors
+        // desktop-java: it's offered only as an orchestrator chat's Coordinator).
+        personaLabel.text = if (isOrchestrator) "Coordinator:" else "Persona:"
+        specialistsButton.isVisible = isOrchestrator
+
         val isOrchestrator = conversation.kind == ConversationKind.ORCHESTRATOR
         // "orchestrator" is a coordinator persona, not a normal chat persona (mirrors
         // desktop-java: it's offered only as an orchestrator chat's Coordinator).
@@ -390,6 +402,7 @@ class MultiAgentChatPanel(private val project: Project) : JPanel(BorderLayout())
             foreground = Color.GRAY
         }
         val wrapper = JPanel(BorderLayout())
+        wrapper.add(labelComponent, BorderLayout.NORTH)
         wrapper.add(labelComponent, BorderLayout.NORTH)
         wrapper.add(area, BorderLayout.CENTER)
         row.add(wrapper, BorderLayout.CENTER)

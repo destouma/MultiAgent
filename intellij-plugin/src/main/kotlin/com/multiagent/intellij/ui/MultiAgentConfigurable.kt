@@ -1,6 +1,8 @@
 package com.multiagent.intellij.ui
 
+import com.intellij.ide.plugins.PluginManagerCore
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.extensions.PluginId
 import com.intellij.openapi.options.Configurable
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBPasswordField
@@ -8,6 +10,7 @@ import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.FormBuilder
 import com.multiagent.intellij.core.model.ProviderType
 import com.multiagent.intellij.service.MultiAgentService
+import java.awt.Color
 import javax.swing.JComboBox
 import javax.swing.JComponent
 import javax.swing.JPanel
@@ -41,10 +44,20 @@ class MultiAgentConfigurable : Configurable {
             .addLabeledComponent("Base URL:", baseUrlField)
             .addLabeledComponent("API key:", apiKeyField)
             .addLabeledComponent("Model:", modelField)
+            .addComponent(versionLabel())
             .addComponentFillVertically(JPanel(), 0)
             .panel
         panel = built
         return built
+    }
+
+    /** So a rebuild+reinstall is easy to confirm from inside the IDE instead of guessing - see build.gradle.kts. */
+    private fun versionLabel(): JComponent {
+        val version = PluginManagerCore.getPlugin(PluginId.getId("com.multiagent.intellij"))?.version ?: "unknown"
+        return JBLabel("MultiAgent v$version").apply {
+            foreground = Color.GRAY
+            font = font.deriveFont(font.size2D - 1f)
+        }
     }
 
     override fun isModified(): Boolean {

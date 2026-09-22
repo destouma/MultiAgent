@@ -5,7 +5,10 @@ plugins {
 }
 
 group = "com.multiagent"
-version = "0.1.0"
+// Bump on every change that goes out for real-IDE testing (not just sandbox/unit-test runs) -
+// Settings -> Tools -> MultiAgent shows this at the bottom, specifically so a rebuild+reinstall
+// is easy to confirm rather than guessing whether the IDE picked up the new zip.
+version = "0.2.4"
 
 repositories {
     mavenCentral()
@@ -44,6 +47,13 @@ dependencies {
 }
 
 intellijPlatform {
+    // No custom Settings-page search terms to index (MultiAgentConfigurable is one plain
+    // form, not per-field search entries), so this build-only task is pure overhead - and
+    // it launches a throwaway IDE instance under the hood, which fails outright with "Only
+    // one instance of IDEA can be run at a time" if a real JetBrains IDE happens to already
+    // be open on the machine doing the build.
+    buildSearchableOptions = false
+
     pluginConfiguration {
         id = "com.multiagent.intellij"
         name = "MultiAgent"

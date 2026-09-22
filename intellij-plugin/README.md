@@ -105,10 +105,10 @@ writes/deletes/renames and reverts refresh the VFS so the editor and Project vie
 without a manual refresh. Verified in a real sandbox: approval dialog, file edits visible
 live in the editor, diff, revert, and a real `run_command` subprocess run all confirmed.
 
-**Phase 3** — in progress. Done: a "Chat:" picker (+ New/Delete) lets a project hold several
-conversations, switching in place; a "Persona:" combo persists its choice onto the
+**Phase 3** — code-complete. A "Chat:" picker (combo box, "⋮" menu for New/Delete) lets a
+project hold several conversations, switching in place; a "Persona:" combo persists its choice onto the
 conversation (`ConversationStore.setConversationPersona`), and the model combo's value is
-now persisted the same way; **MultiAgent: Add Selection to Chat** / **MultiAgent: Explain
+persisted the same way; **MultiAgent: Add Selection to Chat** / **MultiAgent: Explain
 Selection** editor context-menu actions (enabled only with a selection) drive the tool
 window from the editor; a status-bar widget shows the last health/model check and jumps to
 the tool window on click. Also fixed along the way: the Persona combo only ever showed
@@ -116,8 +116,82 @@ the tool window on click. Also fixed along the way: the Persona combo only ever 
 next to its own class's code source, which doesn't exist under `PluginClassLoader` (its
 `CodeSource` is null, verified empirically) - fixed by bundling the personas as classpath
 resources and seeding `PersonaRegistry`'s writable directory from them on first run. All of
-the above verified in a real sandbox. **Not done yet:** conversation search + Markdown/JSON
-export, auto-including the active file/selection as context without an explicit action.
+the above verified in a real sandbox.
 
-Next: finish Phase 3 (search + export), then Phase 4 (orchestrator) — see
+**Phase 4** — implemented and now confirmed live: **New Orchestrator** chat kind, plan →
+specialists → synthesize progress rows (`onStep`), per-specialist note bubbles, the Persona
+combo relabels to **Coordinator** for an orchestrator chat, and a **Specialists…** dialog sets
+a per-specialist model override (`SpecialistModelsDialog`, `SpecialistModels`). A real run
+against this project ("what does the architecture look like?") produced a plan → one
+`researcher` specialist (an accurate, grounded summary of `build.gradle.kts` /
+`settings.gradle.kts` / the module layout - not hallucinated) → a coherent synthesis, captured
+via **Export as JSON** (see below). **Still unverified: a specialist actually writing a file**
+- specialists write through the same approval-gated `ToolLoopRunner` a normal chat uses when a
+workspace is bound (no separate opt-in), but every real run so far has been read-only.
+
+Search ("⋮" chat menu) - `SearchDialog`, scoped to this project's own
+conversations (unlike desktop-java's global topbar search - a tool window only ever cares
+about one project's chats), backed directly by the forked `ConversationStore.search`. **Confirmed
+live.** Export ("⋮" chat menu) - Markdown/JSON via the forked `ExportFormat`, saved
+through a native `FileSaverDialog` - **confirmed live**, JSON export produced well-formed
+output (conversation metadata + messages) used to verify the orchestrator run above.
+Auto-context - an "Include active file" checkbox by the composer that, when checked, prepends
+the editor's current selection (same format as "Add Selection") or just the open file's
+relative path (no full-file dump - the model already has `read_file` once a workspace is
+bound) to the next message, without a separate action per turn. This closes out Phase 3's
+scope; see "Real-IDE testing" below for
+what's actually been clicked through versus still sandbox/unit-test-only.
+
+Next: manually verify Phase 4 (orchestrator) and the Phase 3 items not yet exercised (search,
+export, auto-context) in a real IDE, then Phase 5 (polish) — see
 [`../TODO.md`](../TODO.md#jetbrains-plugin).
+
+### Real-IDE testing
+
+Started via `./gradlew buildPlugin` + **Install Plugin from Disk** into a real IDE (see
+"Build" above) rather than the much slower `runIde` sandbox - this is the first non-sandbox,
+non-unit-test verification the plugin has had, and found real bugs `./gradlew test` couldn't
+catch. **Fixed and confirmed** (screenshot evidence, both against the actual
+`intellij-plugin` project as its own bound workspace):
+
+- Message rows no longer stretch to fill the tool window's leftover vertical space (a
+  `JPanel`'s default `getMaximumSize()` is unbounded regardless of content - see
+  `TightRowPanel` in `MultiAgentChatPanel`).
+- The model combo shows a long id's readable prefix ("Qwen2.5-Coder-7B-Instruct-G...") instead
+  of its tail - took three attempts (`setModelComboText`'s doc comment has the history); the
+  first two silently did nothing because `editor.editorComponent` isn't the real text field
+  under IntelliJ's LaF, it just looks like it should be.
+- The chat picker actually works: the chat tab strip (`JBTabbedPane` + `SCROLL_TAB_LAYOUT`)
+  rendered as just its "more tabs" overflow dropdown with no visible label at all, even down
+  to one sibling button - button crowding wasn't the (whole) cause, and it was never
+  root-caused past that, so it was blocking actually picking a chat rather than staying a
+  deferred cosmetic item. Replaced outright with a plain `JComboBox<Conversation>`
+  (`ConversationRenderer` shows the title) - what Phase 3 originally shipped with before the
+  UI review pass swapped it for tabs. A combo degrades to an ellipsis instead of disappearing
+  entirely when it's too narrow.
+- A brand-new conversation now resolves a real model instead of going out blank. Its model is
+  always `NULL` (`ConversationStore.createConversation`); `switchTo()` used to only update the
+  model combo when the *target* conversation already had one, leaving a fresh chat showing
+  whatever the *previous* conversation's model happened to be (or blank, on the very first
+  switch of a session) with nothing falling back to `AppSettings.model` ("fallback ... for
+  conversations without their own"). Observed live before the fix: a **New Chat** sent with no
+  model resolved produced garbled, unrelated output (Rust *and* Node.js scaffolding as raw
+  unexecuted tool-call text) - not a model-quality problem, the request just went out with the
+  wrong/empty model. A second, related gap surfaced once `AppSettings.model` turned out to
+  *also* be blank (nothing had ever been typed into Settings' Model field): `addItem()`
+  auto-selects a combo's first entry through its own internal machinery when nothing is
+  known ahead of time, bypassing `setModelComboText` - and its caret fix - entirely.
+  `refreshHealthAndModels()` now reads back whatever ended up selected and re-applies it
+  through `setModelComboText` unconditionally, so the caret reset always runs.
+
+**Not a plugin bug - a model-quality finding, worth keeping in mind:** with a model properly
+selected, asked to `list_dir` on a real (Kotlin/Gradle) project,
+**DeepSeek-Coder-V2-Lite-Instruct-GGUF-Q4_K_M** twice proposed scaffolding an unrelated Rust
+project (`Cargo.toml`, `src/main.rs`, `cargo build`) that was never asked for - each
+`write_file`/`run_command` was correctly declined by the approval gate, so nothing touched
+disk. Swapping to **Qwen2.5-Coder-7B-Instruct-GGUF-Q4_K_M** for the identical prompt/workspace
+produced a correct, on-topic answer (a clean recursive `list_dir` and nothing else) with no
+unsolicited actions. Since `ToolLoopRunner` is shared with `desktop-java`, this would
+reproduce there too - it's model-specific unreliability (small, heavily quantized models can
+fixate on a canned response irrespective of actual context), not something to chase in this
+plugin's code.

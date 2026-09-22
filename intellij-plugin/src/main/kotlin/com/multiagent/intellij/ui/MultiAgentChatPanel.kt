@@ -3,40 +3,52 @@ package com.multiagent.intellij.ui
 import com.intellij.diff.DiffContentFactory
 import com.intellij.diff.DiffManager
 import com.intellij.diff.requests.SimpleDiffRequest
+import com.intellij.icons.AllIcons
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.fileChooser.FileChooserFactory
+import com.intellij.openapi.fileChooser.FileSaverDescriptor
 import com.intellij.openapi.options.ShowSettingsUtil
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VfsUtil
 import com.intellij.openapi.wm.WindowManager
+import com.intellij.ui.components.JBCheckBox
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollBar
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextArea
 import com.intellij.util.ui.JBUI
 import com.multiagent.intellij.core.llm.ErrorCode
+import com.multiagent.intellij.core.llm.ErrorCode
 import com.multiagent.intellij.core.model.ChatMessage
 import com.multiagent.intellij.core.model.Conversation
+import com.multiagent.intellij.core.model.ConversationKind
 import com.multiagent.intellij.core.model.ConversationKind
 import com.multiagent.intellij.core.model.MessageRole
 import com.multiagent.intellij.core.model.Persona
 import com.multiagent.intellij.core.service.ChatService
+import com.multiagent.intellij.core.service.ExportFormat
 import com.multiagent.intellij.core.service.SpecialistModels
 import com.multiagent.intellij.service.MultiAgentService
 import java.awt.BorderLayout
 import java.awt.Color
+import java.awt.Component
 import java.awt.Dimension
 import java.awt.FlowLayout
 import java.awt.Font
 import java.awt.event.KeyEvent
+import javax.swing.Box
 import javax.swing.BorderFactory
 import javax.swing.BoxLayout
+import javax.swing.DefaultListCellRenderer
 import javax.swing.JButton
 import javax.swing.JComboBox
 import javax.swing.JComponent
+import javax.swing.JList
 import javax.swing.JMenuItem
 import javax.swing.JPanel
+import javax.swing.JPopupMenu
 import javax.swing.JPopupMenu
 import javax.swing.SwingUtilities
 
@@ -52,6 +64,34 @@ import javax.swing.SwingUtilities
  */
 class MultiAgentChatPanel(private val project: Project) : JPanel(BorderLayout()) {
 
+    /**
+     * A plain [JPanel]'s `getMaximumSize()` is unbounded regardless of content (Swing's
+     * default, since [BorderLayout] reports [Int.MAX_VALUE] as its `maximumLayoutSize`) -
+     * inside [messagesPanel]'s `BoxLayout.Y_AXIS`, that meant the *first* message row
+     * absorbed all the tool window's leftover vertical space instead of the rows stacking
+     * tightly, leaving a large blank gap under a short message. Every row added to
+     * `messagesPanel` (bubbles, status lines, tool-op rows) uses this instead.
+     */
+    private class TightRowPanel(layout: java.awt.LayoutManager) : JPanel(layout) {
+        override fun getMaximumSize(): Dimension = Dimension(Int.MAX_VALUE, preferredSize.height)
+    }
+
+    /**
+     * Renders a combo entry as its conversation title. A plain combo, not a tab strip - see
+     * README.md's "Real-IDE testing" section: a `JBTabbedPane` here rendered as just its "more
+     * tabs" overflow dropdown with no visible label at all, in this tool window's actual width,
+     * even down to a single sibling button - never root-caused, and blocking actually picking a
+     * chat. A combo degrades to an ellipsis instead of disappearing entirely when it's too narrow.
+     */
+    private class ConversationRenderer : DefaultListCellRenderer() {
+        override fun getListCellRendererComponent(
+            list: JList<*>?, value: Any?, index: Int, isSelected: Boolean, cellHasFocus: Boolean
+        ): Component {
+            val text = (value as? Conversation)?.title ?: "Untitled"
+            return super.getListCellRendererComponent(list, text, index, isSelected, cellHasFocus)
+        }
+    }
+
     private val service = ApplicationManager.getApplication().getService(MultiAgentService::class.java)
     private var conversation: Conversation = service.activeConversationForProject(project)
 
@@ -66,15 +106,21 @@ class MultiAgentChatPanel(private val project: Project) : JPanel(BorderLayout())
         emptyText.text = "Message... (Enter to send, Shift+Enter for newline)"
     }
     private val sendButton = JButton("Send")
-    private val conversationCombo = JComboBox<Conversation>()
+    private val chatCombo = JComboBox<Conversation>().apply { renderer = ConversationRenderer() }
     private val personaLabel = JBLabel("Persona:")
     private val personaCombo = JComboBox<Persona>()
     private val specialistsButton = JButton("Specialists...").apply {
         addActionListener { openSpecialistModelsDialog() }
     }
+    private val specialistsButton = JButton("Specialists...").apply {
+        addActionListener { openSpecialistModelsDialog() }
+    }
     private val modelCombo = JComboBox<String>().apply { isEditable = true }
-    private val healthLabel = JBLabel("checking...")
+    private val healthLabel = JBLabel("checking...").apply { foreground = Color.GRAY }
     private val statusLabel = JBLabel(" ")
+    private val includeActiveFileCheckBox = JBCheckBox("Include active file").apply {
+        toolTipText = "Prepend the editor's current selection (or just the open file's path) to the next message you send"
+    }
 
     private var streamingArea: JBTextArea? = null
     private var currentOpRow: ToolOpRow? = null
@@ -86,46 +132,54 @@ class MultiAgentChatPanel(private val project: Project) : JPanel(BorderLayout())
         add(scrollPane, BorderLayout.CENTER)
         add(buildComposer(), BorderLayout.SOUTH)
 
-        refreshConversationCombo()
+        refreshChatPicker()
         refreshPersonaCombo()
         loadHistory()
         refreshHealthAndModels()
     }
 
     private fun buildTopBar(): JComponent {
-        // One fixed-height FlowLayout row per concern rather than letting any row wrap:
-        // FlowLayout's preferred-height calculation assumes a single line, so in a narrow
-        // docked tool window a wrapped second line gets clipped instead of growing the bar.
+        // One fixed-height row per concern rather than letting any row wrap: a wrapped second
+        // line gets clipped in a narrow docked tool window instead of growing the bar (see
+        // the BoxLayout.X_AXIS row below for the same reason - no FlowLayout wrap risk on the
+        // two rows most likely to overflow).
         val top = JPanel().apply { layout = BoxLayout(this, BoxLayout.Y_AXIS) }
 
-        val row0 = JPanel(FlowLayout(FlowLayout.LEFT, 6, 2))
-        row0.add(JBLabel("Chat:"))
-        conversationCombo.preferredSize = Dimension(150, conversationCombo.preferredSize.height)
-        conversationCombo.addActionListener {
+        val row0 = JPanel(BorderLayout(6, 0))
+        chatCombo.addActionListener {
             if (updatingCombos) return@addActionListener
-            (conversationCombo.selectedItem as? Conversation)?.let { if (it.id != conversation.id) switchTo(it) }
+            val conv = chatCombo.selectedItem as? Conversation ?: return@addActionListener
+            if (conv.id != conversation.id) switchTo(conv)
         }
-        row0.add(conversationCombo)
-        row0.add(JButton("+").apply {
-            toolTipText = "New chat"
-            addActionListener { event -> showNewChatMenu(event.source as JComponent) }
-        })
-        row0.add(JButton("✕").apply {
-            toolTipText = "Delete this chat"
-            addActionListener { deleteCurrentConversation() }
-        })
+        row0.add(chatCombo, BorderLayout.CENTER)
+        // A single overflow button rather than one icon per action (New/Delete/Search/Export).
+        row0.add(JButton().apply {
+            icon = AllIcons.Actions.More
+            toolTipText = "Chat actions"
+            addActionListener { event -> showChatMenu(event.source as JComponent) }
+        }, BorderLayout.EAST)
         row0.maximumSize = Dimension(Int.MAX_VALUE, row0.preferredSize.height)
         top.add(row0)
 
-        val row1 = JPanel(FlowLayout(FlowLayout.LEFT, 6, 2))
+        val row1 = JPanel().apply { layout = BoxLayout(this, BoxLayout.X_AXIS) }
         row1.add(JBLabel("Model:"))
-        modelCombo.preferredSize = Dimension(150, modelCombo.preferredSize.height)
+        row1.add(Box.createHorizontalStrut(6))
+        modelCombo.preferredSize = Dimension(240, modelCombo.preferredSize.height)
+        modelCombo.maximumSize = modelCombo.preferredSize
         row1.add(modelCombo)
-        val refresh = JButton("↻").apply {
+        row1.add(Box.createHorizontalStrut(4))
+        row1.add(JButton("↻").apply {
             toolTipText = "Refresh models / health"
             addActionListener { refreshHealthAndModels() }
-        }
-        row1.add(refresh)
+        })
+        row1.add(Box.createHorizontalStrut(12))
+        row1.add(healthLabel)
+        row1.add(Box.createHorizontalGlue())
+        row1.add(JButton().apply {
+            icon = AllIcons.General.Settings
+            toolTipText = "MultiAgent settings"
+            addActionListener { ShowSettingsUtil.getInstance().showSettingsDialog(project, "MultiAgent") }
+        })
         row1.maximumSize = Dimension(Int.MAX_VALUE, row1.preferredSize.height)
         top.add(row1)
 
@@ -144,48 +198,41 @@ class MultiAgentChatPanel(private val project: Project) : JPanel(BorderLayout())
         row2.maximumSize = Dimension(Int.MAX_VALUE, row2.preferredSize.height)
         top.add(row2)
 
-        val row3 = JPanel(FlowLayout(FlowLayout.LEFT, 6, 2))
-        row3.add(healthLabel)
-        val settings = JButton("Settings...").apply {
-            addActionListener {
-                ShowSettingsUtil.getInstance().showSettingsDialog(project, "MultiAgent")
-            }
-        }
-        row3.add(settings)
-        row3.maximumSize = Dimension(Int.MAX_VALUE, row3.preferredSize.height)
-        top.add(row3)
-
         val workspacePath = conversation.workspacePath
         if (!workspacePath.isNullOrBlank()) {
-            val row4 = JPanel(FlowLayout(FlowLayout.LEFT, 6, 0))
-            row4.add(JBLabel("Workspace: $workspacePath").apply {
+            val row3 = JPanel(FlowLayout(FlowLayout.LEFT, 6, 0))
+            row3.add(JBLabel("Workspace: $workspacePath").apply {
                 foreground = Color.GRAY
                 font = font.deriveFont(font.size2D - 1f)
                 toolTipText = workspacePath
             })
-            row4.maximumSize = Dimension(Int.MAX_VALUE, row4.preferredSize.height)
-            top.add(row4)
+            row3.maximumSize = Dimension(Int.MAX_VALUE, row3.preferredSize.height)
+            top.add(row3)
         }
 
         return top
     }
 
-    private fun refreshConversationCombo() {
+    /** Ordered by creation, not `updatedAt` - otherwise every sent message would reorder the list since `addMessage` bumps `updatedAt`. */
+    private fun refreshChatPicker() {
         updatingCombos = true
         try {
-            conversationCombo.removeAllItems()
-            val items = service.conversationsForProject(project)
-            items.forEach { conversationCombo.addItem(it) }
-            // Select the actual list item (by id), not a separately-fetched Conversation instance:
-            // Conversation has no equals()/hashCode(), so JComboBox's popup-highlight/indexOf lookup
-            // needs object identity with one of the items just added, not just a matching title.
-            conversationCombo.selectedItem = items.firstOrNull { it.id == conversation.id } ?: items.firstOrNull()
+            chatCombo.removeAllItems()
+            val items = service.conversationsForProject(project).sortedBy { it.createdAt }
+            items.forEach { chatCombo.addItem(it) }
+            chatCombo.selectedItem = items.firstOrNull { it.id == conversation.id }
         } finally {
             updatingCombos = false
         }
     }
 
     private fun refreshPersonaCombo() {
+        val isOrchestrator = conversation.kind == ConversationKind.ORCHESTRATOR
+        // "orchestrator" is a coordinator persona, not a normal chat persona (mirrors
+        // desktop-java: it's offered only as an orchestrator chat's Coordinator).
+        personaLabel.text = if (isOrchestrator) "Coordinator:" else "Persona:"
+        specialistsButton.isVisible = isOrchestrator
+
         val isOrchestrator = conversation.kind == ConversationKind.ORCHESTRATOR
         // "orchestrator" is a coordinator persona, not a normal chat persona (mirrors
         // desktop-java: it's offered only as an orchestrator chat's Coordinator).
@@ -208,20 +255,23 @@ class MultiAgentChatPanel(private val project: Project) : JPanel(BorderLayout())
         }
     }
 
-    private fun showNewChatMenu(invoker: JComponent) {
+    /** The tool window's single "⋮" overflow button - see the comment at its call site in [buildTopBar]. */
+    private fun showChatMenu(invoker: JComponent) {
         val menu = JPopupMenu()
-        menu.add(JMenuItem("New Chat").apply {
-            addActionListener { createAndSwitch(ConversationKind.CHAT) }
-        })
-        menu.add(JMenuItem("New Orchestrator").apply {
-            addActionListener { createAndSwitch(ConversationKind.ORCHESTRATOR) }
-        })
+        menu.add(JMenuItem("New Chat").apply { addActionListener { createAndSwitch(ConversationKind.CHAT) } })
+        menu.add(JMenuItem("New Orchestrator").apply { addActionListener { createAndSwitch(ConversationKind.ORCHESTRATOR) } })
+        menu.addSeparator()
+        menu.add(JMenuItem("Delete This Chat").apply { addActionListener { deleteCurrentConversation() } })
+        menu.addSeparator()
+        menu.add(JMenuItem("Search Conversations…").apply { addActionListener { openSearch() } })
+        menu.add(JMenuItem("Export as Markdown").apply { addActionListener { exportConversation(markdown = true) } })
+        menu.add(JMenuItem("Export as JSON").apply { addActionListener { exportConversation(markdown = false) } })
         menu.show(invoker, 0, invoker.height)
     }
 
     private fun createAndSwitch(kind: ConversationKind) {
         val created = service.newConversationForProject(project, kind)
-        refreshConversationCombo()
+        refreshChatPicker()
         switchTo(created)
     }
 
@@ -245,10 +295,19 @@ class MultiAgentChatPanel(private val project: Project) : JPanel(BorderLayout())
         messagesPanel.removeAll()
         messagesPanel.revalidate()
         messagesPanel.repaint()
-        refreshConversationCombo()
+        refreshChatPicker()
         refreshPersonaCombo()
-        if (!newConversation.model.isNullOrBlank()) {
-            modelCombo.editor.item = newConversation.model
+        // A brand-new conversation's model is always NULL (ConversationStore.createConversation)
+        // - fall back to the app-wide default model (AppSettings.model, "fallback ... for
+        // conversations without their own") the same way refreshHealthAndModels() already does
+        // on plain startup. Without this, switching to (or creating) a chat with no model of
+        // its own left the combo showing whatever the *previous* conversation's model happened
+        // to be, or blank on the very first switch - either way onSend() would then send that
+        // wrong or empty model string to the server. Observed live: an empty model produced
+        // incoherent output (unrelated Rust/Node scaffolding as raw unparsed tool-call text).
+        val resolvedModel = newConversation.model?.takeIf { it.isNotBlank() } ?: service.settings().model
+        if (resolvedModel.isNotBlank()) {
+            setModelComboText(resolvedModel)
         }
         loadHistory()
     }
@@ -261,6 +320,33 @@ class MultiAgentChatPanel(private val project: Project) : JPanel(BorderLayout())
         if (!confirmed) return
         val next = service.deleteConversation(project, conversation.id)
         switchTo(next)
+    }
+
+    /** Scoped to this project's own conversations - see [SearchDialog]. */
+    private fun openSearch() {
+        val dialog = SearchDialog(project, service.store, project.basePath)
+        if (!dialog.showAndGet()) return
+        val result = dialog.selected ?: return
+        if (result.conversationId() == conversation.id) return
+        val target = service.conversationsForProject(project).firstOrNull { it.id == result.conversationId() }
+        target?.let { switchTo(it) }
+    }
+
+    /** Mirrors desktop-java's per-conversation Export menu, backed by the same [ExportFormat]. */
+    private fun exportConversation(markdown: Boolean) {
+        val messages = service.store.getMessages(conversation.id)
+        val content = if (markdown) ExportFormat.toMarkdown(conversation, messages, service.personas())
+        else ExportFormat.toJson(conversation, messages)
+        val extension = if (markdown) "md" else "json"
+        val descriptor = FileSaverDescriptor(
+            "Export Conversation", "Save this conversation as ${if (markdown) "Markdown" else "JSON"}", extension
+        )
+        val baseDir = conversation.workspacePath?.let { LocalFileSystem.getInstance().findFileByPath(it) }
+        val wrapper = FileChooserFactory.getInstance().createSaveFileDialog(descriptor, project)
+            .save(baseDir, "${ExportFormat.slugifyTitle(conversation.title ?: "conversation")}.$extension")
+        val file = wrapper?.file ?: return
+        runCatching { file.writeText(content) }
+            .onFailure { e -> Messages.showErrorDialog(project, e.message ?: e.toString(), "Export Failed") }
     }
 
     private fun buildComposer(): JComponent {
@@ -281,8 +367,11 @@ class MultiAgentChatPanel(private val project: Project) : JPanel(BorderLayout())
         right.layout = BoxLayout(right, BoxLayout.Y_AXIS)
         right.add(sendButton)
         bottom.add(right, BorderLayout.EAST)
+        val statusRow = JPanel(BorderLayout())
+        statusRow.add(statusLabel, BorderLayout.CENTER)
+        statusRow.add(includeActiveFileCheckBox, BorderLayout.EAST)
         val south = JPanel(BorderLayout())
-        south.add(statusLabel, BorderLayout.NORTH)
+        south.add(statusRow, BorderLayout.NORTH)
         south.add(bottom, BorderLayout.CENTER)
         return south
     }
@@ -305,7 +394,7 @@ class MultiAgentChatPanel(private val project: Project) : JPanel(BorderLayout())
             border = JBUI.Borders.empty(6, 8)
             background = if (role == MessageRole.USER) Color(0x1D, 0x4E, 0x89, 0x22) else background
         }
-        val row = JPanel(BorderLayout())
+        val row = TightRowPanel(BorderLayout())
         row.border = JBUI.Borders.empty(2, 4)
         val labelText = label ?: if (role == MessageRole.USER) "You" else "Assistant"
         val labelComponent = JBLabel(labelText).apply {
@@ -313,6 +402,7 @@ class MultiAgentChatPanel(private val project: Project) : JPanel(BorderLayout())
             foreground = Color.GRAY
         }
         val wrapper = JPanel(BorderLayout())
+        wrapper.add(labelComponent, BorderLayout.NORTH)
         wrapper.add(labelComponent, BorderLayout.NORTH)
         wrapper.add(area, BorderLayout.CENTER)
         row.add(wrapper, BorderLayout.CENTER)
@@ -328,7 +418,7 @@ class MultiAgentChatPanel(private val project: Project) : JPanel(BorderLayout())
             foreground = Color.GRAY
             font = font.deriveFont(font.size2D - 1f)
         }
-        val row = JPanel(BorderLayout()).apply {
+        val row = TightRowPanel(BorderLayout()).apply {
             border = JBUI.Borders.empty(1, 12)
             add(label, BorderLayout.CENTER)
         }
@@ -346,7 +436,7 @@ class MultiAgentChatPanel(private val project: Project) : JPanel(BorderLayout())
             font = font.deriveFont(font.size2D - 1f)
         }
         val buttons = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0))
-        val row = JPanel(BorderLayout()).apply {
+        val row = TightRowPanel(BorderLayout()).apply {
             border = JBUI.Borders.empty(1, 12)
             add(label, BorderLayout.CENTER)
             add(buttons, BorderLayout.EAST)
@@ -470,8 +560,11 @@ class MultiAgentChatPanel(private val project: Project) : JPanel(BorderLayout())
     }
 
     private fun onSend() {
-        val text = input.text.trim()
+        var text = input.text.trim()
         if (text.isEmpty()) return
+        if (includeActiveFileCheckBox.isSelected) {
+            activeFileContext(project)?.let { context -> text = "$context\n\n$text" }
+        }
         input.text = ""
         sendButton.isEnabled = false
 
@@ -487,7 +580,7 @@ class MultiAgentChatPanel(private val project: Project) : JPanel(BorderLayout())
         val model = (modelCombo.editor.item as? String)?.trim().orEmpty()
         if (model.isNotEmpty() && model != conversation.model) {
             conversation = service.store.setConversationModel(conversation.id, model)
-            refreshConversationCombo()
+            refreshChatPicker()
         }
         val client = service.client()
 
@@ -577,26 +670,81 @@ class MultiAgentChatPanel(private val project: Project) : JPanel(BorderLayout())
 
     private fun refreshHealthAndModels() {
         healthLabel.text = "checking..."
+        healthLabel.foreground = Color.GRAY
         ApplicationManager.getApplication().executeOnPooledThread {
             val client = service.client()
             val health = runCatching { client.checkHealth() }
             val models = runCatching { client.listModels() }.getOrDefault(emptyList())
             onEdt {
                 health.fold(
-                    onSuccess = { h -> healthLabel.text = if (h.ok()) "● connected" else "● ${h.message()}" },
-                    onFailure = { e -> healthLabel.text = "● ${e.message ?: "offline"}" }
+                    onSuccess = { h ->
+                        healthLabel.text = if (h.ok()) "● connected" else "● ${h.message()}"
+                        healthLabel.foreground = if (h.ok()) HEALTH_OK_COLOR else HEALTH_ERROR_COLOR
+                    },
+                    onFailure = { e ->
+                        healthLabel.text = "● ${e.message ?: "offline"}"
+                        healthLabel.foreground = HEALTH_ERROR_COLOR
+                    }
                 )
                 val current = (modelCombo.editor.item as? String)?.trim().orEmpty()
                     .ifEmpty { service.settings().model }
                 modelCombo.removeAllItems()
                 models.forEach { modelCombo.addItem(it.id()) }
-                if (current.isNotEmpty()) {
-                    modelCombo.editor.item = current
+                // Always resolve to *something* and go through setModelComboText - even when
+                // nothing was known ahead of time (current blank, e.g. no default Model set in
+                // Settings), addItem() above auto-selects its first entry through JComboBox's
+                // own machinery, which bypasses setModelComboText - and its caret reset -
+                // entirely. Read back whatever ended up selected and re-apply it explicitly so
+                // the caret fix always runs, not just when a value was already known.
+                val resolved = current.ifEmpty { (modelCombo.editor.item as? String)?.trim().orEmpty() }
+                if (resolved.isNotEmpty()) {
+                    setModelComboText(resolved)
                 }
                 service.lastHealthText = healthLabel.text
-                service.lastModelText = current
+                service.lastModelText = resolved
                 WindowManager.getInstance().getStatusBar(project)?.updateWidget(MultiAgentStatusBarWidgetFactory.ID)
             }
+        }
+    }
+
+    /** Depth-first search for the actual editable text field inside a combo box editor - see [setModelComboText]. */
+    private fun findTextComponent(component: java.awt.Component): javax.swing.text.JTextComponent? {
+        if (component is javax.swing.text.JTextComponent) return component
+        if (component is java.awt.Container) {
+            for (child in component.components) {
+                findTextComponent(child)?.let { return it }
+            }
+        }
+        return null
+    }
+
+    /**
+     * Sets the editable model combo's text and resets its caret to the start. Plain
+     * `editor.item = text` leaves the caret wherever it last was (the end, for a fresh
+     * editor), so a long model id shows its *tail* in the visible field instead of the
+     * more legible prefix - e.g. "...GGUF-Q4_K_M" instead of "DeepSeek-Coder-V2-Lite...".
+     *
+     * Two earlier attempts here (a plain synchronous reset, then a `SwingUtilities.invokeLater`
+     * re-assertion) both had **zero** observed effect in real-IDE testing, not partial effect -
+     * which points at a wrong assumption rather than a timing race: `editor.editorComponent`
+     * under IntelliJ's LaF is very likely a composite wrapper around the real text field, not
+     * the field itself, so the earlier `as? JTextComponent` cast was silently failing and every
+     * caret reset was a no-op. Search the component tree instead of assuming its shape, and set
+     * a tooltip on the combo itself as a fallback that works regardless of whether the caret
+     * trick ever lands - hovering always reveals the full id.
+     */
+    private fun setModelComboText(text: String) {
+        modelCombo.editor.item = text
+        modelCombo.toolTipText = text
+        fun resetCaret() {
+            findTextComponent(modelCombo.editor.editorComponent)?.let { field ->
+                runCatching { field.caretPosition = 0 }
+            }
+        }
+        resetCaret()
+        SwingUtilities.invokeLater {
+            resetCaret()
+            SwingUtilities.invokeLater { resetCaret() }
         }
     }
 
@@ -606,5 +754,13 @@ class MultiAgentChatPanel(private val project: Project) : JPanel(BorderLayout())
 
     companion object {
         private val FILE_MUTATING_OPS = setOf("write_file", "delete_file", "rename_file")
+
+        // The health dot only ever changed its text ("● connected" vs "● <error>"), never its
+        // color, so a success and a failure looked identical except for the words - no at-a-
+        // glance signal from what's supposed to be a status dot. Legible on both light and dark
+        // themes (this file doesn't use JBColor elsewhere, so staying consistent with plain
+        // Color rather than introducing theme-aware colors just for this one label).
+        private val HEALTH_OK_COLOR = Color(0x43, 0xA0, 0x47)
+        private val HEALTH_ERROR_COLOR = Color(0xE5, 0x39, 0x35)
     }
 }

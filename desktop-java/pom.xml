@@ -20,7 +20,7 @@
     <!-- 2.18.9 clears the jackson-core / jackson-databind advisories flagged by the
          release-verify SBOM scan (GHSA-r7wm-3cxj-wff9, GHSA-rmj7-2vxq-3g9f,
          GHSA-j3rv-43j4-c7qm and the related medium ones); patch-only bump within 2.18.x. -->
-    <jackson.version>2.18.9</jackson.version>
+    <jackson.version>2.18.10</jackson.version>
     <!-- mvn javafx:run sets up the module path itself, so it launches App directly. A
          packaged (jpackage) run is a plain classpath app and needs Launcher instead - see
          Launcher.java's javadoc. -->
